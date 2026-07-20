@@ -48,15 +48,20 @@ pip install -r requirements.txt
 ## Run
 
 The agent needs an OpenAI-compatible LLM endpoint (a self-hosted vLLM server or
-a remote provider). Point it there with env vars:
+a remote provider). Configure it in a `.env` file — copy the template and edit:
 
 ```bash
-export LLM_BASE_URL=http://localhost:8000/v1   # default
-export LLM_MODEL=your-model-name
-export LLM_API_KEY=EMPTY                        # or your provider key
+cp .env.example .env
+# then edit .env:
+#   LLM_BASE_URL=http://localhost:8000/v1
+#   LLM_MODEL=your-model-name
+#   LLM_API_KEY=EMPTY   # or your provider key
 
 python main.py "does metformin extend lifespan in mammals?"
 ```
+
+`main.py` loads `.env` automatically (`.env` is git-ignored so your key never
+gets committed). You can also just export the same three variables in your shell.
 
 ## Layout
 

@@ -3,7 +3,7 @@
 Usage:
     python main.py "does metformin extend lifespan in mammals?"
 
-Configure the LLM backend with env vars (see librarian/llm_client.py):
+Configure the LLM backend in a `.env` file (copy `.env.example`) or via env vars:
     LLM_BASE_URL   e.g. http://localhost:8000/v1   (default)
     LLM_MODEL      the model name to request
     LLM_API_KEY    bearer token (defaults to "EMPTY" for keyless vLLM)
@@ -12,7 +12,12 @@ Configure the LLM backend with env vars (see librarian/llm_client.py):
 import json
 import sys
 
+from dotenv import load_dotenv
+
 from librarian import LibrarianAgent
+
+# Load LLM_BASE_URL / LLM_MODEL / LLM_API_KEY from a .env file if present.
+load_dotenv()
 
 DEFAULT_QUERY = "What is the role of telomere shortening in cellular senescence?"
 
