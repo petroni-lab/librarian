@@ -5,11 +5,6 @@ natural-language biology question; it returns ranked evidence passages from
 [Europe PMC](https://europepmc.org/), each with paper metadata and the exact
 sentences that support relevance.
 
-This is the open-source, infra-free version of an internal agent: the retrieval
-flow is identical, but everything operational has been removed — no Phoenix
-tracing, no database, no caching, no Slack, no dev/prod config split. Every file
-is small enough to read top to bottom.
-
 ## The flow
 
 `LibrarianAgent.run(query)` is a single pass (`librarian/agent.py`):
@@ -60,8 +55,14 @@ cp .env.example .env
 python main.py "does metformin extend lifespan in mammals?"
 ```
 
-`main.py` loads `.env` automatically (`.env` is git-ignored so your key never
-gets committed). You can also just export the same three variables in your shell.
+`main.py` loads `.env` automatically. You can also just export the same three variables in your shell.
+
+On a terminal you'll see a live spinner reporting the current stage
+(`Searching Europe PMC`, `Fetching full text · 42/210`, `Judging paper
+relevance · 6/28 batches`, ...) so you can tell how far along a run is. When the
+output is piped/redirected the spinner is skipped and the agent prints plain
+`[Librarian]` log lines instead. `LibrarianAgent.run()` accepts an
+`on_progress=callable` hook if you want to drive your own UI.
 
 ## Layout
 
@@ -73,6 +74,7 @@ librarian/
   llm_client.py                minimal OpenAI-compatible client
   literature_search.py         Europe PMC search
   jats.py                      JATS full-text XML -> body paragraphs
+  progress.py                  stdlib terminal spinner for live progress
   prompts/                     query planner + relevance-judge prompts
   query_validation/            deterministic Europe PMC query validation
 ```

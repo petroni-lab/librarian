@@ -27,10 +27,11 @@ import datetime
 import json
 import logging
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import bm25s
 import pysbd
@@ -248,6 +249,14 @@ class LibrarianAgent:
         self.full_text_enrichment = full_text_enrichment
         self.verbose = verbose
 
+        # Progress reporting: set per-run in run(); _progress() no-ops when unset.
+        self._on_progress: Optional[Callable[[str], None]] = None
+        # Shared counters so the two concurrent filter passes report one combined
+        # "N/M batches" figure to the progress callback.
+        self._filter_lock = threading.Lock()
+        self._filter_done = 0
+        self._filter_total = 0
+
         # Explicit constructor args (llm_model_name) take priority over config.
         runtime = load_runtime_config()
         self._max_queries = runtime.max_query_count
@@ -279,6 +288,18 @@ class LibrarianAgent:
     def _log(self, message: str) -> None:
         if self.verbose:
             print(f"[Librarian] {message}")
+
+    def _progress(self, message: str) -> None:
+        """Report the current pipeline stage to the run's progress callback (if any)."""
+        if self._on_progress is not None:
+            self._on_progress(message)
+
+    def _on_filter_batch_done(self, _future) -> None:
+        """Bump the shared filter-batch counter and report N/M to the callback."""
+        with self._filter_lock:
+            self._filter_done += 1
+            done, total = self._filter_done, self._filter_total
+        self._progress(f"Judging paper relevance · {done}/{total} batches")
 
     # ── Step 1: query generation ─────────────────────────────────────────────
 
@@ -588,12 +609,18 @@ class LibrarianAgent:
             batches.append(data)
 
         # Judge every batch in parallel (each _evaluate_batch is one LLM call),
-        # preserving batch order so the relevance ranking stays stable.
+        # preserving batch order so the relevance ranking stays stable. Each batch
+        # bumps the shared progress counter as it finishes (via a done-callback, so
+        # the count reflects real completion, not submission order).
+        with self._filter_lock:
+            self._filter_total += len(batches)
         ranked_ids: List[str] = []
         with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
-            futures = [
-                pool.submit(self._evaluate_batch, query, b, template) for b in batches
-            ]
+            futures = []
+            for b in batches:
+                future = pool.submit(self._evaluate_batch, query, b, template)
+                future.add_done_callback(self._on_filter_batch_done)
+                futures.append(future)
             for future in futures:  # submission order == batch order
                 ranked_ids.extend(future.result())
 
@@ -633,27 +660,32 @@ class LibrarianAgent:
         query: str,
         max_loops: int = 1,
         top_k: int = _DEFAULT_FINAL_TOP_K,
-        progress_callback=None,
+        on_progress: Optional[Callable[[str], None]] = None,
     ) -> List[Dict[str, Any]]:
         """Single-pass retrieval reproducing the winning bm25_per_paper strategy:
-        generate → search+enrich → full-text filter + abstract triage → merge."""
+        generate → search+enrich → full-text filter + abstract triage → merge.
+
+        ``on_progress`` (optional) is called with a short human-readable status
+        string at each pipeline stage — wire it to a spinner for live feedback.
+        """
         if max_loops != 1:
             raise NotImplementedError(
                 "LibrarianAgent only supports max_loops=1 (single pass)."
             )
-        return self._run(query, top_k, progress_callback)
+        self._on_progress = on_progress
+        return self._run(query, top_k)
 
-    def _run(
-        self, query: str, top_k: int, progress_callback=None
-    ) -> List[Dict[str, Any]]:
+    def _run(self, query: str, top_k: int) -> List[Dict[str, Any]]:
         """Internal implementation of the single-pass retrieval pipeline."""
-        if progress_callback:
-            progress_callback(0)
-        queries = self._validate_queries(self._generate_queries(query))
+        self._filter_done = 0  # reset so a reused agent reports fresh counts
+        self._filter_total = 0
+        self._progress("Generating search queries")
+        generated = self._generate_queries(query)
+        self._progress("Validating queries")
+        queries = self._validate_queries(generated)
 
         # 1. Search every sub-query in parallel → raw papers.
-        if progress_callback:
-            progress_callback(1)
+        self._progress(f"Searching Europe PMC · {len(queries)} sub-queries")
         all_papers: List[Dict[str, Any]] = []
         with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
             futures = [
@@ -675,8 +707,7 @@ class LibrarianAgent:
                 by_pid[pid] = paper
                 candidates.append(paper)
         self._log(f"{len(candidates)} unique candidate papers")
-        if progress_callback:
-            progress_callback(2)
+        self._progress(f"Found {len(candidates)} candidate papers")
         if not candidates:
             return []
 
@@ -684,6 +715,9 @@ class LibrarianAgent:
         #    vs the ORIGINAL query). Doing this once per unique paper, in
         #    parallel, is what keeps a sample within its time budget.
         if self.full_text_enrichment:
+            total = len(candidates)
+            done = 0
+            self._progress(f"Fetching full text · 0/{total}")
             with ThreadPoolExecutor(max_workers=_FETCH_WORKERS) as pool:
                 future_to_paper = {
                     pool.submit(self._excerpt_for_paper, p, query): p
@@ -696,6 +730,8 @@ class LibrarianAgent:
                         excerpt = ""
                     if excerpt:
                         future_to_paper[future]["full_text_excerpt"] = excerpt
+                    done += 1
+                    self._progress(f"Fetching full text · {done}/{total}")
 
         # Two independent filters, merged full-text-first (the winning flow):
         #  - full-text filter over papers that have an excerpt,
@@ -704,6 +740,7 @@ class LibrarianAgent:
         # keys), so run them concurrently. Each pass still parallelises its own
         # batches internally.
         ft_candidates = [p for p in candidates if p.get("full_text_excerpt")]
+        self._progress("Judging paper relevance")
         with ThreadPoolExecutor(max_workers=2) as pool:
             ft_future = pool.submit(
                 self._relevance_filter,

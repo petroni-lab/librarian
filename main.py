@@ -15,6 +15,7 @@ import sys
 from dotenv import load_dotenv
 
 from librarian import LibrarianAgent
+from librarian.progress import Spinner
 
 # Load LLM_BASE_URL / LLM_MODEL / LLM_API_KEY from a .env file if present.
 load_dotenv()
@@ -25,8 +26,15 @@ DEFAULT_QUERY = "What is the role of telomere shortening in cellular senescence?
 def main() -> None:
     query = " ".join(sys.argv[1:]).strip() or DEFAULT_QUERY
 
-    agent = LibrarianAgent(verbose=True)
-    passages = agent.run(query)
+    # On a terminal, show a live spinner and keep the agent's own logs quiet so
+    # they don't fight the spinner. When piped/redirected, fall back to plain logs.
+    interactive = sys.stderr.isatty()
+    agent = LibrarianAgent(verbose=not interactive)
+    if interactive:
+        with Spinner() as spinner:
+            passages = agent.run(query, on_progress=spinner.update)
+    else:
+        passages = agent.run(query)
 
     print(f"\n=== {len(passages)} evidence passages for: {query!r} ===\n")
     for i, passage in enumerate(passages, 1):
