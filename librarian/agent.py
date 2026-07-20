@@ -19,8 +19,6 @@ Single-pass pipeline (max_loops=1, the only supported mode):
      (relevance_filter.md). Returns the merged relevant papers as evidence
      passages (each with its filter-cited evidence snippet).
 
-This is the minimal, infra-free version of the agent: no Phoenix tracing, no
-database, no caching, no Slack. Everything is small enough to read top to bottom.
 """
 
 from __future__ import annotations
@@ -593,61 +591,15 @@ class LibrarianAgent:
                 )
             batches.append(data)
 
+        # Judge every batch in parallel (each _evaluate_batch is one LLM call),
+        # preserving batch order so the relevance ranking stays stable.
         ranked_ids: List[str] = []
-
-        def _parallel_eval(batch_list: List[List[Dict[str, Any]]]) -> List[str]:
-            """Run _evaluate_batch over batches in parallel, preserving order."""
-            out: List[str] = []
-            with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
-                futures = [
-                    pool.submit(self._evaluate_batch, query, b, template)
-                    for b in batch_list
-                ]
-                for future in futures:  # submission order == batch order
-                    out.extend(future.result())
-            return out
-
-        if self.llm.is_external_api:
-            # Remote APIs: parallel per-request path (rate-limit sensitive).
-            ranked_ids.extend(_parallel_eval(batches))
-        else:
-            # vLLM: send batches through the batch endpoint in chunks.
-            chunk_size = batch_size
-
-            def _build_messages(
-                batch_data: List[Dict[str, Any]],
-            ) -> List[Dict[str, str]]:
-                prompt = template.replace("{user_query}", query).replace(
-                    "{papers_batch}", json.dumps(batch_data, indent=2)
-                )
-                return [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a helpful assistant. Return only valid JSON "
-                            "with a 'relevant_ids' array ordered most→least relevant."
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ]
-
-            all_messages = [_build_messages(b) for b in batches]
-            for chunk_start in range(0, len(all_messages), chunk_size):
-                chunk = all_messages[chunk_start : chunk_start + chunk_size]
-                chunk_batches = batches[chunk_start : chunk_start + chunk_size]
-                responses = self.llm.batch_chat_completion(
-                    chunk,
-                    temperature=self._filter_temperature,
-                    thinking=False,
-                    max_tokens=4096,
-                )
-                for response, _batch_data in zip(responses, chunk_batches):
-                    parsed = parse_json_response(response)
-                    ids = (
-                        parsed.get("relevant_ids") if isinstance(parsed, dict) else None
-                    )
-                    if isinstance(ids, list):
-                        ranked_ids.extend(str(x) for x in ids)
+        with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
+            futures = [
+                pool.submit(self._evaluate_batch, query, b, template) for b in batches
+            ]
+            for future in futures:  # submission order == batch order
+                ranked_ids.extend(future.result())
 
         relevant: List[Dict[str, Any]] = []
         seen: set = set()

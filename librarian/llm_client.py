@@ -1,17 +1,12 @@
-"""Minimal OpenAI-compatible LLM client.
+"""Minimal LLM client for a single OpenAI-compatible endpoint.
 
-Talks to any OpenAI-compatible ``/chat/completions`` endpoint — a self-hosted
-vLLM server or a remote provider. The full agent's client also did Phoenix
-tracing, Vertex AI auth, and primary/fallback failover; none of that is needed
-to run the librarian, so this version keeps only what the flow uses:
-``chat_completion``, ``batch_chat_completion``, and ``is_external_api``.
+Point it at any OpenAI-compatible ``/chat/completions`` server (a self-hosted
+vLLM instance, an OpenAI-compatible gateway, OpenAI itself, ...) with three env
+vars — nothing else to configure:
 
-Backend selection (all optional, via env vars):
-  LLM_BASE_URL   endpoint, e.g. http://localhost:8000/v1 (the default)
-  LLM_MODEL      model name to request
-  LLM_API_KEY    bearer token (defaults to "EMPTY" for keyless vLLM)
-  LLM_PROVIDER   "vllm" (default) or "openai"/"zai"/... — only affects the
-                 default base_url and the thinking-flag wire format.
+    LLM_BASE_URL   endpoint, e.g. http://localhost:8000/v1   (the default)
+    LLM_MODEL      model name to request
+    LLM_API_KEY    bearer token (defaults to "EMPTY" for keyless servers)
 """
 
 import json
@@ -19,7 +14,6 @@ import os
 import random
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List, Optional
 
 import requests
@@ -54,15 +48,10 @@ def parse_json_response(text: str) -> Any:
         return None
 
 
-# Thread pool used by batch_chat_completion to fan out concurrent requests.
-_BATCH_WORKERS = 8
-
-
 class LLMClient:
-    """A general-purpose client for OpenAI-compatible LLM APIs."""
+    """A client for a single OpenAI-compatible chat-completions endpoint."""
 
     MAX_RETRIES = 6  # retry attempts for rate-limit / transient errors
-    _EXTERNAL_MIN_INTERVAL = 1.0  # min seconds between remote-provider requests
 
     def __init__(
         self,
@@ -72,30 +61,9 @@ class LLMClient:
         thinking: bool = False,
     ):
         self.thinking = thinking
-
-        provider = os.getenv("LLM_PROVIDER", "vllm").split(":", 1)[0].strip().lower()
-
-        # Base URL: explicit arg > LLM_BASE_URL > provider default.
-        default_urls = {
-            "openai": "https://api.openai.com/v1",
-            "zai": "https://api.z.ai/api/paas/v4",
-            "vllm": "http://localhost:8000/v1",
-        }
-        resolved = (
-            base_url
-            or os.getenv("LLM_BASE_URL")
-            or default_urls.get(provider, default_urls["vllm"])
-        )
-        self.base_url = resolved.rstrip("/")
-
-        url_lower = self.base_url.lower()
-        self._is_openai = "api.openai.com" in url_lower
-        self._is_zai = "api.z.ai" in url_lower
-        # A "vLLM-like" backend is any self-hosted OpenAI-compatible server: it
-        # accepts the legacy max_tokens field and chat_template_kwargs thinking flag.
-        self._is_vllm_backend = not self._is_openai and not self._is_zai
-        self._is_external_api = self._is_openai or self._is_zai
-
+        self.base_url = (
+            base_url or os.getenv("LLM_BASE_URL", "http://localhost:8000/v1")
+        ).rstrip("/")
         self.api_key = api_key or os.getenv("LLM_API_KEY", "EMPTY")
         self.model_name = model_name or os.getenv("LLM_MODEL")
 
@@ -103,12 +71,6 @@ class LLMClient:
             f"LLMClient -> url={self.base_url} model={self.model_name} "
             f"thinking={'ON' if thinking else 'OFF'}"
         )
-        self._last_request_time = 0.0
-
-    @property
-    def is_external_api(self) -> bool:
-        """True for a remote provider (OpenAI/z.ai), False for self-hosted vLLM."""
-        return self._is_external_api
 
     def _url(self) -> str:
         if self.base_url.endswith("/chat/completions"):
@@ -166,25 +128,16 @@ class LLMClient:
             "messages": messages,
             "temperature": temperature,
         }
-        # OpenAI reasoning models want max_completion_tokens; vLLM/z.ai take max_tokens.
-        tokens_key = "max_tokens" if not self._is_openai else "max_completion_tokens"
         if max_tokens is not None:
-            payload[tokens_key] = max(1, int(max_tokens))
-        if self._is_zai:
-            payload["thinking"] = {"type": "enabled" if use_thinking else "disabled"}
-        elif self._is_vllm_backend:
-            payload["chat_template_kwargs"] = {"enable_thinking": use_thinking}
+            payload["max_tokens"] = max(1, int(max_tokens))
+        # vLLM-style thinking toggle. Only sent when enabled, so a strict OpenAI
+        # endpoint (which rejects unknown fields) is unaffected on the default path.
+        if use_thinking:
+            payload["chat_template_kwargs"] = {"enable_thinking": True}
 
         last_exception = None
         for attempt in range(self.MAX_RETRIES):
-            # Throttle remote providers to stay under RPM limits.
-            if self._is_external_api:
-                elapsed = time.time() - self._last_request_time
-                if elapsed < self._EXTERNAL_MIN_INTERVAL:
-                    time.sleep(self._EXTERNAL_MIN_INTERVAL - elapsed)
-
             try:
-                self._last_request_time = time.time()
                 response = requests.post(
                     self._url(), headers=self._headers(), json=payload, timeout=timeout
                 )
@@ -230,34 +183,6 @@ class LLMClient:
         wait = min(2**attempt, 120)
         return max(1.0, wait + wait * 0.25 * (2 * random.random() - 1))
 
-    def batch_chat_completion(
-        self,
-        list_of_message_lists: List[List[dict]],
-        temperature: float = 0.7,
-        max_tokens: int = 1024,
-        thinking: Optional[bool] = None,
-    ) -> List[str]:
-        """Run N independent conversations concurrently, returning results in order.
-
-        The full agent used vLLM's native /chat/completions/batch route; here we
-        simply fan the calls out over a thread pool, which works against any
-        OpenAI-compatible endpoint and keeps the code readable.
-        """
-        if not list_of_message_lists:
-            return []
-        with ThreadPoolExecutor(max_workers=_BATCH_WORKERS) as pool:
-            futures = [
-                pool.submit(
-                    self.chat_completion,
-                    messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    thinking=thinking,
-                )
-                for messages in list_of_message_lists
-            ]
-            return [f.result() for f in futures]  # submission order == input order
-
 
 def create_llm_client(
     base_url: Optional[str] = None,
@@ -265,8 +190,8 @@ def create_llm_client(
     model_name: Optional[str] = None,
     thinking: bool = False,
 ) -> LLMClient:
-    """Build the LLM client. Kept as a factory so the agent's call site is
-    unchanged from the full version (which selected between backends here)."""
+    """Build the LLM client. Kept as a factory so the agent's call site stays
+    unchanged even if construction ever grows more logic."""
     return LLMClient(
         base_url=base_url,
         api_key=api_key,
