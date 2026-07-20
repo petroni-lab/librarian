@@ -1,0 +1,4 @@
+# Core runtime dependencies for the librarian agent.
+requests>=2.31
+bm25s>=0.2          # BM25 paragraph ranking
+pysbd>=0.3          # sentence segmentation for evidence extraction
