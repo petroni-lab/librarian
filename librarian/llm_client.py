@@ -58,19 +58,14 @@ class LLMClient:
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         model_name: Optional[str] = None,
-        thinking: bool = False,
     ):
-        self.thinking = thinking
         self.base_url = (
             base_url or os.getenv("LLM_BASE_URL", "http://localhost:8000/v1")
         ).rstrip("/")
         self.api_key = api_key or os.getenv("LLM_API_KEY", "EMPTY")
         self.model_name = model_name or os.getenv("LLM_MODEL")
 
-        print(
-            f"LLMClient -> url={self.base_url} model={self.model_name} "
-            f"thinking={'ON' if thinking else 'OFF'}"
-        )
+        print(f"LLMClient -> url={self.base_url} model={self.model_name}")
 
     def _url(self) -> str:
         if self.base_url.endswith("/chat/completions"):
@@ -113,7 +108,6 @@ class LLMClient:
         messages: List[dict],
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
-        thinking: Optional[bool] = None,
         timeout: int = 180,
     ) -> str:
         """Send one chat completion and return the assistant's text.
@@ -121,8 +115,6 @@ class LLMClient:
         Retries rate-limit (429), 5xx, and transient network errors with
         exponential backoff + jitter; 4xx client errors are not retried.
         """
-        use_thinking = thinking if thinking is not None else self.thinking
-
         payload = {
             "model": self.model_name,
             "messages": messages,
@@ -130,10 +122,6 @@ class LLMClient:
         }
         if max_tokens is not None:
             payload["max_tokens"] = max(1, int(max_tokens))
-        # vLLM-style thinking toggle. Only sent when enabled, so a strict OpenAI
-        # endpoint (which rejects unknown fields) is unaffected on the default path.
-        if use_thinking:
-            payload["chat_template_kwargs"] = {"enable_thinking": True}
 
         last_exception = None
         for attempt in range(self.MAX_RETRIES):
@@ -188,7 +176,6 @@ def create_llm_client(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     model_name: Optional[str] = None,
-    thinking: bool = False,
 ) -> LLMClient:
     """Build the LLM client. Kept as a factory so the agent's call site stays
     unchanged even if construction ever grows more logic."""
@@ -196,5 +183,4 @@ def create_llm_client(
         base_url=base_url,
         api_key=api_key,
         model_name=model_name,
-        thinking=thinking,
     )

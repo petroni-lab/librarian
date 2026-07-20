@@ -242,7 +242,6 @@ class LibrarianAgent:
         verbose: bool = False,
         llm_base_url: Optional[str] = None,
         llm_model_name: Optional[str] = None,
-        thinking: bool = False,
     ):
         # Full text is the default retrieval path; the flag is kept for harness
         # compatibility (turning it off falls back to abstract-only passages).
@@ -268,7 +267,6 @@ class LibrarianAgent:
         self.llm = create_llm_client(
             base_url=llm_base_url,
             model_name=llm_model_name or runtime.default_model_name,
-            thinking=thinking,
         )
         self._query_prompt = _QUERY_PROMPT_PATH.read_text(encoding="utf-8")
         self._abstract_filter_prompt = _ABSTRACT_FILTER_PROMPT_PATH.read_text(
@@ -313,7 +311,6 @@ class LibrarianAgent:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,
-            thinking=False,
             max_tokens=8192,
         )
         parsed = parse_json_response(response)
@@ -333,7 +330,7 @@ class LibrarianAgent:
                 {"role": "user", "content": prompt},
             ]
             retry = self.llm.chat_completion(
-                retry_messages, temperature=0.0, thinking=False, max_tokens=8192
+                retry_messages, temperature=0.0, max_tokens=8192
             )
             parsed = parse_json_response(retry)
             queries = parsed.get("queries", []) if isinstance(parsed, dict) else []
@@ -509,7 +506,6 @@ class LibrarianAgent:
                     {"role": "user", "content": prompt},
                 ],
                 temperature=self._filter_temperature,
-                thinking=False,  # no reasoning tokens polluting JSON
                 max_tokens=4096,
             )
         except Exception as exc:
