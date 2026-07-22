@@ -55,8 +55,11 @@ The result is a list of passage dicts:
 
 ## Install
 
+The project is managed with [uv](https://docs.astral.sh/uv/). One command creates the
+virtual environment (fetching a compatible Python if needed) and installs everything:
+
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 ## Run
@@ -70,7 +73,8 @@ cp .env.example .env
 #   LLM_BASE_URL=http://localhost:8000/v1
 #   LLM_MODEL=your-model-name
 #   LLM_API_KEY=EMPTY   # or your provider key
-python main.py "does metformin extend lifespan in mammals?"
+uv run librarian "does metformin extend lifespan in mammals?"
+# equivalently: uv run python main.py "does metformin extend lifespan in mammals?"
 ```
 
 `main.py` loads `.env` automatically. You can also just export the same three variables
@@ -86,6 +90,7 @@ own UI.
 ## Layout
 
 ```
+pyproject.toml                 project metadata + dependencies (managed by uv)
 main.py                        CLI entrypoint
 librarian/
   agent.py                     the retrieval pipeline (start here)
