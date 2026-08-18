@@ -65,6 +65,9 @@ class LLMClient:
         self.api_key = api_key or os.getenv("LLM_API_KEY", "EMPTY")
         self.model_name = model_name or os.getenv("LLM_MODEL")
 
+        # Optional sampling parameters this endpoint has rejected with a 400.
+        self._unsupported: set = set()
+
         print(f"LLMClient -> url={self.base_url} model={self.model_name}")
 
     def _url(self) -> str:
@@ -114,21 +117,29 @@ class LLMClient:
 
         Retries rate-limit (429), 5xx, and transient network errors with
         exponential backoff + jitter; 4xx client errors are not retried.
+
+        One exception: a 400 that names an optional sampling parameter (``error
+        .param``) makes us drop that parameter and retry immediately.
         """
-        payload = {
-            "model": self.model_name,
-            "messages": messages,
-            "temperature": temperature,
-        }
+        optional = {"temperature": temperature}
         if max_tokens is not None:
-            payload["max_tokens"] = max(1, int(max_tokens))
+            optional["max_tokens"] = int(max_tokens)
 
         last_exception = None
         for attempt in range(self.MAX_RETRIES):
+            payload = {
+                "model": self.model_name,
+                "messages": messages,
+                **{k: v for k, v in optional.items() if k not in self._unsupported},
+            }
             try:
                 response = requests.post(
                     self._url(), headers=self._headers(), json=payload, timeout=timeout
                 )
+                if response.status_code == 400:
+                    last_exception = Exception(f"400: {response.text[:200]}")
+                    if self._drop_rejected_param(response, optional):
+                        continue  # same request, minus the rejected parameter
                 if response.status_code == 429:
                     last_exception = Exception(f"429: {response.text[:200]}")
                     time.sleep(
@@ -158,6 +169,30 @@ class LLMClient:
         raise Exception(
             f"LLM API request failed after {self.MAX_RETRIES} retries: {last_exception}"
         )
+
+    def _drop_rejected_param(self, response: Any, optional: dict) -> bool:
+        """Given a 400 code, mark the parameter the endpoint complained about as
+        unsupported. Returns True if something was dropped and the request is
+        worth retrying, False to let the 400 surface to the caller."""
+        try:
+            error = (response.json() or {}).get("error") or {}
+        except ValueError:
+            return False
+
+        message = str(error.get("message") or "")
+        param = error.get("param")
+        if param not in optional:
+            param = next((k for k in optional if f"'{k}'" in message), None)
+
+        if param is None or param in self._unsupported:
+            return False
+
+        self._unsupported.add(param)
+        print(
+            f"LLMClient: {self.model_name} rejected '{param}' "
+            f"({message[:120]}); retrying without it"
+        )
+        return True
 
     @staticmethod
     def _backoff(attempt: int, retry_after: Optional[str] = None) -> float:
