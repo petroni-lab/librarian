@@ -42,6 +42,7 @@ from librarian.config import load_runtime_config
 from librarian.jats import extract_body_paragraphs
 from librarian.literature_search import search_scientific_literature_structured
 from librarian.llm_client import create_llm_client, parse_json_response
+from librarian.tracing_port import NullTracer, TracingPort
 
 logging.getLogger("bm25s").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -488,11 +489,20 @@ class LibrarianAgent:
         verbose: bool = False,
         llm_base_url: Optional[str] = None,
         llm_model_name: Optional[str] = None,
+        tracer: Optional[TracingPort] = None,
     ):
+        """Build a librarian ready to retrieve evidence for a query.
+
+        :param tracer: Span-tracing adapter (see ``tracing_port.py``). Defaults
+            to ``NullTracer`` (no-op) — pass your own backend's adapter to
+            trace a real run.
+        :type tracer: TracingPort or None
+        """
         # Full text is the default retrieval path; the flag is kept for harness
         # compatibility (turning it off falls back to abstract-only paragraphs).
         self.full_text_enrichment = full_text_enrichment
         self.verbose = verbose
+        self._tracer: TracingPort = tracer if tracer is not None else NullTracer()
 
         # Progress reporting: set per-run in run(); _progress() no-ops when unset.
         self._on_progress: Optional[Callable[[str], None]] = None
@@ -529,6 +539,10 @@ class LibrarianAgent:
         if self._on_progress is not None:
             self._on_progress(message)
 
+    def _trace_json(self, payload: Any) -> str:
+        """Serialize compact trace payloads safely for span attributes."""
+        return json.dumps(payload, default=str, ensure_ascii=True)
+
     def _on_filter_batch_done(self, _future) -> None:
         """Bump the shared filter-batch counter and report N/M to the callback."""
         with self._filter_lock:
@@ -559,49 +573,66 @@ class LibrarianAgent:
             .replace("{additional_context}", additional_context)
         )
 
-        # max_tokens=8192 (NOT 1024): the claude prompt's JSON response is long;
-        # truncation → parse failure → a single raw-question search → bad retrieval.
-        response = self.llm.chat_completion(
-            [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.3,
-            max_tokens=8192,
-        )
-        parsed = parse_json_response(response)
-        queries = parsed.get("queries", []) if isinstance(parsed, dict) else []
-        if not queries:
-            # Retry once, deterministically, demanding strict JSON before falling
-            # back to the raw question.
-            retry_messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        "Return only valid JSON with a 'queries' array of Europe "
-                        'PMC query strings, e.g. {"queries": ["q1", "q2"]}. '
-                        "No prose, no markdown."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ]
-            retry = self.llm.chat_completion(
-                retry_messages, temperature=0.0, max_tokens=8192
+        with self._tracer.start_span(
+            "librarian.generate_queries",
+            attributes={
+                "openinference.span.kind": "CHAIN",
+                "input.value": self._trace_json({"query": query}),
+                "input.mime_type": "application/json",
+            },
+        ) as span:
+            # max_tokens=8192 (NOT 1024): the claude prompt's JSON response is
+            # long; truncation → parse failure → a single raw-question search
+            # → bad retrieval.
+            response = self.llm.chat_completion(
+                [
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,
+                max_tokens=8192,
             )
-            parsed = parse_json_response(retry)
+            parsed = parse_json_response(response)
             queries = parsed.get("queries", []) if isinstance(parsed, dict) else []
-        if not queries:
-            self._log("query-gen failed to parse; falling back to raw question")
-            queries = [query]
+            if not queries:
+                # Retry once, deterministically, demanding strict JSON before
+                # falling back to the raw question.
+                retry_messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Return only valid JSON with a 'queries' array of Europe "
+                            'PMC query strings, e.g. {"queries": ["q1", "q2"]}. '
+                            "No prose, no markdown."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ]
+                retry = self.llm.chat_completion(
+                    retry_messages, temperature=0.0, max_tokens=8192
+                )
+                parsed = parse_json_response(retry)
+                queries = parsed.get("queries", []) if isinstance(parsed, dict) else []
+            if not queries:
+                self._log("query-gen failed to parse; falling back to raw question")
+                queries = [query]
 
-        # Dedup (preserve order) and cap.
-        seen, unique = set(), []
-        for q in queries:
-            q = str(q).strip()
-            if q and q not in seen:
-                seen.add(q)
-                unique.append(q)
-        result = unique[: self._max_queries]
+            # Dedup (preserve order) and cap.
+            seen, unique = set(), []
+            for q in queries:
+                q = str(q).strip()
+                if q and q not in seen:
+                    seen.add(q)
+                    unique.append(q)
+            result = unique[: self._max_queries]
+            self._tracer.set_span_attributes(
+                span,
+                {
+                    "search.query_count": len(result),
+                    "output.value": self._trace_json({"queries": result}),
+                    "output.mime_type": "application/json",
+                },
+            )
         self._log(f"generated {len(result)} queries")
         return result
 
@@ -614,11 +645,29 @@ class LibrarianAgent:
         """
         from librarian.query_validation.batch_validator import BatchQueryValidator
 
-        report = BatchQueryValidator().validate_queries(queries)
-        valid = [r["query"] for r in report["results"] if r["valid"]]
-        if self.verbose and len(valid) != len(queries):
-            self._log(f"query validation kept {len(valid)}/{len(queries)}")
-        return valid or queries
+        with self._tracer.start_span(
+            "librarian.validate_queries",
+            attributes={
+                "openinference.span.kind": "CHAIN",
+                "search.query_count.input": len(queries),
+                "input.value": self._trace_json({"queries": queries}),
+                "input.mime_type": "application/json",
+            },
+        ) as span:
+            report = BatchQueryValidator().validate_queries(queries)
+            valid = [r["query"] for r in report["results"] if r["valid"]]
+            if self.verbose and len(valid) != len(queries):
+                self._log(f"query validation kept {len(valid)}/{len(queries)}")
+            result = valid or queries
+            self._tracer.set_span_attributes(
+                span,
+                {
+                    "search.query_count.valid": len(result),
+                    "output.value": self._trace_json({"queries": result}),
+                    "output.mime_type": "application/json",
+                },
+            )
+        return result
 
     # ── Stage 2: per-sub-query retrieval + paragraph ranking ─────────────────
 
@@ -906,12 +955,13 @@ class LibrarianAgent:
         with self._filter_lock:
             self._filter_total += len(batches)
         ranked_ids: List[str] = []
+        bound_evaluate = self._tracer.bind_current_trace_context(self._evaluate_batch)
         # Judge batches only wait on the LLM (network I/O) — size to
         # _JUDGE_WORKERS, not the CPU count.
         with ThreadPoolExecutor(max_workers=_JUDGE_WORKERS) as pool:
             futures = []
             for batch in batches:
-                future = pool.submit(self._evaluate_batch, query, batch, template)
+                future = pool.submit(bound_evaluate, query, batch, template)
                 future.add_done_callback(self._on_filter_batch_done)
                 futures.append(future)
             for future in futures:  # submission order == batch order
@@ -991,7 +1041,41 @@ class LibrarianAgent:
                 "LibrarianAgent only supports max_loops=1 (single pass)."
             )
         self._on_progress = on_progress
-        return self._run(query)
+
+        with self._tracer.start_span(
+            "librarian.run",
+            attributes={
+                "openinference.span.kind": "CHAIN",
+                "input.value": self._trace_json({"query": query}),
+                "input.mime_type": "application/json",
+            },
+        ) as run_span:
+            try:
+                evidence_items = self._run(query)
+            except Exception as exc:
+                self._tracer.mark_span_error(run_span, exc)
+                raise
+            self._tracer.set_span_attributes(
+                run_span,
+                {
+                    "retrieval.evidence_count": len(evidence_items),
+                    "output.value": self._trace_json(
+                        {
+                            "evidence_count": len(evidence_items),
+                            "evidence": [
+                                {
+                                    "pmid": p.get("pmid"),
+                                    "title": p.get("title"),
+                                    "year": p.get("year"),
+                                }
+                                for p in evidence_items[:25]
+                            ],
+                        }
+                    ),
+                    "output.mime_type": "application/json",
+                },
+            )
+        return evidence_items
 
     def _run(self, query: str) -> List[Dict[str, Any]]:
         """Internal implementation of the single-pass retrieval pipeline."""
@@ -1008,15 +1092,37 @@ class LibrarianAgent:
         # pool, merging duplicate/overlapping selections. This flat paragraph
         # pool is what Stage 3 judges.
         self._progress(f"Searching Europe PMC · {len(queries)} sub-queries")
-        # One CPU-bound thread per sub-query, capped at the CPUs actually
-        # available so a large max_query_count can't oversubscribe a small
-        # container.
-        stage2_workers = min(max(len(queries), 1), _available_cpus())
-        with ThreadPoolExecutor(max_workers=stage2_workers) as pool:
-            per_subquery = pool.map(self._paragraphs_for_subquery, queries)
-        paragraphs = _merge_selected_paragraphs(
-            [para for subquery_paras in per_subquery for para in subquery_paras]
-        )
+        with self._tracer.start_span(
+            "librarian.stage2_paragraphs",
+            attributes={
+                "openinference.span.kind": "CHAIN",
+                "search.query_count": len(queries),
+                "input.value": self._trace_json({"queries": queries}),
+                "input.mime_type": "application/json",
+            },
+        ) as stage2_span:
+            bound_stage2 = self._tracer.bind_current_trace_context(
+                self._paragraphs_for_subquery
+            )
+            # One CPU-bound thread per sub-query, capped at the CPUs
+            # actually available so a large max_query_count can't
+            # oversubscribe a small container.
+            stage2_workers = min(max(len(queries), 1), _available_cpus())
+            with ThreadPoolExecutor(max_workers=stage2_workers) as pool:
+                per_subquery = pool.map(bound_stage2, queries)
+            paragraphs = _merge_selected_paragraphs(
+                [para for subquery_paras in per_subquery for para in subquery_paras]
+            )
+            self._tracer.set_span_attributes(
+                stage2_span,
+                {
+                    "paragraph.count": len(paragraphs),
+                    "output.value": self._trace_json(
+                        {"paragraph_count": len(paragraphs)}
+                    ),
+                    "output.mime_type": "application/json",
+                },
+            )
         self._log(f"{len(paragraphs)} paragraphs after Stage 2")
         self._progress(f"Found {len(paragraphs)} candidate paragraphs")
         if not paragraphs:
@@ -1029,7 +1135,26 @@ class LibrarianAgent:
         # relevant. Stage 3's output IS the final set — variable size, with
         # no final top_k cap applied on top of the judge's decision.
         self._progress("Judging paragraph relevance")
-        relevant_papers = self._relevance_filter(query, paragraphs)
+        with self._tracer.start_span(
+            "librarian.filter_relevance",
+            attributes={
+                "openinference.span.kind": "CHAIN",
+                "paragraph.count": len(paragraphs),
+                "input.value": self._trace_json({"paragraph_count": len(paragraphs)}),
+                "input.mime_type": "application/json",
+            },
+        ) as filter_span:
+            relevant_papers = self._relevance_filter(query, paragraphs)
+            self._tracer.set_span_attributes(
+                filter_span,
+                {
+                    "paper.count.relevant": len(relevant_papers),
+                    "output.value": self._trace_json(
+                        {"relevant_count": len(relevant_papers)}
+                    ),
+                    "output.mime_type": "application/json",
+                },
+            )
 
         self.last_run_debug = {
             "search_queries": queries,
