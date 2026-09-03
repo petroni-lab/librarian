@@ -133,6 +133,22 @@ def _available_cpus() -> int:
 # ── Pure helpers (no network) ────────────────────────────────────────────────
 
 
+def _first_affiliation(paper: Dict[str, Any]) -> str:
+    """The first non-empty author affiliation on a Europe PMC record, or ''.
+
+    literature_search.py carries a full per-author ``authorsWithAffiliations``
+    list, but every display consumer shows a single institution line. The
+    record keeps just this one string and drops the list.
+    """
+    for entry in paper.get("authorsWithAffiliations") or []:
+        if not isinstance(entry, dict):
+            continue
+        affiliation = str(entry.get("affiliation") or "").strip()
+        if affiliation:
+            return affiliation
+    return ""
+
+
 def _candidate_id(paper: Dict[str, Any]) -> str:
     """Stable per-paper id: PMID → EPMC id → DOI → title → object identity.
 
@@ -737,6 +753,7 @@ class LibrarianAgent:
             "epmcId": str(paper.get("epmcId") or ""),
             "epmcSource": str(paper.get("epmcSource") or paper.get("sourceCode") or ""),
             "url": str(paper.get("url") or ""),
+            "affiliation": _first_affiliation(paper),
             "has_fulltext": bool(paper.get("inEPMC") or paper.get("hasFreeFullText")),
         }
 
