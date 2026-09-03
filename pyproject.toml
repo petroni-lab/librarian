@@ -10,6 +10,7 @@ dependencies = [
     "bm25s>=0.2",       # BM25 paragraph ranking
     "pysbd>=0.3",       # sentence segmentation for evidence extraction
     "python-dotenv>=1.0", # load LLM_* config from a .env file
+    "PyStemmer>=2.2",   # Snowball stemming for BM25 paragraph scoring
 ]
 
 [tool.uv]

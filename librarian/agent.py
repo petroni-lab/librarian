@@ -211,15 +211,56 @@ def _strip_epmc_operators(query: str) -> str:
     return " ".join(tokens)
 
 
+def _load_bm25_stemmer() -> Optional[Any]:
+    """Snowball (English) stemmer callable for BM25, or ``None`` when disabled.
+
+    Stemming collapses morphological variants (``signaling``/``signal``,
+    ``nanoparticles``/``nanoparticle``) so a sub-query keyword matches
+    inflected forms in the paragraphs — a recall win for lexical scoring. On
+    by default; set ``LITERATURE_BM25_STEMMING`` to a falsey token
+    (0/false/no/off) to disable (e.g. for an ablation, or if Snowball
+    over-merges a domain term). Built once at import; ``PyStemmer`` is the
+    stemmer ``bm25s`` documents. If it is unavailable we fall back to no
+    stemming rather than fail the import.
+    """
+    if os.environ.get("LITERATURE_BM25_STEMMING", "1").strip().lower() in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+        return None
+    try:
+        import Stemmer  # PyStemmer
+
+        return Stemmer.Stemmer("english").stemWords
+    except ImportError:
+        logger.warning("PyStemmer not installed — BM25 stemming disabled.")
+        return None
+
+
+# One shared stemmer, built at import (stateless, thread-safe for read-only stem).
+_BM25_STEMMER = _load_bm25_stemmer()
+
+
 def _bm25_rank(query: str, paragraphs: List[str]) -> List[Tuple[int, float]]:
-    """Return ``(index, score)`` for every paragraph, highest score first."""
+    """Return ``(index, score)`` for every paragraph, highest score first.
+
+    Query and corpus are tokenized with the SAME stemmer (see
+    ``_BM25_STEMMER``) so stemmed query terms match stemmed corpus terms;
+    stemming both is required or the two token spaces never line up.
+    """
     if not paragraphs:
         return []
     clean_query = _strip_epmc_operators(query) or query
-    corpus_tokens = bm25s.tokenize(paragraphs, stopwords="en", show_progress=False)
+    corpus_tokens = bm25s.tokenize(
+        paragraphs, stopwords="en", stemmer=_BM25_STEMMER, show_progress=False
+    )
     retriever = bm25s.BM25()
     retriever.index(corpus_tokens, show_progress=False)
-    query_tokens = bm25s.tokenize([clean_query], stopwords="en", show_progress=False)
+    query_tokens = bm25s.tokenize(
+        [clean_query], stopwords="en", stemmer=_BM25_STEMMER, show_progress=False
+    )
     idxs, scores = retriever.retrieve(
         query_tokens, k=len(paragraphs), show_progress=False
     )
