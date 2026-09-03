@@ -14,24 +14,22 @@ from typing import Optional
 
 _DEFAULT_MODEL_NAME: Optional[str] = None  # falls back to LLM_MODEL env var
 _DEFAULT_MAX_QUERY_COUNT = 7
-# Europe PMC results fetched per sub-query before the per-query prefilter cap.
-_DEFAULT_SEARCH_PAGE_SIZE = 50
-# Per-query prefilter cap: how many of each sub-query's top papers are kept for
-# full-text enrichment and relevance filtering.
+# Europe PMC results fetched per sub-query — every returned paper is decomposed
+# into paragraphs and BM25-ranked, so this is also the per-sub-query recall lever.
 _DEFAULT_PAPERS_PER_SUBQUERY = 50
-# Per-paper BM25 excerpt budget in tokens (x 0.75 = words).
-# 3072 -> ~2300 words: the value that drove LitQA2 accuracy from 0.65 -> 0.75.
-_DEFAULT_FULL_TEXT_TARGET_TOKENS_PER_PAPER = 3072
-# Words of evidence per paper handed to the summarizer: a contiguous slice of
-# the larger BM25 excerpt. 250 matches OpenScholar's passage size.
-_DEFAULT_EVIDENCE_SNIPPET_MAX_WORDS = 250
-# LLM relevance-filter batch sizes.
-_DEFAULT_ABSTRACT_FILTER_BATCH = 50
-_DEFAULT_FULLTEXT_FILTER_BATCH = 10
-# Final-merge pool caps. The returned passage set is composed from two separate
-# pools so abstract-only papers are never crowded out by full-text papers.
-_DEFAULT_MAX_FULLTEXT_PAPERS = 30
-_DEFAULT_MAX_ABSTRACT_ONLY_PAPERS = 30
+# Stage-2 knob k: top-BM25 paragraphs each sub-query passes to Stage 3.
+_DEFAULT_PARAGRAPHS_PER_SUBQUERY = 16
+# Stage-3 batch size: paragraphs per relevance-judge LLM call. Should be
+# >= paragraphs_per_subquery * max_query_count so the whole pool is judged in
+# ONE call: the judge ranks globally, but multi-batch results are merely
+# concatenated in batch order, so a smaller value silently degrades the
+# ranking to per-batch. Raise all three knobs together.
+_DEFAULT_PARAGRAPHS_PER_JUDGE_BATCH = 128
+# Body paragraphs longer than this are split into overlapping windows before
+# BM25 so a long paragraph can't outrank on length alone. Overlap keeps a
+# match that straddles a cut intact.
+_DEFAULT_MAX_PARAGRAPH_WORDS = 250
+_DEFAULT_PARAGRAPH_OVERLAP_WORDS = 50
 # Relevance-filter LLM temperature. 0.1 is the winning config; set to 0 for
 # deterministic, reproducible filtering.
 _DEFAULT_FILTER_TEMPERATURE = 0.1
@@ -53,14 +51,11 @@ class LibrarianRuntimeConfig:
     default_model_name: Optional[str]
     query_budget_guidance: str
     max_query_count: int
-    search_page_size: int
-    evidence_snippet_max_words: int
     papers_per_subquery: int
-    full_text_target_tokens_per_paper: int
-    abstract_filter_batch: int
-    fulltext_filter_batch: int
-    max_fulltext_papers: int
-    max_abstract_only_papers: int
+    paragraphs_per_subquery: int
+    paragraphs_per_judge_batch: int
+    max_paragraph_words: int
+    paragraph_overlap_words: int
     filter_temperature: float
 
 
@@ -81,26 +76,25 @@ def load_runtime_config() -> LibrarianRuntimeConfig:
         max_query_count=_env_override(
             "LITERATURE_MAX_QUERY_COUNT", _DEFAULT_MAX_QUERY_COUNT, int
         ),
-        search_page_size=_DEFAULT_SEARCH_PAGE_SIZE,
-        evidence_snippet_max_words=_env_override(
-            "LITERATURE_EVIDENCE_SNIPPET_MAX_WORDS",
-            _DEFAULT_EVIDENCE_SNIPPET_MAX_WORDS,
+        papers_per_subquery=_env_override(
+            "LITERATURE_PAPERS_PER_SUBQUERY", _DEFAULT_PAPERS_PER_SUBQUERY, int
+        ),
+        paragraphs_per_subquery=_env_override(
+            "LITERATURE_PARAGRAPHS_PER_SUBQUERY",
+            _DEFAULT_PARAGRAPHS_PER_SUBQUERY,
             int,
         ),
-        papers_per_subquery=_DEFAULT_PAPERS_PER_SUBQUERY,
-        full_text_target_tokens_per_paper=_env_override(
-            "LITERATURE_FULL_TEXT_TARGET_TOKENS_PER_PAPER",
-            _DEFAULT_FULL_TEXT_TARGET_TOKENS_PER_PAPER,
+        paragraphs_per_judge_batch=_env_override(
+            "LITERATURE_PARAGRAPHS_PER_JUDGE_BATCH",
+            _DEFAULT_PARAGRAPHS_PER_JUDGE_BATCH,
             int,
         ),
-        abstract_filter_batch=_DEFAULT_ABSTRACT_FILTER_BATCH,
-        fulltext_filter_batch=_DEFAULT_FULLTEXT_FILTER_BATCH,
-        max_fulltext_papers=_env_override(
-            "LITERATURE_MAX_FULLTEXT_PAPERS", _DEFAULT_MAX_FULLTEXT_PAPERS, int
+        max_paragraph_words=_env_override(
+            "LITERATURE_MAX_PARAGRAPH_WORDS", _DEFAULT_MAX_PARAGRAPH_WORDS, int
         ),
-        max_abstract_only_papers=_env_override(
-            "LITERATURE_MAX_ABSTRACT_ONLY_PAPERS",
-            _DEFAULT_MAX_ABSTRACT_ONLY_PAPERS,
+        paragraph_overlap_words=_env_override(
+            "LITERATURE_PARAGRAPH_OVERLAP_WORDS",
+            _DEFAULT_PARAGRAPH_OVERLAP_WORDS,
             int,
         ),
         filter_temperature=_env_override(

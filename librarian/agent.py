@@ -2,23 +2,23 @@
 
 Single-pass pipeline (max_loops=1, the only supported mode):
 
-  1. _generate_queries   LLM turns the user question into N Europe PMC sub-queries
-                         using the europepmc_claude_librarian prompt.
-  2. _validate_queries   drop sub-queries whose Europe PMC field syntax is broken.
-  3. multithread_routine per sub-query, run in parallel:
-                           - search Europe PMC (<=50 papers/sub-query),
-                           - fetch each paper's full-text body,
-                           - BM25-rank the body paragraphs against the ORIGINAL
-                             user query and keep the top paragraphs up to a
-                             per-paper word budget (~2300 words = 3072 tokens) as
-                             ``full_text_excerpt``.
-  4. dedup candidate papers across all sub-queries.
-  5. Two-pass relevance filter (winning bm25_per_paper strategy), merged
-     full-text-first: a full-text filter over papers with an excerpt
-     (relevance_filter_fulltext.md) + an abstract triage over all candidates
-     (relevance_filter.md). Returns the merged relevant papers as evidence
-     passages (each with its filter-cited evidence snippet).
-
+  Stage 1 — Subquery generation (_generate_queries + _validate_queries):
+      LLM turns the user question into N Europe PMC sub-queries; drop those
+      whose Europe PMC field syntax is broken.
+  Stage 2 — Paper-level retrieval + paragraph BM25 ranking (_paragraphs_for_subquery,
+      one thread per sub-query):
+        - search the sub-query against Europe PMC (papers_per_subquery papers),
+        - decompose every paper into paragraphs (abstract + full-text body chunks,
+          no distinction), BM25-rank the pool against the sub-query, keep the top k
+          (paragraphs_per_subquery).
+      ``run`` concatenates every sub-query's paragraphs into one flat pool and
+      merges duplicate or overlapping selections by source coordinates.
+  Stage 3 — Filtering, re-ranking & evidence extraction (_relevance_filter):
+      judge the paragraphs (one item each, batched by paragraphs_per_judge_batch
+      paragraphs per call — a paper's paragraphs may span batches), cite the
+      supporting sentences, then regroup the cited sentences by paper and return
+      the cited papers ranked most→least relevant, each with its judge-cited
+      evidence snippet.
 """
 
 from __future__ import annotations
@@ -29,10 +29,10 @@ import logging
 import os
 import re
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import bm25s
 import pysbd
@@ -42,6 +42,7 @@ from librarian.config import load_runtime_config
 from librarian.jats import extract_body_paragraphs
 from librarian.literature_search import search_scientific_literature_structured
 from librarian.llm_client import create_llm_client, parse_json_response
+from librarian.tracing_port import NullTracer, TracingPort
 
 logging.getLogger("bm25s").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -49,8 +50,7 @@ logger = logging.getLogger(__name__)
 # Prompts — co-located so this agent is self-contained.
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _QUERY_PROMPT_PATH = _PROMPTS_DIR / "europepmc_claude_librarian.md"
-_ABSTRACT_FILTER_PROMPT_PATH = _PROMPTS_DIR / "relevance_filter.md"
-_FULLTEXT_FILTER_PROMPT_PATH = _PROMPTS_DIR / "relevance_filter_fulltext.md"
+_FILTER_PROMPT_PATH = _PROMPTS_DIR / "relevance_filter.md"
 
 # Europe PMC full-text fetch endpoint (PMC id -> JATS XML).
 _FULLTEXT_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML"
@@ -59,27 +59,27 @@ _FULLTEXT_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTe
 # (query count, page size, evidence words, pool caps, filter batches, ...) lives
 # in config.py instead.
 #
-# The relevance-filter and full-text-fetch pools below only WAIT on network I/O,
-# so they are sized to fixed constants independent of CPU count. The sub-query
-# search fan-out does real CPU work (search + downstream BM25) and instead sizes
-# to the CPUs actually available (see _available_cpus), so it matches the
-# container's cores without oversubscribing.
-_MAX_WORKERS = 8
-# Parallel full-text fetches per sample (deduped first, so this is unique papers).
-_FETCH_WORKERS = 12
-# Overall ceiling on returned papers (safety backstop; the two filters do the real
-# selecting). Defaults to the sum of the per-pool caps (30 + 30) so it does not
-# truncate the intended split.
-_DEFAULT_FINAL_TOP_K = 60
+# Stage 3's judge threads only WAIT on the LLM endpoint (network I/O, no CPU), so
+# their pool is a fixed count independent of cores. Stage 2's threads do CPU work
+# (search + BM25) and instead size to the CPUs actually available (see
+# _available_cpus), so they match the container's cores without oversubscribing.
+_JUDGE_WORKERS = 8
+# Output budget for one Stage-3 relevance batch. Generous margin over a plain
+# JSON id-list response so a wide batch doesn't get silently truncated.
+_FILTER_MAX_TOKENS = 8192
+# Quoted tokens in a judge reply; used to salvage ids when the JSON is unparseable.
+_QUOTED_TOKEN_RE = re.compile(r'"([A-Za-z0-9_\-]+)"')
 
 
-def _per_paper_word_limit(config_tokens: int) -> int:
-    """Convert a token budget to a word budget (x 0.75), floored at 200 words.
-
-    3072 x 0.75 ~= 2304 words — the value that drove LitQA2 accuracy from
-    ~0.65 to ~0.75.
-    """
-    return max(200, int(config_tokens * 0.75))
+def _dedupe_preserving_order(ids: Iterable[str]) -> List[str]:
+    """Drop repeats but keep first-seen order, which is the judge's ranking."""
+    seen: set = set()
+    unique: List[str] = []
+    for identifier in ids:
+        if identifier not in seen:
+            seen.add(identifier)
+            unique.append(identifier)
+    return unique
 
 
 def _cgroup_cpu_quota() -> Optional[int]:
@@ -134,11 +134,93 @@ def _available_cpus() -> int:
 # ── Pure helpers (no network) ────────────────────────────────────────────────
 
 
+def _first_affiliation(paper: Dict[str, Any]) -> str:
+    """The first non-empty author affiliation on a Europe PMC record, or ''.
+
+    literature_search.py carries a full per-author ``authorsWithAffiliations``
+    list, but every display consumer shows a single institution line. The
+    record keeps just this one string and drops the list.
+    """
+    for entry in paper.get("authorsWithAffiliations") or []:
+        if not isinstance(entry, dict):
+            continue
+        affiliation = str(entry.get("affiliation") or "").strip()
+        if affiliation:
+            return affiliation
+    return ""
+
+
+def _candidate_id(paper: Dict[str, Any]) -> str:
+    """Stable per-paper id: PMID → EPMC id → DOI → title → object identity.
+
+    Shared by paragraph dedup and the Stage-3 judge so a paper keys identically
+    everywhere. Two papers with the same pmid share an id even if they are
+    distinct dicts (e.g. returned by two different sub-queries).
+    """
+    pmid = str(paper.get("pmid") or "").strip()
+    if pmid:
+        return pmid
+    epmc_id = str(paper.get("epmcId") or "").strip()
+    if epmc_id:
+        source = str(paper.get("epmcSource") or paper.get("sourceCode") or "").strip()
+        return f"{source}:{epmc_id}" if source else epmc_id
+    return str(paper.get("doi") or paper.get("title") or id(paper))
+
+
+def _merge_selected_paragraphs(
+    paragraphs: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Merge overlapping selections from the same source paragraph.
+
+    Stage 2 may select the same or overlapping chunks through several
+    sub-queries. Group them by paper, source paragraph, and source text; union
+    touching word intervals; and rebuild each selected interval once. Group
+    order follows first selection while intervals within a source paragraph
+    follow document order.
+    """
+    groups: Dict[Tuple[str, int, str], List[Dict[str, Any]]] = {}
+    for paragraph in paragraphs:
+        source_text = str(paragraph.get("source_text") or paragraph.get("text") or "")
+        source_index = int(paragraph.get("source_paragraph_index", 0))
+        key = (_candidate_id(paragraph["paper"]), source_index, source_text)
+        groups.setdefault(key, []).append(paragraph)
+
+    merged: List[Dict[str, Any]] = []
+    for (_, source_index, source_text), selected in groups.items():
+        source_words = source_text.split()
+        intervals = sorted(
+            (
+                int(paragraph.get("word_start", 0)),
+                int(paragraph.get("word_end", len(source_words))),
+            )
+            for paragraph in selected
+        )
+        merged_intervals: List[List[int]] = []
+        for start, end in intervals:
+            if merged_intervals and start <= merged_intervals[-1][1]:
+                merged_intervals[-1][1] = max(merged_intervals[-1][1], end)
+            else:
+                merged_intervals.append([start, end])
+        base = selected[0]
+        for start, end in merged_intervals:
+            merged.append(
+                {
+                    **base,
+                    "text": " ".join(source_words[start:end]),
+                    "source_text": source_text,
+                    "source_paragraph_index": source_index,
+                    "word_start": start,
+                    "word_end": end,
+                }
+            )
+    return merged
+
+
 def _strip_epmc_operators(query: str) -> str:
     """Reduce a Europe PMC query to bare keywords for BM25.
 
-    Drops field specifiers (``TITLE_ABS:``), quotes, parentheses and the boolean
-    operators AND/OR/NOT. A plain keyword query is returned unchanged.
+    Drops field specifiers (``TITLE_ABS:``), quotes, parentheses and the
+    boolean operators AND/OR/NOT. A plain keyword query is returned unchanged.
     """
     stripped = re.sub(r"\b[A-Z_]+:", " ", query)
     stripped = stripped.replace('"', " ").replace("(", " ").replace(")", " ")
@@ -146,56 +228,169 @@ def _strip_epmc_operators(query: str) -> str:
     return " ".join(tokens)
 
 
-def _bm25_rank(query: str, passages: List[str]) -> List[Tuple[int, float]]:
-    """Return ``(index, score)`` for every passage, highest score first."""
-    if not passages:
+def _load_bm25_stemmer() -> Optional[Any]:
+    """Snowball (English) stemmer callable for BM25, or ``None`` when disabled.
+
+    Stemming collapses morphological variants (``signaling``/``signal``,
+    ``nanoparticles``/``nanoparticle``) so a sub-query keyword matches
+    inflected forms in the paragraphs — a recall win for lexical scoring. On
+    by default; set ``LITERATURE_BM25_STEMMING`` to a falsey token
+    (0/false/no/off) to disable (e.g. for an ablation, or if Snowball
+    over-merges a domain term). Built once at import; ``PyStemmer`` is the
+    stemmer ``bm25s`` documents. If it is unavailable we fall back to no
+    stemming rather than fail the import.
+    """
+    if os.environ.get("LITERATURE_BM25_STEMMING", "1").strip().lower() in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+        return None
+    try:
+        import Stemmer  # PyStemmer
+
+        return Stemmer.Stemmer("english").stemWords
+    except ImportError:
+        logger.warning("PyStemmer not installed — BM25 stemming disabled.")
+        return None
+
+
+# One shared stemmer, built at import (stateless, thread-safe for read-only stem).
+_BM25_STEMMER = _load_bm25_stemmer()
+
+
+def _bm25_rank(query: str, paragraphs: List[str]) -> List[Tuple[int, float]]:
+    """Return ``(index, score)`` for every paragraph, highest score first.
+
+    Query and corpus are tokenized with the SAME stemmer (see
+    ``_BM25_STEMMER``) so stemmed query terms match stemmed corpus terms;
+    stemming both is required or the two token spaces never line up.
+    """
+    if not paragraphs:
         return []
     clean_query = _strip_epmc_operators(query) or query
-    corpus_tokens = bm25s.tokenize(passages, stopwords="en", show_progress=False)
+    corpus_tokens = bm25s.tokenize(
+        paragraphs, stopwords="en", stemmer=_BM25_STEMMER, show_progress=False
+    )
     retriever = bm25s.BM25()
     retriever.index(corpus_tokens, show_progress=False)
-    query_tokens = bm25s.tokenize([clean_query], stopwords="en", show_progress=False)
+    query_tokens = bm25s.tokenize(
+        [clean_query], stopwords="en", stemmer=_BM25_STEMMER, show_progress=False
+    )
     idxs, scores = retriever.retrieve(
-        query_tokens, k=len(passages), show_progress=False
+        query_tokens, k=len(paragraphs), show_progress=False
     )
     return [(int(idxs[0][i]), float(scores[0][i])) for i in range(len(idxs[0]))]
 
 
-def _select_excerpt_within_budget(
-    query: str, records: List[Dict[str, str]], word_limit: int
-) -> str:
-    """Keep the top-BM25 paragraphs up to ``word_limit`` words, joined in source order.
+# Paper metadata mixed into a paragraph's BM25 document (scoring only — never
+# the returned evidence text), so a sub-query naming it matches at retrieval
+# too. The abstract carries the whole citation (also the fields the Stage-3
+# judge sees); body chunks carry ONLY the year. Author/journal/title would
+# boost every body chunk of a paper equally, hiding which paragraph actually
+# matched — so they stay on the abstract; year is a harmless filter-like
+# token every chunk can carry.
+_ABSTRACT_BM25_FIELDS = ("title", "authors", "journal", "year")
+_BODY_BM25_FIELDS = ("year",)
 
-    Each paragraph's BM25 document is ``text + section_title + section_type`` (so
-    section terms contribute), ranked against the ORIGINAL query; accumulate
-    positive-score paragraphs until the word budget (counted on the TEXT) is
-    reached, then re-join the TEXT in document order. Falls back to leading
-    paragraphs if nothing scores > 0.
+
+def _bm25_metadata(paper: Dict[str, Any], fields: Tuple[str, ...]) -> str:
+    """Space-joined values of ``fields`` from ``paper``, for the BM25 document."""
+    return " ".join(str(paper.get(field) or "").strip() for field in fields).strip()
+
+
+def _bm25_doc(record: Dict[str, Any]) -> str:
+    """BM25 document for a paragraph record: text + section title/type + metadata."""
+    return " ".join(
+        [
+            str(record.get("text", "")),
+            str(record.get("section_title", "")),
+            str(record.get("section_type", "")),
+            str(record.get("bm25_metadata", "")),
+        ]
+    )
+
+
+def _rank_paragraphs_for_subquery(
+    subquery: str, records: List[Dict[str, Any]], k: int
+) -> List[Dict[str, Any]]:
+    """Top ``k`` paragraph records BM25-scored against ONE sub-query.
+
+    The Stage-2 primitive: each record is scored against the *sub-query* text
+    (not the original question), so the paragraph that triggered THAT
+    sub-query's lexical match surfaces — which may be a body chunk, not the
+    abstract. Europe PMC field/boolean syntax in the sub-query is stripped by
+    ``_bm25_rank`` before scoring, so only the keywords matter.
+
+    Returns the records themselves (with their chunk offsets intact), highest
+    score first, so the caller can pool paragraphs from several sub-queries.
+    **Dedup is a pool-level concern, not handled here**: this helper may
+    return a record that another sub-query's call also returned. The caller
+    merging the per-sub-query pools merges duplicate and overlapping source
+    intervals, so a paragraph relevant to several sub-queries costs the
+    downstream judge budget once. Positive-scoring records are preferred; if
+    none score above zero the leading ``k`` records are returned as a recall
+    fallback.
     """
-    if not records:
-        return ""
-    docs = [
-        " ".join(
-            [
-                str(r.get("text", "")),
-                str(r.get("section_title", "")),
-                str(r.get("section_type", "")),
-            ]
+    if not records or k <= 0:
+        return []
+    ranked = _bm25_rank(subquery, [_bm25_doc(r) for r in records])
+    positive = [i for i, score in ranked if score > 0]
+    order = positive if positive else [i for i, _ in ranked]
+    return [records[i] for i in order[:k]]
+
+
+def _chunk_paragraphs(
+    records: List[Dict[str, Any]], max_words: int, overlap: int
+) -> List[Dict[str, Any]]:
+    """Split over-long paragraph records into overlapping word windows.
+
+    Records at or under ``max_words`` pass through untouched. Longer ones
+    become several records sharing the same section metadata, each a
+    ``max_words`` window stepped by ``max_words - overlap`` so a match
+    spanning a cut isn't lost. Keeps BM25 from favouring a long paragraph on
+    length alone.
+
+    :raises ValueError: if ``overlap`` is not smaller than ``max_words``,
+        which would make the window step 1 word at a time — a 600-word
+        paragraph becomes 501 chunks instead of 3, silently flooding Stage 3
+        and its LLM cost.
+    """
+    if overlap >= max_words:
+        raise ValueError(
+            f"paragraph_overlap_words ({overlap}) must be smaller than "
+            f"max_paragraph_words ({max_words})"
         )
-        for r in records
-    ]
-    ranked = _bm25_rank(query, docs)
-    positive = [(i, s) for i, s in ranked if s > 0]
-    source = positive if positive else [(i, 0.0) for i in range(len(records))]
-    kept: List[int] = []
-    words = 0
-    for index, _ in source:
-        kept.append(index)
-        words += len(str(records[index].get("text", "")).split())
-        if words >= word_limit:
-            break
-    kept.sort()  # document order → coherent excerpt
-    return " ".join(str(records[i].get("text", "")) for i in kept)
+    step = max_words - overlap
+    chunked: List[Dict[str, Any]] = []
+    for record in records:
+        source_text = str(record.get("text", ""))
+        words = source_text.split()
+        if len(words) <= max_words:
+            chunked.append(
+                {
+                    **record,
+                    "source_text": source_text,
+                    "word_start": 0,
+                    "word_end": len(words),
+                }
+            )
+            continue
+        for start in range(0, len(words), step):
+            window = words[start : start + max_words]
+            chunked.append(
+                {
+                    **record,
+                    "text": " ".join(window),
+                    "source_text": source_text,
+                    "word_start": start,
+                    "word_end": start + len(window),
+                }
+            )
+            if start + max_words >= len(words):
+                break
+    return chunked
 
 
 # One reusable segmenter; sentence splitting runs single-threaded, so a shared
@@ -222,76 +417,71 @@ class _Sentence:
 
     paper_id: str
     text: str
-    idx: int  # reading-order position within its paper
+    sentence_index: int  # reading-order position within the selected interval
+    source_paragraph_index: int  # paragraph position within the source paper
+    source_word_start: int  # selected interval position within the source paragraph
 
 
 def _build_sentence_items(
+    paragraph_id: str,
     paper_id: str,
+    source_paragraph_index: int,
+    source_word_start: int,
     source_text: str,
     registry: Dict[str, _Sentence],
 ) -> List[Dict[str, str]]:
-    """Split text into ``{"id": "<pid>_A", "text": ...}`` items (filter protocol).
+    """Split one paragraph into ``{"id": "paragraph_0_A", "text": ...}`` judge items.
 
-    No sentence cap — the full excerpt is shown to the filter. Each sentence is
-    also recorded in ``registry`` so judge-selected evidence can later be traced
-    back to its paper and restored to reading order.
+    ``paragraph_id`` makes sentence ids unique within Stage 3. Paper and
+    source coordinates stay internal so citations map back to document order.
+    No sentence cap — the full excerpt is shown to the judge.
     """
     sentences = _split_sentences(source_text)
     if not sentences and (source_text or "").strip():
         sentences = [source_text.strip()]
     items: List[Dict[str, str]] = []
     for idx, sentence in enumerate(sentences):
-        sid = f"{paper_id}_{_sentence_suffix(idx)}"
-        registry[sid] = _Sentence(paper_id=paper_id, text=sentence, idx=idx)
+        sid = f"{paragraph_id}_{_sentence_suffix(idx)}"
+        registry[sid] = _Sentence(
+            paper_id=paper_id,
+            text=sentence,
+            sentence_index=idx,
+            source_paragraph_index=source_paragraph_index,
+            source_word_start=source_word_start,
+        )
         items.append({"id": sid, "text": sentence})
     return items
 
 
 def _group_contiguous_spans(sentences: List[_Sentence]) -> List[str]:
-    """Join reading-order sentences into contiguous spans.
+    """Join sentences into contiguous spans, one per adjacent run within a paragraph.
 
-    Sentences with consecutive in-paper indices form one span; a gap in the
-    indices starts a new span. The returned list has one entry per contiguous
-    run, so a consumer can tell non-adjacent evidence apart instead of reading a
-    single string that silently splices distant sentences together.
+    Two sentences merge only when they are consecutive within the same
+    selected interval. A different source paragraph, word interval, or
+    sentence gap starts a new span, preserving real document order without
+    joining unrelated evidence.
     """
     spans: List[List[str]] = []
-    prev_idx: Optional[int] = None
+    prev: Optional[_Sentence] = None
     for sent in sentences:
-        if prev_idx is None or sent.idx != prev_idx + 1:
+        contiguous = (
+            prev is not None
+            and sent.source_paragraph_index == prev.source_paragraph_index
+            and sent.source_word_start == prev.source_word_start
+            and sent.sentence_index == prev.sentence_index + 1
+        )
+        if not contiguous:
             spans.append([])
         spans[-1].append(sent.text)
-        prev_idx = sent.idx
+        prev = sent
     return [" ".join(span) for span in spans]
-
-
-def _truncate_spans_to_words(spans: List[str], max_words: int) -> List[str]:
-    """Cap the total word count across spans, preserving span boundaries.
-
-    Words are kept greedily in order; the span that crosses the budget is
-    word-sliced and later spans are dropped, so ``" ".join`` of the result holds
-    the first ``max_words`` words.
-    """
-    out: List[str] = []
-    used = 0
-    for span in spans:
-        if used >= max_words:
-            break
-        words = span.split()
-        remaining = max_words - used
-        if len(words) > remaining:
-            out.append(" ".join(words[:remaining]))
-            break
-        out.append(span)
-        used += len(words)
-    return out
 
 
 # ── Agent ────────────────────────────────────────────────────────────────────
 
 
 class LibrarianAgent:
-    """Retrieves and ranks evidence passages for a research question."""
+    """Retrieves and ranks evidence for a research question."""
 
     def __init__(
         self,
@@ -299,16 +489,25 @@ class LibrarianAgent:
         verbose: bool = False,
         llm_base_url: Optional[str] = None,
         llm_model_name: Optional[str] = None,
+        tracer: Optional[TracingPort] = None,
     ):
+        """Build a librarian ready to retrieve evidence for a query.
+
+        :param tracer: Span-tracing adapter (see ``tracing_port.py``). Defaults
+            to ``NullTracer`` (no-op) — pass your own backend's adapter to
+            trace a real run.
+        :type tracer: TracingPort or None
+        """
         # Full text is the default retrieval path; the flag is kept for harness
-        # compatibility (turning it off falls back to abstract-only passages).
+        # compatibility (turning it off falls back to abstract-only paragraphs).
         self.full_text_enrichment = full_text_enrichment
         self.verbose = verbose
+        self._tracer: TracingPort = tracer if tracer is not None else NullTracer()
 
         # Progress reporting: set per-run in run(); _progress() no-ops when unset.
         self._on_progress: Optional[Callable[[str], None]] = None
-        # Shared counters so the two concurrent filter passes report one combined
-        # "N/M batches" figure to the progress callback.
+        # Shared counters so the Stage-3 judge batches report one "N/M
+        # batches" figure to the progress callback.
         self._filter_lock = threading.Lock()
         self._filter_done = 0
         self._filter_total = 0
@@ -318,15 +517,10 @@ class LibrarianAgent:
         self._max_queries = runtime.max_query_count
         self._query_budget_guidance = runtime.query_budget_guidance
         self._papers_per_subquery = runtime.papers_per_subquery
-        self._full_text_target_tokens_per_paper = (
-            runtime.full_text_target_tokens_per_paper
-        )
-        self._abstract_filter_batch = runtime.abstract_filter_batch
-        self._fulltext_filter_batch = runtime.fulltext_filter_batch
-        self._max_fulltext_papers = runtime.max_fulltext_papers
-        self._max_abstract_only_papers = runtime.max_abstract_only_papers
-        self._search_page_size = runtime.search_page_size
-        self._evidence_snippet_max_words = runtime.evidence_snippet_max_words
+        self._paragraphs_per_subquery = runtime.paragraphs_per_subquery
+        self._paragraphs_per_judge_batch = runtime.paragraphs_per_judge_batch
+        self._max_paragraph_words = runtime.max_paragraph_words
+        self._paragraph_overlap_words = runtime.paragraph_overlap_words
         self._filter_temperature = runtime.filter_temperature
 
         self.llm = create_llm_client(
@@ -334,12 +528,7 @@ class LibrarianAgent:
             model_name=llm_model_name or runtime.default_model_name,
         )
         self._query_prompt = _QUERY_PROMPT_PATH.read_text(encoding="utf-8")
-        self._abstract_filter_prompt = _ABSTRACT_FILTER_PROMPT_PATH.read_text(
-            encoding="utf-8"
-        )
-        self._fulltext_filter_prompt = _FULLTEXT_FILTER_PROMPT_PATH.read_text(
-            encoding="utf-8"
-        )
+        self._filter_prompt = _FILTER_PROMPT_PATH.read_text(encoding="utf-8")
 
     def _log(self, message: str) -> None:
         if self.verbose:
@@ -350,12 +539,16 @@ class LibrarianAgent:
         if self._on_progress is not None:
             self._on_progress(message)
 
+    def _trace_json(self, payload: Any) -> str:
+        """Serialize compact trace payloads safely for span attributes."""
+        return json.dumps(payload, default=str, ensure_ascii=True)
+
     def _on_filter_batch_done(self, _future) -> None:
         """Bump the shared filter-batch counter and report N/M to the callback."""
         with self._filter_lock:
             self._filter_done += 1
             done, total = self._filter_done, self._filter_total
-        self._progress(f"Judging paper relevance · {done}/{total} batches")
+        self._progress(f"Judging paragraph relevance · {done}/{total} batches")
 
     # ── Step 1: query generation ─────────────────────────────────────────────
 
@@ -380,49 +573,66 @@ class LibrarianAgent:
             .replace("{additional_context}", additional_context)
         )
 
-        # max_tokens=8192 (NOT 1024): the claude prompt's JSON response is long;
-        # truncation → parse failure → a single raw-question search → bad retrieval.
-        response = self.llm.chat_completion(
-            [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.3,
-            max_tokens=8192,
-        )
-        parsed = parse_json_response(response)
-        queries = parsed.get("queries", []) if isinstance(parsed, dict) else []
-        if not queries:
-            # Retry once, deterministically, demanding strict JSON before falling
-            # back to the raw question.
-            retry_messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        "Return only valid JSON with a 'queries' array of Europe "
-                        'PMC query strings, e.g. {"queries": ["q1", "q2"]}. '
-                        "No prose, no markdown."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ]
-            retry = self.llm.chat_completion(
-                retry_messages, temperature=0.0, max_tokens=8192
+        with self._tracer.start_span(
+            "librarian.generate_queries",
+            attributes={
+                "openinference.span.kind": "CHAIN",
+                "input.value": self._trace_json({"query": query}),
+                "input.mime_type": "application/json",
+            },
+        ) as span:
+            # max_tokens=8192 (NOT 1024): the claude prompt's JSON response is
+            # long; truncation → parse failure → a single raw-question search
+            # → bad retrieval.
+            response = self.llm.chat_completion(
+                [
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,
+                max_tokens=8192,
             )
-            parsed = parse_json_response(retry)
+            parsed = parse_json_response(response)
             queries = parsed.get("queries", []) if isinstance(parsed, dict) else []
-        if not queries:
-            self._log("query-gen failed to parse; falling back to raw question")
-            queries = [query]
+            if not queries:
+                # Retry once, deterministically, demanding strict JSON before
+                # falling back to the raw question.
+                retry_messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Return only valid JSON with a 'queries' array of Europe "
+                            'PMC query strings, e.g. {"queries": ["q1", "q2"]}. '
+                            "No prose, no markdown."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ]
+                retry = self.llm.chat_completion(
+                    retry_messages, temperature=0.0, max_tokens=8192
+                )
+                parsed = parse_json_response(retry)
+                queries = parsed.get("queries", []) if isinstance(parsed, dict) else []
+            if not queries:
+                self._log("query-gen failed to parse; falling back to raw question")
+                queries = [query]
 
-        # Dedup (preserve order) and cap.
-        seen, unique = set(), []
-        for q in queries:
-            q = str(q).strip()
-            if q and q not in seen:
-                seen.add(q)
-                unique.append(q)
-        result = unique[: self._max_queries]
+            # Dedup (preserve order) and cap.
+            seen, unique = set(), []
+            for q in queries:
+                q = str(q).strip()
+                if q and q not in seen:
+                    seen.add(q)
+                    unique.append(q)
+            result = unique[: self._max_queries]
+            self._tracer.set_span_attributes(
+                span,
+                {
+                    "search.query_count": len(result),
+                    "output.value": self._trace_json({"queries": result}),
+                    "output.mime_type": "application/json",
+                },
+            )
         self._log(f"generated {len(result)} queries")
         return result
 
@@ -435,86 +645,119 @@ class LibrarianAgent:
         """
         from librarian.query_validation.batch_validator import BatchQueryValidator
 
-        report = BatchQueryValidator().validate_queries(queries)
-        valid = [r["query"] for r in report["results"] if r["valid"]]
-        if self.verbose and len(valid) != len(queries):
-            self._log(f"query validation kept {len(valid)}/{len(queries)}")
-        return valid or queries
-
-    # ── Step 3: per-sub-query retrieval ──────────────────────────────────────
-
-    def multithread_routine(
-        self,
-        subquery: str,
-        papers_per_subquery: Optional[int] = None,
-        original_query: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """Search one sub-query; return up to ``papers_per_subquery`` raw papers.
-
-        Enrichment (full-text fetch + BM25 excerpt) is deferred to ``run`` so it
-        happens once per unique paper, in parallel — not per sub-query.
-        ``original_query`` is accepted for signature stability but unused here.
-        """
-        cap = (
-            papers_per_subquery
-            if papers_per_subquery is not None
-            else self._papers_per_subquery
-        )
-        try:
-            papers = search_scientific_literature_structured(
-                subquery, page_size=self._search_page_size
+        with self._tracer.start_span(
+            "librarian.validate_queries",
+            attributes={
+                "openinference.span.kind": "CHAIN",
+                "search.query_count.input": len(queries),
+                "input.value": self._trace_json({"queries": queries}),
+                "input.mime_type": "application/json",
+            },
+        ) as span:
+            report = BatchQueryValidator().validate_queries(queries)
+            valid = [r["query"] for r in report["results"] if r["valid"]]
+            if self.verbose and len(valid) != len(queries):
+                self._log(f"query validation kept {len(valid)}/{len(queries)}")
+            result = valid or queries
+            self._tracer.set_span_attributes(
+                span,
+                {
+                    "search.query_count.valid": len(result),
+                    "output.value": self._trace_json({"queries": result}),
+                    "output.mime_type": "application/json",
+                },
             )
-        except Exception as exc:  # network/parse failure → skip this sub-query
-            self._log(f"search failed for {subquery!r}: {exc}")
-            return []
-        self._log(f"{subquery!r} → {len(papers[:cap])} papers")
-        return papers[:cap]
+        return result
 
-    def _excerpt_for_paper(self, paper: Dict[str, Any], rank_query: str) -> str:
-        """Top BM25 body paragraphs up to the word budget (~2300 words), or ''.
+    # ── Stage 2: per-sub-query retrieval + paragraph ranking ─────────────────
 
-        This full-text excerpt is context-fitting only: it shrinks a long paper so
-        the relevance judge can afford to read it. The judge then selects the
-        sentences that become the paper's cited evidence. Papers with no
-        open-access full text return '' and fall back to their abstract downstream.
+    def _paragraph_records_for_paper(
+        self, paper: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """One paper → its paragraph records: abstract + full-text body chunks.
+
+        Abstract and body paragraphs share one pool with no distinction. Each
+        record carries a ``paper`` reference so its metadata is reachable later.
         """
-        if not self.full_text_enrichment:
-            return ""
-        paragraphs = self._fetch_body_paragraphs(paper)
-        if not paragraphs:
-            return ""
-        return _select_excerpt_within_budget(
-            rank_query,
-            paragraphs,
-            _per_paper_word_limit(self._full_text_target_tokens_per_paper),
+        records: List[Dict[str, Any]] = []
+
+        abstract = str(paper.get("abstract") or "").strip()
+        if abstract:
+            records.append(
+                {
+                    "text": abstract,
+                    "section_title": "Abstract",
+                    "section_type": "abstract",
+                    "bm25_metadata": _bm25_metadata(paper, _ABSTRACT_BM25_FIELDS),
+                }
+            )
+
+        if self.full_text_enrichment:
+            body_metadata = _bm25_metadata(paper, _BODY_BM25_FIELDS)
+            for record in self._fetch_body_paragraphs(paper):
+                record["bm25_metadata"] = body_metadata
+                records.append(record)
+
+        for source_index, record in enumerate(records):
+            record["source_paragraph_index"] = source_index
+        chunked = _chunk_paragraphs(
+            records,
+            self._max_paragraph_words,
+            self._paragraph_overlap_words,
         )
+        for record in chunked:
+            record["paper"] = paper
+        return chunked
+
+    def _paragraphs_for_subquery(self, subquery: str) -> List[Dict[str, Any]]:
+        """One sub-query → its top-``k`` paragraphs, end to end in this thread.
+
+        Search Europe PMC for the sub-query, decompose every returned paper
+        into paragraphs (abstract + full-text chunks), BM25-rank the whole
+        pool against the sub-query, and keep the top
+        ``paragraphs_per_subquery``. Runs entirely in the calling thread so
+        ``run`` can fan these out, one thread per sub-query, with no shared
+        state.
+        """
+        # A search failure propagates out of the thread pool and fails the
+        # run, so the caller can tell "the search broke" apart from "no
+        # literature found" — silently returning [] here would surface a
+        # Europe PMC outage as an empty result set.
+        papers = search_scientific_literature_structured(
+            subquery, page_size=self._papers_per_subquery
+        )
+
+        pool: List[Dict[str, Any]] = []
+        for paper in papers:
+            pool.extend(self._paragraph_records_for_paper(paper))
+
+        top = _rank_paragraphs_for_subquery(
+            subquery, pool, self._paragraphs_per_subquery
+        )
+        self._log(f"{subquery!r} → {len(papers)} papers, {len(top)} paragraphs")
+        return top
 
     def _passage_from_paper(self, paper: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert a surviving paper into the returned evidence passage."""
-        excerpt = str(paper.get("full_text_excerpt") or "").strip()
-        text = excerpt or str(paper.get("abstract") or "").strip()
-        # Single citable evidence artifact for every downstream consumer:
-        # ``evidence_snippets``, the sentences the relevance judge cited (Step 5)
-        # grouped into contiguous spans and kept in reading order. Falls back to
-        # the excerpt/abstract as a single span only when the judge cited nothing.
-        judge_spans = list(paper.get("evidence_sentences_full_text") or []) or list(
-            paper.get("evidence_sentences_abstract") or []
-        )
-        spans = [s.strip() for s in judge_spans if s and s.strip()] or (
-            [text] if text else []
-        )
-        # Hard cap the TOTAL evidence at the word budget (~250, OpenScholar
-        # passage size). Sentence accumulation in the filter stops once the budget
-        # is reached, but the last sentence can overshoot, so bound it here too.
-        evidence_snippets = _truncate_spans_to_words(
-            spans, self._evidence_snippet_max_words
-        )
-        paper_id = str(
-            paper.get("pmid") or paper.get("doi") or paper.get("title") or ""
-        )
-        # NB: the full ~3072-token ``full_text_excerpt`` is deliberately NOT
-        # returned. It exists only as fuel for the internal relevance filter;
-        # downstream consumers cite from ``evidence_snippets`` (+ metadata).
+        """Convert a relevant paper into the returned evidence passage.
+
+        The one citable artifact every consumer reads is ``evidence_snippets``:
+        the sentences the Stage-3 judge cited, grouped into contiguous spans
+        in reading order. A paper whose cited sentences are non-adjacent
+        yields more than one span, so a consumer can tell them apart instead
+        of reading one string that silently splices distant sentences
+        together. When the judge cited nothing (a paper kept only as a
+        fallback), the abstract stands in as a single span.
+        """
+        judge_spans = [
+            span.strip()
+            for span in paper.get("evidence_sentences_full_text") or []
+            if span and span.strip()
+        ]
+        abstract = str(paper.get("abstract") or "").strip()
+        # Every span the judge cited for this paper — no word cap. Falls back
+        # to the abstract as a single span when the judge cited nothing.
+        evidence_snippets = judge_spans or ([abstract] if abstract else [])
+        paper_id = _candidate_id(paper)
         return {
             "evidence_snippets": evidence_snippets,
             "paper_id": paper_id,
@@ -524,6 +767,14 @@ class LibrarianAgent:
             "year": str(paper.get("year") or ""),
             "pmid": str(paper.get("pmid") or ""),
             "doi": str(paper.get("doi") or ""),
+            # Europe PMC record identity, kept verbatim under the upstream
+            # camelCase keys literature_search.py already uses. Preprints
+            # (source="PPR") have NO pmid, so without these a citation cannot
+            # be linked back to its EPMC article page.
+            "epmcId": str(paper.get("epmcId") or ""),
+            "epmcSource": str(paper.get("epmcSource") or paper.get("sourceCode") or ""),
+            "url": str(paper.get("url") or ""),
+            "affiliation": _first_affiliation(paper),
             "has_fulltext": bool(paper.get("inEPMC") or paper.get("hasFreeFullText")),
         }
 
@@ -553,7 +804,29 @@ class LibrarianAgent:
             return ""
         return response.text
 
-    # ── Step 5: two-pass LLM relevance filter ────────────────────────────────
+    # ── Step 5: single-pass LLM relevance filter ─────────────────────────────
+
+    @staticmethod
+    def _salvage_relevant_ids(response: str) -> List[str]:
+        """Recover sentence ids from a judge reply that failed to parse as JSON.
+
+        The judge returns ``relevant_ids`` ordered most→least relevant, so a
+        reply cut off mid-array still carries usable ranking in the part that
+        arrived — dropping the whole batch throws away good evidence. Ids the
+        batch never issued are harmless: ``_papers_from_cited_sentences``
+        skips anything missing from its sentence registry.
+
+        :param response: The raw judge reply.
+        :returns: First-seen-order ids, or ``[]`` if this is not a judge reply.
+        """
+        # Gate on the key so an unrelated error string cannot be mined for ids.
+        if "relevant_ids" not in response:
+            return []
+        return _dedupe_preserving_order(
+            token
+            for token in _QUOTED_TOKEN_RE.findall(response)
+            if token != "relevant_ids"
+        )
 
     def _evaluate_batch(
         self,
@@ -564,11 +837,11 @@ class LibrarianAgent:
     ) -> List[str]:
         """LLM-judge one batch; return relevant sentence IDs (most→least relevant).
 
-        On a malformed/empty response, split the batch and retry (<=2 levels) so a
-        whole batch is never silently dropped.
+        On a malformed/empty response, split the batch and retry (<=2 levels)
+        so a whole batch is never silently dropped.
         """
         prompt = prompt_template.replace("{user_query}", query).replace(
-            "{papers_batch}", json.dumps(batch_data, indent=2)
+            "{paragraphs_batch}", json.dumps(batch_data, indent=2)
         )
         try:
             response = self.llm.chat_completion(
@@ -583,7 +856,7 @@ class LibrarianAgent:
                     {"role": "user", "content": prompt},
                 ],
                 temperature=self._filter_temperature,
-                max_tokens=4096,
+                max_tokens=_FILTER_MAX_TOKENS,
             )
         except Exception as exc:
             self._log(f"filter batch error: {exc}")
@@ -596,7 +869,17 @@ class LibrarianAgent:
         parsed = parse_json_response(response)
         ids = parsed.get("relevant_ids") if isinstance(parsed, dict) else None
         if isinstance(ids, list):
-            return [str(x) for x in ids]
+            # Deduplicated even on the happy path: the judge can repeat ids
+            # without truncating, which inflates the caller's ranking walk.
+            return _dedupe_preserving_order(str(x) for x in ids)
+
+        # Unparseable (usually truncated mid-array): keep the prefix that
+        # arrived rather than re-judging or discarding the batch.
+        salvaged = self._salvage_relevant_ids(str(response))
+        if salvaged:
+            self._log(f"salvaged {len(salvaged)} ids from an unparseable judge reply")
+            return salvaged
+
         if depth < 2 and len(batch_data) > 1:
             mid = len(batch_data) // 2
             return self._evaluate_batch(
@@ -607,106 +890,133 @@ class LibrarianAgent:
         return []
 
     def _relevance_filter(
-        self,
-        query: str,
-        papers: List[Dict[str, Any]],
-        prompt_template: str,
-        text_field: str,
-        evidence_key: str,
+        self, query: str, paragraphs: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Keep the papers the LLM judges relevant, ranked most→least relevant.
+        """Stage 3: judge the paragraph pool → relevant papers, ranked.
 
-        ``text_field`` is the per-paper text shown to the judge (``abstract`` for
-        the triage pass, ``full_text_excerpt`` for the full-text pass). Cited
-        sentences are stashed on each paper as ``evidence_sentences_<key>``.
+        One judge item per PARAGRAPH; the flat list is batched by
+        ``paragraphs_per_judge_batch`` paragraphs per LLM call, so a paper
+        with many paragraphs can span several batches. Each paragraph is
+        split into cited-able sentences keyed so the cited sentence ids map
+        back to their paper (and its position) regardless of which batch
+        judged them. The judge returns sentence ids most→least relevant;
+        those become ``evidence_sentences_full_text`` on their paper, and
+        papers are returned in the order the judge first cited them. Papers
+        the judge never cites are dropped.
         """
-        if not papers:
+        if not paragraphs:
             return []
         today = datetime.date.today()
-        template = prompt_template.replace("{today_date}", today.isoformat()).replace(
-            "{today_year}", str(today.year)
-        )
-        batch_size = (
-            self._abstract_filter_batch
-            if text_field == "abstract"
-            else self._fulltext_filter_batch
-        )
+        template = self._filter_prompt.replace(
+            "{today_date}", today.isoformat()
+        ).replace("{today_year}", str(today.year))
 
-        by_id: Dict[str, Dict[str, Any]] = {}
-        sentences: Dict[str, _Sentence] = {}
-        batches: List[List[Dict[str, Any]]] = []
-        for i in range(0, len(papers), batch_size):
-            data = []
-            for j, p in enumerate(papers[i : i + batch_size]):
-                pid = str(
-                    p.get("pmid") or p.get("doi") or p.get("title") or f"paper_{i + j}"
-                )
-                by_id.setdefault(pid, p)
-                affil = "; ".join(
-                    f"{a.get('name', '')}: {str(a.get('affiliation', ''))[:200]}"
-                    for a in p.get("authorsWithAffiliations", [])
-                    if a.get("affiliation")
-                )
-                data.append(
-                    {
-                        "id": pid,
-                        "title": p.get("title", "N/A"),
-                        "authors": p.get("authors", "N/A"),
-                        "affiliations": affil,
-                        "journal": p.get("journal", "N/A"),
-                        "year": p.get("year", "N/A"),
-                        "abstract": _build_sentence_items(
-                            pid,
-                            str(p.get(text_field) or "").strip(),
-                            sentences,
-                        ),
-                    }
-                )
-            batches.append(data)
+        registry: Dict[str, _Sentence] = {}
+        paper_by_id: Dict[str, Dict[str, Any]] = {}
+        items: List[Dict[str, Any]] = []
+        for paragraph_index, paragraph in enumerate(paragraphs):
+            paper = paragraph["paper"]
+            paper_id = _candidate_id(paper)
+            paper_by_id[paper_id] = paper
+            paragraph_id = f"paragraph_{paragraph_index}"
+            # Metadata shown to the judge — the same fields folded into the
+            # abstract's BM25 doc at Stage 2 (_ABSTRACT_BM25_FIELDS).
+            item = {field: paper.get(field, "N/A") for field in _ABSTRACT_BM25_FIELDS}
+            items.append(
+                {
+                    "id": paragraph_id,
+                    **item,
+                    "sentences": _build_sentence_items(
+                        paragraph_id,
+                        paper_id,
+                        int(paragraph["source_paragraph_index"]),
+                        int(paragraph["word_start"]),
+                        str(paragraph.get("text") or "").strip(),
+                        registry,
+                    ),
+                }
+            )
 
-        # Judge every batch in parallel (each _evaluate_batch is one LLM call),
-        # preserving batch order so the relevance ranking stays stable. Each batch
-        # bumps the shared progress counter as it finishes (via a done-callback, so
-        # the count reflects real completion, not submission order).
+        ranked_ids = self._judge_items_in_batches(query, template, items)
+        return self._papers_from_cited_sentences(ranked_ids, registry, paper_by_id)
+
+    def _judge_items_in_batches(
+        self, query: str, template: str, items: List[Dict[str, Any]]
+    ) -> List[str]:
+        """Send items to the judge in batches of ``paragraphs_per_judge_batch`` → sentence ids.
+
+        Batches run in parallel; results are concatenated in batch order so
+        the overall most→least-relevant ranking is preserved. Each batch bumps
+        the shared progress counter as it finishes (via a done-callback, so
+        the count reflects real completion, not submission order).
+        """
+        batch_size = self._paragraphs_per_judge_batch
+        batches = [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
         with self._filter_lock:
             self._filter_total += len(batches)
         ranked_ids: List[str] = []
-        with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
+        bound_evaluate = self._tracer.bind_current_trace_context(self._evaluate_batch)
+        # Judge batches only wait on the LLM (network I/O) — size to
+        # _JUDGE_WORKERS, not the CPU count.
+        with ThreadPoolExecutor(max_workers=_JUDGE_WORKERS) as pool:
             futures = []
-            for b in batches:
-                future = pool.submit(self._evaluate_batch, query, b, template)
+            for batch in batches:
+                future = pool.submit(bound_evaluate, query, batch, template)
                 future.add_done_callback(self._on_filter_batch_done)
                 futures.append(future)
             for future in futures:  # submission order == batch order
                 ranked_ids.extend(future.result())
+        return ranked_ids
 
+    def _papers_from_cited_sentences(
+        self,
+        ranked_ids: List[str],
+        registry: Dict[str, _Sentence],
+        paper_by_id: Dict[str, Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Cited sentence ids → relevant papers with their evidence spans.
+
+        Walks the judge's ranked sentence ids: the first time a paper is
+        cited it joins the result (so paper order follows the judge's
+        ranking), and every sentence the judge cited for it is kept. Each
+        paper's sentences are then grouped into contiguous reading-order
+        spans on ``evidence_sentences_full_text`` for ``_passage_from_paper``.
+        """
         relevant: List[Dict[str, Any]] = []
-        seen: set = set()
-        # The judge cites all sentences that support relevance (no length target
-        # in its prompt); trim to the evidence word budget (~250 words). Since
-        # ``ranked_ids`` arrives most→least relevant, trimming keeps the
-        # highest-scoring sentences; they are re-sorted into reading order below.
-        budget = self._evidence_snippet_max_words
-        evidence_sids: Dict[str, List[str]] = {}
-        evidence_words: Dict[str, int] = {}
+        seen_papers: set = set()
+        seen_sentences: set = set()
+        sids_by_paper: Dict[str, List[str]] = {}
         for sid in ranked_ids:
-            sent = sentences.get(sid)
-            if sent is None or sent.paper_id not in by_id:
+            sentence = registry.get(sid)
+            if sentence is None or sentence.paper_id not in paper_by_id:
                 continue
-            pid = sent.paper_id
-            if pid not in seen:
-                seen.add(pid)
-                relevant.append(by_id[pid])
-            if evidence_words.get(pid, 0) >= budget:
-                continue
-            evidence_sids.setdefault(pid, []).append(sid)
-            evidence_words[pid] = evidence_words.get(pid, 0) + len(sent.text.split())
-        for pid, sids in evidence_sids.items():
-            ordered = sorted(sids, key=lambda s: sentences[s].idx)
-            by_id[pid][f"evidence_sentences_{evidence_key}"] = _group_contiguous_spans(
-                [sentences[s] for s in ordered]
+            coordinate = (
+                sentence.paper_id,
+                sentence.source_paragraph_index,
+                sentence.source_word_start,
+                sentence.sentence_index,
             )
-        self._log(f"{evidence_key} filter: {len(relevant)}/{len(papers)} relevant")
+            if coordinate in seen_sentences:
+                continue
+            seen_sentences.add(coordinate)
+            paper_id = sentence.paper_id
+            if paper_id not in seen_papers:
+                seen_papers.add(paper_id)
+                relevant.append(paper_by_id[paper_id])
+            sids_by_paper.setdefault(paper_id, []).append(sid)
+        for paper_id, sids in sids_by_paper.items():
+            ordered = sorted(
+                sids,
+                key=lambda s: (
+                    registry[s].source_paragraph_index,
+                    registry[s].source_word_start,
+                    registry[s].sentence_index,
+                ),
+            )
+            paper_by_id[paper_id]["evidence_sentences_full_text"] = (
+                _group_contiguous_spans([registry[s] for s in ordered])
+            )
+        self._log(f"Stage 3: {len(relevant)} relevant papers")
         return relevant
 
     # ── Orchestration ────────────────────────────────────────────────────────
@@ -715,23 +1025,59 @@ class LibrarianAgent:
         self,
         query: str,
         max_loops: int = 1,
-        top_k: int = _DEFAULT_FINAL_TOP_K,
         on_progress: Optional[Callable[[str], None]] = None,
     ) -> List[Dict[str, Any]]:
-        """Single-pass retrieval reproducing the winning bm25_per_paper strategy:
-        generate → search+enrich → full-text filter + abstract triage → merge.
+        """Single-pass retrieval: Stage 1 (generate + validate sub-queries) →
+        Stage 2 (per-sub-query paragraph BM25 ranking) → Stage 3 (relevance
+        judge over the paragraphs, regrouped to papers). Returns every paper
+        the judge keeps — the result is variable-size, with no final top_k cap.
 
-        ``on_progress`` (optional) is called with a short human-readable status
-        string at each pipeline stage — wire it to a spinner for live feedback.
+        ``on_progress`` (optional) is called with a short human-readable
+        status string at each pipeline stage — wire it to a spinner for live
+        feedback.
         """
         if max_loops != 1:
             raise NotImplementedError(
                 "LibrarianAgent only supports max_loops=1 (single pass)."
             )
         self._on_progress = on_progress
-        return self._run(query, top_k)
 
-    def _run(self, query: str, top_k: int) -> List[Dict[str, Any]]:
+        with self._tracer.start_span(
+            "librarian.run",
+            attributes={
+                "openinference.span.kind": "CHAIN",
+                "input.value": self._trace_json({"query": query}),
+                "input.mime_type": "application/json",
+            },
+        ) as run_span:
+            try:
+                evidence_items = self._run(query)
+            except Exception as exc:
+                self._tracer.mark_span_error(run_span, exc)
+                raise
+            self._tracer.set_span_attributes(
+                run_span,
+                {
+                    "retrieval.evidence_count": len(evidence_items),
+                    "output.value": self._trace_json(
+                        {
+                            "evidence_count": len(evidence_items),
+                            "evidence": [
+                                {
+                                    "pmid": p.get("pmid"),
+                                    "title": p.get("title"),
+                                    "year": p.get("year"),
+                                }
+                                for p in evidence_items[:25]
+                            ],
+                        }
+                    ),
+                    "output.mime_type": "application/json",
+                },
+            )
+        return evidence_items
+
+    def _run(self, query: str) -> List[Dict[str, Any]]:
         """Internal implementation of the single-pass retrieval pipeline."""
         self._filter_done = 0  # reset so a reused agent reports fresh counts
         self._filter_total = 0
@@ -740,132 +1086,88 @@ class LibrarianAgent:
         self._progress("Validating queries")
         queries = self._validate_queries(generated)
 
-        # 1. Search every sub-query in parallel → raw papers. This fan-out does
-        # CPU work (search + downstream BM25), so size it to the CPUs actually
-        # available rather than a fixed constant — otherwise a large
-        # max_query_count can oversubscribe a small container.
+        # Stage 2 — one thread per sub-query: search EPMC, decompose papers
+        # into paragraphs, BM25-rank against that sub-query, keep its top-k
+        # paragraphs. Concatenate every sub-query's paragraphs into one flat
+        # pool, merging duplicate/overlapping selections. This flat paragraph
+        # pool is what Stage 3 judges.
         self._progress(f"Searching Europe PMC · {len(queries)} sub-queries")
-        all_papers: List[Dict[str, Any]] = []
-        search_workers = min(max(len(queries), 1), _available_cpus())
-        with ThreadPoolExecutor(max_workers=search_workers) as pool:
-            futures = [
-                pool.submit(
-                    self.multithread_routine, q, self._papers_per_subquery, query
-                )
-                for q in queries
-            ]
-            for future in futures:
-                all_papers.extend(future.result())
-
-        # 2. Dedup candidate papers across sub-queries BEFORE fetching, so each
-        #    unique paper's full text is fetched at most once.
-        candidates: List[Dict[str, Any]] = []
-        by_pid: Dict[str, Dict[str, Any]] = {}
-        for paper in all_papers:
-            pid = str(paper.get("pmid") or paper.get("doi") or paper.get("title") or "")
-            if pid and pid not in by_pid:
-                by_pid[pid] = paper
-                candidates.append(paper)
-        self._log(f"{len(candidates)} unique candidate papers")
-        self._progress(f"Found {len(candidates)} candidate papers")
-        if not candidates:
+        with self._tracer.start_span(
+            "librarian.stage2_paragraphs",
+            attributes={
+                "openinference.span.kind": "CHAIN",
+                "search.query_count": len(queries),
+                "input.value": self._trace_json({"queries": queries}),
+                "input.mime_type": "application/json",
+            },
+        ) as stage2_span:
+            bound_stage2 = self._tracer.bind_current_trace_context(
+                self._paragraphs_for_subquery
+            )
+            # One CPU-bound thread per sub-query, capped at the CPUs
+            # actually available so a large max_query_count can't
+            # oversubscribe a small container.
+            stage2_workers = min(max(len(queries), 1), _available_cpus())
+            with ThreadPoolExecutor(max_workers=stage2_workers) as pool:
+                per_subquery = pool.map(bound_stage2, queries)
+            paragraphs = _merge_selected_paragraphs(
+                [para for subquery_paras in per_subquery for para in subquery_paras]
+            )
+            self._tracer.set_span_attributes(
+                stage2_span,
+                {
+                    "paragraph.count": len(paragraphs),
+                    "output.value": self._trace_json(
+                        {"paragraph_count": len(paragraphs)}
+                    ),
+                    "output.mime_type": "application/json",
+                },
+            )
+        self._log(f"{len(paragraphs)} paragraphs after Stage 2")
+        self._progress(f"Found {len(paragraphs)} candidate paragraphs")
+        if not paragraphs:
             return []
 
-        # 3. Enrich each unique paper with a full-text excerpt IN PARALLEL (BM25
-        #    vs the ORIGINAL query). Doing this once per unique paper, in
-        #    parallel, is what keeps a sample within its time budget.
-        if self.full_text_enrichment:
-            total = len(candidates)
-            done = 0
-            self._progress(f"Fetching full text · 0/{total}")
-            with ThreadPoolExecutor(max_workers=_FETCH_WORKERS) as pool:
-                future_to_paper = {
-                    pool.submit(self._excerpt_for_paper, p, query): p
-                    for p in candidates
-                }
-                for future in as_completed(future_to_paper):
-                    try:
-                        excerpt = future.result()
-                    except Exception:
-                        excerpt = ""
-                    if excerpt:
-                        future_to_paper[future]["full_text_excerpt"] = excerpt
-                    done += 1
-                    self._progress(f"Fetching full text · {done}/{total}")
-
-        # Two independent filters, merged full-text-first (the winning flow):
-        #  - full-text filter over papers that have an excerpt,
-        #  - abstract triage over ALL candidates (title+abstract).
-        # They are independent (different prompts/inputs; they write different
-        # keys), so run them concurrently. Each pass still parallelises its own
-        # batches internally.
-        ft_candidates = [p for p in candidates if p.get("full_text_excerpt")]
-        self._progress("Judging paper relevance")
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            ft_future = pool.submit(
-                self._relevance_filter,
-                query,
-                ft_candidates,
-                self._fulltext_filter_prompt,
-                "full_text_excerpt",
-                "full_text",
+        # Stage 3 — the relevance judge reads the paragraphs (batched by
+        # paragraphs_per_judge_batch paragraphs per call; a paper's
+        # paragraphs may span batches), cites the supporting sentences, and
+        # those regroup by paper. Returns the cited papers, most→least
+        # relevant. Stage 3's output IS the final set — variable size, with
+        # no final top_k cap applied on top of the judge's decision.
+        self._progress("Judging paragraph relevance")
+        with self._tracer.start_span(
+            "librarian.filter_relevance",
+            attributes={
+                "openinference.span.kind": "CHAIN",
+                "paragraph.count": len(paragraphs),
+                "input.value": self._trace_json({"paragraph_count": len(paragraphs)}),
+                "input.mime_type": "application/json",
+            },
+        ) as filter_span:
+            relevant_papers = self._relevance_filter(query, paragraphs)
+            self._tracer.set_span_attributes(
+                filter_span,
+                {
+                    "paper.count.relevant": len(relevant_papers),
+                    "output.value": self._trace_json(
+                        {"relevant_count": len(relevant_papers)}
+                    ),
+                    "output.mime_type": "application/json",
+                },
             )
-            ab_future = pool.submit(
-                self._relevance_filter,
-                query,
-                candidates,
-                self._abstract_filter_prompt,
-                "abstract",
-                "abstract",
-            )
-            ft_relevant = ft_future.result()
-            abstract_relevant = ab_future.result()
 
-        # Compose the answer set from two separately-capped pools so abstract-only
-        # papers are never crowded out by full-text ones. The two pools are
-        # disjoint by construction:
-        #   - fulltext_papers: top papers that have a full-text excerpt, in
-        #     full-text-filter relevance order.
-        #   - abstract_only_papers: top papers that have ONLY an abstract, in
-        #     abstract-filter relevance order.
-        fulltext_papers = ft_relevant[: self._max_fulltext_papers]
-        abstract_only_candidates = [
-            paper for paper in abstract_relevant if not paper.get("full_text_excerpt")
-        ]
-        abstract_only_papers = abstract_only_candidates[
-            : self._max_abstract_only_papers
-        ]
-        merged = fulltext_papers + abstract_only_papers
-
-        # Fallback: if both filters rejected everything, don't blank the pipeline.
-        if not merged:
-            merged = candidates
-        # Outer ceiling; defaults to the sum of the two pool caps (normally a no-op).
-        merged = merged[:top_k]
-
-        # One-line pipeline summary for eval logs.
-        n_excerpt = sum(1 for c in candidates if c.get("full_text_excerpt"))
         self.last_run_debug = {
             "search_queries": queries,
             "query_count": len(queries),
-            "candidate_count": len(candidates),
-            "candidate_pmids": [str(p.get("pmid") or "") for p in candidates],
-            "excerpt_count": n_excerpt,
-            "ft_relevant_count": len(ft_relevant),
-            "abstract_relevant_count": len(abstract_relevant),
-            "final_count": len(merged),
-            "final_pmids": [str(p.get("pmid") or "") for p in merged],
+            "paragraph_count": len(paragraphs),
+            "relevant_count": len(relevant_papers),
+            "final_pmids": [str(p.get("pmid") or "") for p in relevant_papers],
         }
         logger.debug(
-            "[Librarian] queries=%d candidates=%d excerpts=%d/%d "
-            "ft_relevant=%d abstract_relevant=%d final=%d",
+            "[Librarian] queries=%d paragraphs=%d relevant=%d",
             len(queries),
-            len(candidates),
-            n_excerpt,
-            len(candidates),
-            len(ft_relevant),
-            len(abstract_relevant),
-            len(merged),
+            len(paragraphs),
+            len(relevant_papers),
         )
 
-        return [self._passage_from_paper(p) for p in merged]
+        return [self._passage_from_paper(p) for p in relevant_papers]
