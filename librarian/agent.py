@@ -524,6 +524,13 @@ class LibrarianAgent:
             "year": str(paper.get("year") or ""),
             "pmid": str(paper.get("pmid") or ""),
             "doi": str(paper.get("doi") or ""),
+            # Europe PMC record identity, kept verbatim under the upstream
+            # camelCase keys literature_search.py already uses. Preprints
+            # (source="PPR") have NO pmid, so without these a citation cannot
+            # be linked back to its EPMC article page.
+            "epmcId": str(paper.get("epmcId") or ""),
+            "epmcSource": str(paper.get("epmcSource") or paper.get("sourceCode") or ""),
+            "url": str(paper.get("url") or ""),
             "has_fulltext": bool(paper.get("inEPMC") or paper.get("hasFreeFullText")),
         }
 
