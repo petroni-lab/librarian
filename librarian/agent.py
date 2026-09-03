@@ -476,28 +476,6 @@ def _group_contiguous_spans(sentences: List[_Sentence]) -> List[str]:
     return [" ".join(span) for span in spans]
 
 
-def _truncate_spans_to_words(spans: List[str], max_words: int) -> List[str]:
-    """Cap the total word count across spans, preserving span boundaries.
-
-    Words are kept greedily in order; the span that crosses the budget is
-    word-sliced and later spans are dropped, so ``" ".join`` of the result
-    holds the first ``max_words`` words.
-    """
-    out: List[str] = []
-    used = 0
-    for span in spans:
-        if used >= max_words:
-            break
-        words = span.split()
-        remaining = max_words - used
-        if len(words) > remaining:
-            out.append(" ".join(words[:remaining]))
-            break
-        out.append(span)
-        used += len(words)
-    return out
-
-
 # ── Agent ────────────────────────────────────────────────────────────────────
 
 
@@ -533,7 +511,6 @@ class LibrarianAgent:
         self._paragraphs_per_judge_batch = runtime.paragraphs_per_judge_batch
         self._max_paragraph_words = runtime.max_paragraph_words
         self._paragraph_overlap_words = runtime.paragraph_overlap_words
-        self._evidence_snippet_max_words = runtime.evidence_snippet_max_words
         self._filter_temperature = runtime.filter_temperature
 
         self.llm = create_llm_client(
@@ -728,14 +705,9 @@ class LibrarianAgent:
             if span and span.strip()
         ]
         abstract = str(paper.get("abstract") or "").strip()
-        spans = judge_spans or ([abstract] if abstract else [])
-        # Hard cap the TOTAL evidence at the word budget (~250, OpenScholar
-        # passage size). Sentence accumulation in the filter stops once the
-        # budget is reached, but the last sentence can overshoot, so bound it
-        # here too.
-        evidence_snippets = _truncate_spans_to_words(
-            spans, self._evidence_snippet_max_words
-        )
+        # Every span the judge cited for this paper — no word cap. Falls back
+        # to the abstract as a single span when the judge cited nothing.
+        evidence_snippets = judge_spans or ([abstract] if abstract else [])
         paper_id = _candidate_id(paper)
         return {
             "evidence_snippets": evidence_snippets,

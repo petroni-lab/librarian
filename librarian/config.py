@@ -30,9 +30,6 @@ _DEFAULT_PARAGRAPHS_PER_JUDGE_BATCH = 128
 # match that straddles a cut intact.
 _DEFAULT_MAX_PARAGRAPH_WORDS = 250
 _DEFAULT_PARAGRAPH_OVERLAP_WORDS = 50
-# Words of evidence per paper handed to the summarizer: a contiguous slice of
-# the paper's cited sentences. 250 matches OpenScholar's passage size.
-_DEFAULT_EVIDENCE_SNIPPET_MAX_WORDS = 250
 # Relevance-filter LLM temperature. 0.1 is the winning config; set to 0 for
 # deterministic, reproducible filtering.
 _DEFAULT_FILTER_TEMPERATURE = 0.1
@@ -59,7 +56,6 @@ class LibrarianRuntimeConfig:
     paragraphs_per_judge_batch: int
     max_paragraph_words: int
     paragraph_overlap_words: int
-    evidence_snippet_max_words: int
     filter_temperature: float
 
 
@@ -99,11 +95,6 @@ def load_runtime_config() -> LibrarianRuntimeConfig:
         paragraph_overlap_words=_env_override(
             "LITERATURE_PARAGRAPH_OVERLAP_WORDS",
             _DEFAULT_PARAGRAPH_OVERLAP_WORDS,
-            int,
-        ),
-        evidence_snippet_max_words=_env_override(
-            "LITERATURE_EVIDENCE_SNIPPET_MAX_WORDS",
-            _DEFAULT_EVIDENCE_SNIPPET_MAX_WORDS,
             int,
         ),
         filter_temperature=_env_override(
