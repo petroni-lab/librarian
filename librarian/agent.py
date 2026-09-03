@@ -267,13 +267,30 @@ def _bm25_rank(query: str, paragraphs: List[str]) -> List[Tuple[int, float]]:
     return [(int(idxs[0][i]), float(scores[0][i])) for i in range(len(idxs[0]))]
 
 
+# Paper metadata mixed into a paragraph's BM25 document (scoring only — never
+# the returned evidence text), so a sub-query naming it matches at retrieval
+# too. The abstract carries the whole citation (also the fields the Stage-3
+# judge sees); body chunks carry ONLY the year. Author/journal/title would
+# boost every body chunk of a paper equally, hiding which paragraph actually
+# matched — so they stay on the abstract; year is a harmless filter-like
+# token every chunk can carry.
+_ABSTRACT_BM25_FIELDS = ("title", "authors", "journal", "year")
+_BODY_BM25_FIELDS = ("year",)
+
+
+def _bm25_metadata(paper: Dict[str, Any], fields: Tuple[str, ...]) -> str:
+    """Space-joined values of ``fields`` from ``paper``, for the BM25 document."""
+    return " ".join(str(paper.get(field) or "").strip() for field in fields).strip()
+
+
 def _bm25_doc(record: Dict[str, Any]) -> str:
-    """BM25 document for a paragraph record: text + section title/type."""
+    """BM25 document for a paragraph record: text + section title/type + metadata."""
     return " ".join(
         [
             str(record.get("text", "")),
             str(record.get("section_title", "")),
             str(record.get("section_type", "")),
+            str(record.get("bm25_metadata", "")),
         ]
     )
 
@@ -629,11 +646,14 @@ class LibrarianAgent:
                     "text": abstract,
                     "section_title": "Abstract",
                     "section_type": "abstract",
+                    "bm25_metadata": _bm25_metadata(paper, _ABSTRACT_BM25_FIELDS),
                 }
             )
 
         if self.full_text_enrichment:
+            body_metadata = _bm25_metadata(paper, _BODY_BM25_FIELDS)
             for record in self._fetch_body_paragraphs(paper):
+                record["bm25_metadata"] = body_metadata
                 records.append(record)
 
         for source_index, record in enumerate(records):
@@ -861,13 +881,13 @@ class LibrarianAgent:
             paper_id = _candidate_id(paper)
             paper_by_id[paper_id] = paper
             paragraph_id = f"paragraph_{paragraph_index}"
+            # Metadata shown to the judge — the same fields folded into the
+            # abstract's BM25 doc at Stage 2 (_ABSTRACT_BM25_FIELDS).
+            item = {field: paper.get(field, "N/A") for field in _ABSTRACT_BM25_FIELDS}
             items.append(
                 {
                     "id": paragraph_id,
-                    "title": paper.get("title", "N/A"),
-                    "authors": paper.get("authors", "N/A"),
-                    "journal": paper.get("journal", "N/A"),
-                    "year": paper.get("year", "N/A"),
+                    **item,
                     "sentences": _build_sentence_items(
                         paragraph_id,
                         paper_id,
