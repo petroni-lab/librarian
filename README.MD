@@ -78,16 +78,22 @@ in your shell.
 > settings used in all experiments.
 
 On a terminal you'll see a live spinner reporting the current stage (`Searching Europe
-PMC`, `Fetching full text · 42/210`, `Judging paper relevance · 6/28 batches`, ...) so
-you can tell how far along a run is. When the output is piped/redirected the spinner is
-skipped and the agent prints plain `[Librarian]` log lines instead.
+PMC`, `Found 210 candidate paragraphs`, `Judging paragraph relevance · 6/8 batches`, ...)
+so you can tell how far along a run is. When the output is piped/redirected the spinner
+is skipped and the agent prints plain `[Librarian]` log lines instead.
 `LibrarianAgent.run()` accepts an `on_progress=callable` hook if you want to drive your
-own UI.
+own UI, and a `tracer=` hook (see [`tracing_port.py`](librarian/tracing_port.py)) if you
+want to wire span tracing into your own backend.
 
 ---
 
 ## 📰 News
 
+* **[2026.09.03]** Retrieval pipeline rework: paragraph-level pooling across
+  sub-queries, a single relevance judge (replacing the two concurrent
+  full-text/abstract judges), snippet-level citations, author affiliation,
+  uncapped per-paper evidence, and an optional `tracer=` span-tracing hook.
+  See [⚙️ Configuration](#️-configuration) — several knobs changed with it.
 * **[2026.07.31]** Preprint available on arXiv.
 * **[2026.07.30]** Initial release of the EMBL AI Librarian agent and retrieval pipeline.
 
@@ -124,6 +130,11 @@ suites we evaluate:
 | ProClaim-eval | Agreement w/ expert consensus | 0.75 | **0.80** |
 | Open-form LitQA2 | Accuracy | 70.3 (GPT-5.4 + web search) | **78.9** |
 | LAB-Bench | Macro accuracy (GPT-5.4) | 50.5 | **54.6** (+11.3 on SeqQA) |
+
+> **Note:** the numbers above are from the pipeline described in the paper (paper-level
+> pooling, two concurrent relevance judges, capped evidence). The retrieval pipeline has
+> since been reworked (see [📰 News](#-news)) and these numbers are pending
+> re-validation against the current single-judge, paragraph-pooled pipeline.
 
 Two comparisons matter and they answer different questions. Against **strong published
 baselines**, Librarian is more than **+16 Citation F1** on ScholarQA-Bench — but part of
@@ -170,42 +181,48 @@ Two conservative fallbacks guard the degenerate cases:
 </details>
 
 <details>
-<summary><b>Stage 2: Paper-level Retrieval + Paragraph BM25 Ranking</b></summary>
+<summary><b>Stage 2: Per-sub-query Retrieval + Paragraph BM25 Ranking</b></summary>
 
-Validated sub-queries run in parallel against the live Europe PMC search service, each
-returning up to P records (pool of at most M = N × P).
+Validated sub-queries run in parallel — one thread per sub-query, capped at the CPUs
+actually available (reading the container's cgroup CPU quota when present, so a large
+sub-query count can't oversubscribe a small container).
 
-Because complementary sub-queries often return the same paper, candidates are
-**deduplicated here, before any full text is fetched**, so a paper found by several
-sub-queries is fetched exactly once. Deduplication is hierarchical: PMID first, then DOI
-when a PMID is absent, then title — PMID alone is insufficient because Europe PMC also
-indexes preprints and some PMC content without one.
+Each sub-query searches the live Europe PMC service (up to `papers_per_subquery`
+records), and every returned paper is decomposed into paragraph records: its abstract,
+plus — for open-access papers — its full-text body paragraphs (JATS XML fetched by
+PMCID, `literature_search.py` + `jats.py`). Paragraphs longer than
+`max_paragraph_words` are split into overlapping word windows so a long paragraph
+can't out-rank a short one on length alone. Every record's BM25 document mixes in its
+section title/type and the paper's own metadata (title/authors/journal/year on the
+abstract, year only on body chunks, so a query naming an author or year still matches
+without letting metadata dominate every one of a paper's chunks) plus optional
+Snowball stemming (`LITERATURE_BM25_STEMMING=0` to disable).
 
-For each surviving open-access paper, Librarian fetches the JATS XML (cached by PMCID),
-extracts the body paragraphs and discards references and other front/back matter
-(`literature_search.py`, `jats.py`), then BM25-ranks those paragraphs against the
-original question — each paragraph concatenated with its section title and type. Every
-paper passes k paragraphs onward: always its abstract, plus the highest-ranked
-paragraphs when full text is available, keeping the top ~2300 words as a
-`full_text_excerpt`. Papers without full text contribute their abstract only.
+Each sub-query's paragraphs are BM25-ranked against *that sub-query's* text and the
+top `paragraphs_per_subquery` are kept. Because complementary sub-queries often surface
+the same or overlapping paragraphs, the per-sub-query pools are then merged: identical
+or overlapping selections from the same source paragraph are unioned into one record,
+so a paragraph relevant to several sub-queries costs the downstream judge budget once.
 
 </details>
 
 <details>
-<summary><b>Stage 3: Filter, Re-ranking & Evidence Extraction</b></summary>
+<summary><b>Stage 3: Single-pass Relevance Judge & Evidence Extraction</b></summary>
 
-Paragraphs are segmented into sentences with pySBD and each sentence is given a unique
-identifier. Two judges run concurrently: a full-text judge over papers that carry an
-excerpt (`prompts/relevance_filter_fulltext.md`) and an abstract triage over
-abstract-only candidates (`prompts/relevance_filter.md`). Each call returns an ordered
-list of sentence identifiers, which simultaneously filters irrelevant paragraphs,
-re-ranks the relevant ones, and extracts the supporting sentences that become each
-paper's `evidence_snippets`. Because the model emits short identifiers rather than
-regenerating text, it decodes far fewer tokens.
+The merged paragraph pool is segmented into sentences with pySBD, each given a stable
+identifier, and judged in batches of `paragraphs_per_judge_batch` paragraphs
+(`prompts/relevance_filter.md`). One LLM call returns an ordered list of sentence
+identifiers, which simultaneously filters irrelevant paragraphs, re-ranks the relevant
+ones, and extracts the supporting sentences. Cited sentences are grouped by paper into
+contiguous evidence spans (`evidence_snippets`) in reading order — a paper whose cited
+sentences aren't adjacent yields more than one span rather than one string silently
+splicing distant sentences together. There is no cap on evidence length per paper: the
+judge's own citation decision is the only filter.
 
-One last fallback: if both relevance filters reject every candidate, the unfiltered
-candidate pool is returned instead of an empty evidence set — trading precision for
-non-empty output.
+A malformed or truncated judge reply is not discarded outright: ids are salvaged from
+the raw text where possible, and an unparseable batch is split and retried (up to two
+levels) before giving up on it. Papers the judge never cites are dropped; there is no
+final `top_k` cap layered on top of the judge's own decision.
 
 </details>
 
@@ -216,7 +233,9 @@ The result is a list of passage dicts:
   "evidence_snippets": ["...cited sentence span...", ...],
   "paper_id": "12345678",
   "title": "...", "authors": "...", "journal": "...", "year": "2023",
-  "pmid": "12345678", "doi": "10.xxxx/...", "has_fulltext": True,
+  "pmid": "12345678", "doi": "10.xxxx/...", "epmcId": "...", "epmcSource": "MED",
+  "url": "https://europepmc.org/article/...", "affiliation": "...",
+  "has_fulltext": True,
 }
 ```
 
@@ -231,11 +250,18 @@ editing code:
 | Env var | Default | Meaning |
 |---|---|---|
 | `LITERATURE_MAX_QUERY_COUNT` | 7 | max sub-queries generated |
-| `LITERATURE_MAX_FULLTEXT_PAPERS` | 30 | full-text papers in the answer |
-| `LITERATURE_MAX_ABSTRACT_ONLY_PAPERS` | 30 | abstract-only papers in the answer |
-| `LITERATURE_FULL_TEXT_TARGET_TOKENS_PER_PAPER` | 3072 | per-paper excerpt budget |
-| `LITERATURE_EVIDENCE_SNIPPET_MAX_WORDS` | 250 | evidence words per paper |
+| `LITERATURE_PAPERS_PER_SUBQUERY` | 50 | Europe PMC results fetched per sub-query |
+| `LITERATURE_PARAGRAPHS_PER_SUBQUERY` | 16 | top-BM25 paragraphs kept per sub-query |
+| `LITERATURE_PARAGRAPHS_PER_JUDGE_BATCH` | 128 | paragraphs per Stage-3 LLM call |
+| `LITERATURE_MAX_PARAGRAPH_WORDS` | 250 | window size before a long paragraph is split |
+| `LITERATURE_PARAGRAPH_OVERLAP_WORDS` | 50 | overlap between adjacent split windows |
+| `LITERATURE_BM25_STEMMING` | on | Snowball stemming for BM25 (`0` to disable) |
 | `LITERATURE_FILTER_TEMPERATURE` | 0.1 | relevance-judge temperature |
+
+`paragraphs_per_judge_batch` should be `>= paragraphs_per_subquery * max_query_count`
+so the whole pool is judged in one call — the judge ranks globally, but results from
+several batches are only concatenated in batch order, so a smaller value silently
+degrades the ranking to per-batch. Raise all three knobs together.
 
 ---
 
@@ -247,6 +273,7 @@ main.py                        CLI entrypoint
 librarian/
   agent.py                     the retrieval pipeline (start here)
   config.py                    tuning knobs (env-var overridable)
+  tracing_port.py              TracingPort protocol + no-op default (optional tracer=)
   llm_client.py                minimal OpenAI-compatible client
   literature_search.py         Europe PMC search
   jats.py                      JATS full-text XML -> body paragraphs
