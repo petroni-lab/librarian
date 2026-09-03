@@ -85,6 +85,26 @@ is skipped and the agent prints plain `[Librarian]` log lines instead.
 own UI, and a `tracer=` hook (see [`tracing_port.py`](librarian/tracing_port.py)) if you
 want to wire span tracing into your own backend.
 
+### Serving it over HTTP
+
+`orchestrator.py` is a minimal FastAPI wrapper around the same agent:
+
+```bash
+uv run --extra api uvicorn orchestrator:app --port 8080
+
+# blocking JSON
+curl localhost:8080/run-agent -H 'content-type: application/json' \
+    -d '{"query": "does metformin extend lifespan in mammals?"}'
+
+# same run, streamed: one `progress` event per pipeline stage, then `result`
+curl -N localhost:8080/run-agent/stream -H 'content-type: application/json' \
+    -d '{"query": "does metformin extend lifespan in mammals?"}'
+```
+
+Both endpoints take `{"query": ..., "full_text_enrichment": true}` and return the query,
+the planner's sub-queries, and the ranked evidence passages. `GET /health` is the
+liveness probe; interactive docs are at `/docs`.
+
 ---
 
 ## 📰 News
@@ -270,6 +290,7 @@ degrades the ranking to per-batch. Raise all three knobs together.
 ```
 pyproject.toml                 project metadata + dependencies (managed by uv)
 main.py                        CLI entrypoint
+orchestrator.py                minimal FastAPI server (blocking + SSE endpoints)
 librarian/
   agent.py                     the retrieval pipeline (start here)
   config.py                    tuning knobs (env-var overridable)

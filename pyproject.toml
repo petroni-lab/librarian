@@ -13,5 +13,12 @@ dependencies = [
     "PyStemmer>=2.2",   # Snowball stemming for BM25 paragraph scoring
 ]
 
+[project.optional-dependencies]
+# Only the HTTP orchestrator (orchestrator.py) needs these; the CLI does not.
+api = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+]
+
 [tool.uv]
 package = false
