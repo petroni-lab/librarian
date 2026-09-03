@@ -670,13 +670,13 @@ class LibrarianAgent:
         ``run`` can fan these out, one thread per sub-query, with no shared
         state.
         """
-        try:
-            papers = search_scientific_literature_structured(
-                subquery, page_size=self._papers_per_subquery
-            )
-        except Exception as exc:  # network/parse failure → skip this sub-query
-            self._log(f"search failed for {subquery!r}: {exc}")
-            return []
+        # A search failure propagates out of the thread pool and fails the
+        # run, so the caller can tell "the search broke" apart from "no
+        # literature found" — silently returning [] here would surface a
+        # Europe PMC outage as an empty result set.
+        papers = search_scientific_literature_structured(
+            subquery, page_size=self._papers_per_subquery
+        )
 
         pool: List[Dict[str, Any]] = []
         for paper in papers:
