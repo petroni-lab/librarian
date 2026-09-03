@@ -11,13 +11,8 @@ dependencies = [
     "pysbd>=0.3",       # sentence segmentation for evidence extraction
     "python-dotenv>=1.0", # load LLM_* config from a .env file
     "PyStemmer>=2.2",   # Snowball stemming for BM25 paragraph scoring
-]
-
-[project.optional-dependencies]
-# Only the HTTP orchestrator (orchestrator.py) needs these; the CLI does not.
-api = [
-    "fastapi>=0.110",
-    "uvicorn>=0.27",
+    "fastapi>=0.110",   # HTTP orchestrator (orchestrator.py)
+    "uvicorn>=0.27",    # ASGI server for the orchestrator
 ]
 
 [tool.uv]

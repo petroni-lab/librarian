@@ -90,7 +90,7 @@ want to wire span tracing into your own backend.
 `orchestrator.py` is a minimal FastAPI wrapper around the same agent:
 
 ```bash
-uv run --extra api uvicorn orchestrator:app --port 8080
+uv run uvicorn orchestrator:app --port 8080
 
 # blocking JSON
 curl localhost:8080/run-agent -H 'content-type: application/json' \

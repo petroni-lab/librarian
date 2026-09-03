@@ -6,7 +6,7 @@
 
 Start it with (LLM config comes from `.env`, same as `main.py`):
 
-    uv run --extra api uvicorn orchestrator:app --port 8080
+    uv run uvicorn orchestrator:app --port 8080
 
 Then:
 
