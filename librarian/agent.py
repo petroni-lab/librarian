@@ -26,6 +26,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import os
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -57,6 +58,12 @@ _FULLTEXT_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTe
 # Implementation constants — env-independent and never tuned. Every tunable knob
 # (query count, page size, evidence words, pool caps, filter batches, ...) lives
 # in config.py instead.
+#
+# The relevance-filter and full-text-fetch pools below only WAIT on network I/O,
+# so they are sized to fixed constants independent of CPU count. The sub-query
+# search fan-out does real CPU work (search + downstream BM25) and instead sizes
+# to the CPUs actually available (see _available_cpus), so it matches the
+# container's cores without oversubscribing.
 _MAX_WORKERS = 8
 # Parallel full-text fetches per sample (deduped first, so this is unique papers).
 _FETCH_WORKERS = 12
@@ -73,6 +80,55 @@ def _per_paper_word_limit(config_tokens: int) -> int:
     ~0.65 to ~0.75.
     """
     return max(200, int(config_tokens * 0.75))
+
+
+def _cgroup_cpu_quota() -> Optional[int]:
+    """The container's CPU limit in whole cores from the cgroup CFS quota, or None.
+
+    This is the container runtime's ``limits.cpu`` (e.g. Kubernetes), which is
+    enforced as a CFS quota (quota/period), NOT as CPU affinity — so
+    ``sched_getaffinity`` still reports every host core and misses the limit;
+    reading the quota is the reliable signal. Handles cgroup v2 (``cpu.max`` =
+    "<quota> <period>", "max" = unlimited) and v1 (``cpu.cfs_quota_us`` = -1
+    when unlimited). Rounds up, floored at 1. Returns None when there is no
+    quota file or no limit is set.
+    """
+    try:
+        with open("/sys/fs/cgroup/cpu.max") as handle:  # cgroup v2
+            quota_str, period_str = handle.read().split()
+        if quota_str == "max":
+            return None
+        quota, period = int(quota_str), int(period_str)
+    except (FileNotFoundError, ValueError):
+        try:  # cgroup v1
+            with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") as handle:
+                quota = int(handle.read())
+            with open("/sys/fs/cgroup/cpu/cpu.cfs_period_us") as handle:
+                period = int(handle.read())
+        except (FileNotFoundError, ValueError):
+            return None
+        if quota <= 0:  # -1 == unlimited
+            return None
+    if quota <= 0 or period <= 0:
+        return None
+    return max(1, -(-quota // period))  # ceil(quota / period)
+
+
+def _available_cpus() -> int:
+    """CPUs this process may actually use, floored at 1.
+
+    Prefers the container's cgroup CPU limit (``_cgroup_cpu_quota``); falls
+    back to the CPU affinity, then the host count. Reading the quota matters
+    because a container runtime enforces the limit as a CFS quota, not
+    affinity, so ``sched_getaffinity``/``cpu_count`` alone report the whole
+    node's core count even when the process is capped well below it.
+    """
+    quota = _cgroup_cpu_quota()
+    if quota is not None:
+        return quota
+    if hasattr(os, "sched_getaffinity"):
+        return max(1, len(os.sched_getaffinity(0)))
+    return max(1, os.cpu_count() or 1)
 
 
 # ── Pure helpers (no network) ────────────────────────────────────────────────
@@ -684,10 +740,14 @@ class LibrarianAgent:
         self._progress("Validating queries")
         queries = self._validate_queries(generated)
 
-        # 1. Search every sub-query in parallel → raw papers.
+        # 1. Search every sub-query in parallel → raw papers. This fan-out does
+        # CPU work (search + downstream BM25), so size it to the CPUs actually
+        # available rather than a fixed constant — otherwise a large
+        # max_query_count can oversubscribe a small container.
         self._progress(f"Searching Europe PMC · {len(queries)} sub-queries")
         all_papers: List[Dict[str, Any]] = []
-        with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
+        search_workers = min(max(len(queries), 1), _available_cpus())
+        with ThreadPoolExecutor(max_workers=search_workers) as pool:
             futures = [
                 pool.submit(
                     self.multithread_routine, q, self._papers_per_subquery, query
