@@ -16,9 +16,11 @@ Single-pass pipeline (max_loops=1, the only supported mode):
   Stage 3 — Filtering, re-ranking & evidence extraction (_relevance_filter):
       judge the paragraphs (one item each, batched by paragraphs_per_judge_batch
       paragraphs per call — a paper's paragraphs may span batches), cite the
-      supporting sentences, then regroup the cited sentences by paper and return
-      the cited papers ranked most→least relevant, each with its judge-cited
-      evidence snippet.
+      supporting sentences, then regroup the cited sentences by paper, ranked
+      most→least relevant, each with its judge-cited evidence snippet.
+  Final ordering (_sort_papers_by_recency): the cited papers are re-ordered
+      most-recent-first by publication year, with Stage 3's relevance ranking
+      as the tie-break within a year.
 """
 
 from __future__ import annotations
@@ -80,6 +82,23 @@ def _dedupe_preserving_order(ids: Iterable[str]) -> List[str]:
             seen.add(identifier)
             unique.append(identifier)
     return unique
+
+
+def _sort_papers_by_recency(papers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Order papers most-recent-first by publication year.
+
+    A stable sort, so papers sharing a year keep the judge's relevance
+    order from :meth:`_relevance_filter` as the tie-break. Papers with a
+    missing/unparseable year sort last rather than raising.
+    """
+
+    def year_key(paper: Dict[str, Any]) -> int:
+        try:
+            return int(str(paper.get("year") or "").strip()[:4])
+        except ValueError:
+            return -1
+
+    return sorted(papers, key=year_key, reverse=True)
 
 
 def _cgroup_cpu_quota() -> Optional[int]:
@@ -1030,7 +1049,9 @@ class LibrarianAgent:
         """Single-pass retrieval: Stage 1 (generate + validate sub-queries) →
         Stage 2 (per-sub-query paragraph BM25 ranking) → Stage 3 (relevance
         judge over the paragraphs, regrouped to papers). Returns every paper
-        the judge keeps — the result is variable-size, with no final top_k cap.
+        the judge keeps, ordered most-recent-first by publication year (ties
+        broken by the judge's relevance ranking) — the result is
+        variable-size, with no final top_k cap.
 
         ``on_progress`` (optional) is called with a short human-readable
         status string at each pipeline stage — wire it to a spinner for live
@@ -1132,8 +1153,9 @@ class LibrarianAgent:
         # paragraphs_per_judge_batch paragraphs per call; a paper's
         # paragraphs may span batches), cites the supporting sentences, and
         # those regroup by paper. Returns the cited papers, most→least
-        # relevant. Stage 3's output IS the final set — variable size, with
-        # no final top_k cap applied on top of the judge's decision.
+        # relevant (re-ordered chronologically below). Stage 3's output IS
+        # the final set — variable size, with no final top_k cap applied on
+        # top of the judge's decision.
         self._progress("Judging paragraph relevance")
         with self._tracer.start_span(
             "librarian.filter_relevance",
@@ -1155,6 +1177,10 @@ class LibrarianAgent:
                     "output.mime_type": "application/json",
                 },
             )
+
+        # Stage 3 hands back papers most→least relevant; re-order to
+        # most-recent-first, keeping relevance as the tie-break within a year.
+        relevant_papers = _sort_papers_by_recency(relevant_papers)
 
         self.last_run_debug = {
             "search_queries": queries,
