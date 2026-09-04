@@ -1,12 +1,16 @@
 """Minimal LLM client for a single OpenAI-compatible endpoint.
 
 Point it at any OpenAI-compatible ``/chat/completions`` server (a self-hosted
-vLLM instance, an OpenAI-compatible gateway, OpenAI itself, ...) with three env
-vars — nothing else to configure:
+vLLM instance, an OpenAI-compatible gateway, OpenAI itself, ...) with these
+env vars — nothing else to configure:
 
-    LLM_BASE_URL   endpoint, e.g. http://localhost:8000/v1   (the default)
-    LLM_MODEL      model name to request
-    LLM_API_KEY    bearer token (defaults to "EMPTY" for keyless servers)
+    LLM_BASE_URL         endpoint, e.g. http://localhost:8000/v1   (the default)
+    LLM_MODEL            model name to request
+    LLM_API_KEY          bearer token (defaults to "EMPTY" for keyless servers)
+    LLM_REASONING_EFFORT optional ``reasoning_effort`` value (e.g. "low") for
+                         reasoning models (GLM-5.3+, etc). Servers that don't
+                         recognize the field reject it once with a 400; the
+                         client drops it and retries automatically.
 """
 
 import json
@@ -64,11 +68,18 @@ class LLMClient:
         ).rstrip("/")
         self.api_key = api_key or os.getenv("LLM_API_KEY", "EMPTY")
         self.model_name = model_name or os.getenv("LLM_MODEL")
+        # Reasoning-model effort level (e.g. "low"); unset means don't send it.
+        self.reasoning_effort = os.getenv("LLM_REASONING_EFFORT")
 
         # Optional sampling parameters this endpoint has rejected with a 400.
         self._unsupported: set = set()
 
-        print(f"LLMClient -> url={self.base_url} model={self.model_name}")
+        effort_note = (
+            f" reasoning_effort={self.reasoning_effort}"
+            if self.reasoning_effort
+            else ""
+        )
+        print(f"LLMClient -> url={self.base_url} model={self.model_name}{effort_note}")
 
     def _url(self) -> str:
         if self.base_url.endswith("/chat/completions"):
@@ -124,6 +135,8 @@ class LLMClient:
         optional = {"temperature": temperature}
         if max_tokens is not None:
             optional["max_tokens"] = int(max_tokens)
+        if self.reasoning_effort:
+            optional["reasoning_effort"] = self.reasoning_effort
 
         last_exception = None
         for attempt in range(self.MAX_RETRIES):
