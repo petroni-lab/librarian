@@ -7,9 +7,12 @@ Configure the LLM backend in a `.env` file (copy `.env.example`) or via env vars
     LLM_BASE_URL   e.g. http://localhost:8000/v1   (default)
     LLM_MODEL      the model name to request
     LLM_API_KEY    bearer token (defaults to "EMPTY" for keyless vLLM)
+
+    LLM_REASONING_EFFORT  "low" (default here) / "high" / "max"
 """
 
 import json
+import os
 import sys
 
 from dotenv import load_dotenv
@@ -19,6 +22,18 @@ from librarian.progress import Spinner
 
 # Load LLM_BASE_URL / LLM_MODEL / LLM_API_KEY from a .env file if present.
 load_dotenv()
+
+# Default the reasoning effort to "low" unless the environment already picked one.
+#
+# Reasoning models charge their hidden trace against the same max_tokens budget as
+# the answer. With no effort set, GLM-5.3-class models reason without a ceiling and
+# can consume the whole of _FILTER_MAX_TOKENS before emitting any JSON, so the
+# relevance judge sees an empty or truncated reply and drops the batch. Measured on
+# a vLLM-served glm-5.3-flash, same query repeated: 413s returning 0-3 passages with
+# it unset, 60-82s returning 54-58 passages at "low". Retrieval is a judging task,
+# not a writing one, so "low" is the right default; set LLM_REASONING_EFFORT to
+# override.
+os.environ.setdefault("LLM_REASONING_EFFORT", "low")
 
 DEFAULT_QUERY = "What is the role of telomere shortening in cellular senescence?"
 
