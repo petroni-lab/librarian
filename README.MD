@@ -61,11 +61,12 @@ cp .env.example .env
 #   LLM_BASE_URL=http://localhost:8000/v1
 #   LLM_MODEL=your-model-name
 #   LLM_API_KEY=EMPTY   # or your provider key
+#   LLM_REASONING_EFFORT=low   # optional, reasoning models only
 
 uv run main.py "does metformin extend lifespan in mammals?"
 ```
 
-`main.py` loads `.env` automatically. You can also just export the same three variables
+`main.py` loads `.env` automatically. You can also just export the same variables
 in your shell.
 
 > **Reproducing the paper's numbers.** All reported results use **GLM-5**
@@ -277,6 +278,7 @@ editing code:
 | `LITERATURE_PARAGRAPH_OVERLAP_WORDS` | 50 | overlap between adjacent split windows |
 | `LITERATURE_BM25_STEMMING` | on | Snowball stemming for BM25 (`0` to disable) |
 | `LITERATURE_FILTER_TEMPERATURE` | 0.1 | relevance-judge temperature |
+| `LLM_REASONING_EFFORT` | unset | `reasoning_effort` sent on every chat completion (e.g. `low`, `medium`, `high`); omit for models that don't support it |
 
 `paragraphs_per_judge_batch` should be `>= paragraphs_per_subquery * max_query_count`
 so the whole pool is judged in one call — the judge ranks globally, but results from
