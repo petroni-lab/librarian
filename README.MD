@@ -25,7 +25,22 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#-contributing)
 [![Stars](https://img.shields.io/github/stars/petroni-lab/librarian?style=social)](https://github.com/petroni-lab/librarian/stargazers)
 
+<br>
 
+<h4>Install as an agent skill</h4>
+
+[![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?style=for-the-badge&logo=claude&logoColor=white)](#a-install-as-an-agent-skill-plugin)
+[![Codex](https://img.shields.io/badge/Codex-install-412991?style=for-the-badge)](#a-install-as-an-agent-skill-plugin)
+[![Antigravity](https://img.shields.io/badge/Antigravity-install-4285F4?style=for-the-badge&logo=google&logoColor=white)](#a-install-as-an-agent-skill-plugin)
+[![opencode](https://img.shields.io/badge/opencode-install-1A1A1A?style=for-the-badge&logo=opencode&logoColor=white)](#a-install-as-an-agent-skill-plugin)
+
+```console
+/plugin marketplace add petroni-lab/librarian   &&   /plugin install librarian@librarian
+```
+
+<sub>Two commands in Claude Code. No API key — the skill uses your agent's own model access.</sub>
+
+<br>
 
 <h5>If EMBL AI Librarian is useful to you, please consider giving it a ⭐</h5>
 
@@ -42,7 +57,7 @@ they share the same retrieval pipeline.
 |---|---|---|---|
 | **[Agent skill](#a-install-as-an-agent-skill-plugin)** | literature evidence inside your coding agent | `uv`, plus an authenticated `claude` or `codex` CLI | **No** — borrows your CLI's auth |
 | **[Python class](#b-install-as-a-python-library)** | `LibrarianAgent` in your own code | `uv` | Yes |
-| **[HTTP API](#-serving-it-over-http)** | a JSON/streaming service | `uv` | Yes |
+| **[HTTP API](#serving-it-over-http)** | a JSON/streaming service | `uv` | Yes |
 
 All three need **Python 3.10+** and [uv](https://docs.astral.sh/uv/):
 ```bash
@@ -66,19 +81,23 @@ codex plugin marketplace add petroni-lab/librarian
 codex plugin add librarian@librarian
 ```
 
-**Any other [Agent Skills](https://agentskills.io)-compatible agent** (opencode,
-Antigravity, Cursor, Gemini CLI, Goose, Copilot, …). There is no marketplace command
-for these — the skill is installed by putting it where the agent scans. To make it
-available everywhere:
+**Antigravity and opencode** have no marketplace command — they discover skills from
+a directory, so installing means putting the skill where they scan. One clone and one
+symlink covers both:
 ```bash
 git clone https://github.com/petroni-lab/librarian.git
 mkdir -p ~/.agents/skills && ln -s "$PWD/librarian/skills/librarian" ~/.agents/skills/librarian
 ```
-`~/.agents/skills/` is honored by opencode and Antigravity among others; use
-`~/.claude/skills/` or your agent's own path if it scans somewhere else.
+
+| Agent | Scans | Note |
+|---|---|---|
+| Antigravity | `.agents/skills/` (workspace), `~/.agents/skills/` | defaults to `.agents/`; older builds also read `.agent/` |
+| opencode | `~/.agents/skills/`, `~/.claude/skills/`, `~/.config/opencode/skills/` | any of the three works |
+
+Keep the clone — the skill runs the Python package inside it (see the note below).
 
 Working *inside* a clone of this repo needs no setup at all: `.agents/skills/librarian`
-is a symlink to `skills/librarian`, so repo-scoped discovery finds it as-is.
+is a symlink to `skills/librarian`, so workspace discovery finds it as-is.
 
 Then start a new session and ask a biomedical question — the skill activates on its
 own:
@@ -91,11 +110,16 @@ Two things to know:
   planning and relevance judging) run as one-shot child sessions of the `claude` or
   `codex` CLI, using its existing authentication. That CLI must be installed and
   authenticated on `PATH`, whichever harness you drive the skill from.
+- **The skill needs the whole repository, not just `skills/librarian/`.** The step
+  scripts are a thin driver: the retrieval engine (Europe PMC search, chunking, BM25,
+  evidence assembly) lives in the `librarian/` package alongside them. A marketplace
+  install clones the whole repo into the plugin cache, so this is automatic — but
+  copying the skill folder on its own will not work.
 - **Python dependencies install themselves on first use.** Installing a plugin does
   *not* install Python packages, so the skill's steps run through
   `skills/librarian/scripts/run.sh`, which provisions the environment with `uv` the
-  first time it is called. Set `LIBRARIAN_PYTHON` to an interpreter that already has
-  the dependencies if you would rather not use `uv`.
+  first time it is called. `uv` itself must be present; set `LIBRARIAN_PYTHON` to an
+  interpreter that already has the dependencies if you would rather not use it.
 
 ### B. Install as a Python library
 
