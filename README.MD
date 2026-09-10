@@ -212,6 +212,15 @@ liveness probe; interactive docs are at `/docs`.
 
 ## 📰 News
 
+* **[2026.09.11]** Librarian is now installable as an **agent skill** — two commands
+  in Claude Code or Codex, and a directory symlink for Antigravity and opencode.
+  See [🛠️ Installation](#️-installation). The same run is also served over HTTP by
+  [`orchestrator.py`](orchestrator.py), with blocking and streaming endpoints —
+  see [Serving it over HTTP](#serving-it-over-http).
+* **[2026.09.xx]** *(upcoming)* Evaluation harness: the benchmark suites and scripts
+  behind the reported numbers.
+* **[2026.09.xx]** *(upcoming)* Synthesis agent: turns retrieved evidence into a
+  cited answer.
 * **[2026.09.03]** Retrieval pipeline rework: paragraph-level pooling across
   sub-queries, a single relevance judge (replacing the two concurrent
   full-text/abstract judges), snippet-level citations, author affiliation,
