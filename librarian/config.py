@@ -13,7 +13,9 @@ from typing import Optional
 # ── Defaults (the winning LitQA2 values) ─────────────────────────────────────
 
 _DEFAULT_MODEL_NAME: Optional[str] = None  # falls back to LLM_MODEL env var
-_DEFAULT_MAX_QUERY_COUNT = 7
+# 8 pairs with paragraphs_per_judge_batch below: 16 x 8 = 128, so the whole
+# paragraph pool is judged in one call (see that knob's comment).
+_DEFAULT_MAX_QUERY_COUNT = 8
 # Europe PMC results fetched per sub-query — every returned paper is decomposed
 # into paragraphs and BM25-ranked, so this is also the per-sub-query recall lever.
 _DEFAULT_PAPERS_PER_SUBQUERY = 50
@@ -35,13 +37,17 @@ _DEFAULT_PARAGRAPH_OVERLAP_WORDS = 50
 _DEFAULT_FILTER_TEMPERATURE = 0.1
 
 _DEFAULT_QUERY_BUDGET_GUIDANCE = (
-    "- Generate AT MOST 7 complementary queries.\n"
+    "- Generate AT MOST {max_queries} complementary queries.\n"
     "- Balance recall and precision across the set.\n"
     "- Include one broader high-recall safety-net query unless the request is "
     "already extremely specific.\n"
     "- Use the remaining queries for focused sub-questions, synonyms, or fielded "
     "variants that improve coverage without over-constraining the search."
 )
+
+
+# One query per role in query_budget_guidance's recall/coverage/precision split.
+MIN_QUERY_COUNT = 3
 
 
 @dataclass(frozen=True)
@@ -57,6 +63,23 @@ class LibrarianRuntimeConfig:
     max_paragraph_words: int
     paragraph_overlap_words: int
     filter_temperature: float
+
+    def __post_init__(self) -> None:
+        """Reject a sub-query budget too small to cover all three query roles.
+
+        ``query_budget_guidance`` splits the budget across recall, coverage and
+        precision queries with at least one each, so a budget below three cannot
+        express the allocation it is handed. Runs on construction and on
+        ``dataclasses.replace()`` alike.
+
+        :raises ValueError: if ``max_query_count`` is below ``MIN_QUERY_COUNT``.
+        """
+        if self.max_query_count < MIN_QUERY_COUNT:
+            raise ValueError(
+                f"max_query_count must be >= {MIN_QUERY_COUNT} "
+                f"(got {self.max_query_count}): the query budget is allocated "
+                "across recall, coverage and precision roles."
+            )
 
 
 def _env_override(name: str, default, cast):

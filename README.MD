@@ -75,8 +75,8 @@ in your shell.
 > relevance filtering, and synthesis. Librarian is model-agnostic and runs with any
 > OpenAI-compatible endpoint, but smaller or weaker models will produce noticeably
 > different evidence quality — the planner in particular has to emit valid Europe PMC
-> fielded syntax. See [⚙️ Configuration](#️-configuration) for the exact retrieval
-> settings used in all experiments.
+> fielded syntax. See [⚙️ Configuration](#️-configuration) for the retrieval settings
+> and the knobs that change them.
 
 On a terminal you'll see a live spinner reporting the current stage (`Searching Europe
 PMC`, `Found 210 candidate paragraphs`, `Judging paragraph relevance · 6/8 batches`, ...)
@@ -264,13 +264,12 @@ The result is a list of passage dicts:
 
 ## ⚙️ Configuration
 
-Defaults live in `librarian/config.py`, and are identical to the settings used in every
-experiment reported in the paper. A few knobs can be overridden via env vars without
-editing code:
+Defaults live in `librarian/config.py`. A few knobs can be overridden via env vars
+without editing code:
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `LITERATURE_MAX_QUERY_COUNT` | 7 | max sub-queries generated |
+| `LITERATURE_MAX_QUERY_COUNT` | 8 | max sub-queries generated (minimum 3) |
 | `LITERATURE_PAPERS_PER_SUBQUERY` | 50 | Europe PMC results fetched per sub-query |
 | `LITERATURE_PARAGRAPHS_PER_SUBQUERY` | 16 | top-BM25 paragraphs kept per sub-query |
 | `LITERATURE_PARAGRAPHS_PER_JUDGE_BATCH` | 128 | paragraphs per Stage-3 LLM call |
@@ -280,7 +279,8 @@ editing code:
 | `LITERATURE_FILTER_TEMPERATURE` | 0.1 | relevance-judge temperature |
 | `LLM_REASONING_EFFORT` | unset | `reasoning_effort` sent on every chat completion (e.g. `low`, `medium`, `high`); omit for models that don't support it |
 
-`paragraphs_per_judge_batch` should be `>= paragraphs_per_subquery * max_query_count`
+The defaults are set so that `16 × 8 = 128`: `paragraphs_per_judge_batch` should stay
+`>= paragraphs_per_subquery * max_query_count`
 so the whole pool is judged in one call — the judge ranks globally, but results from
 several batches are only concatenated in batch order, so a smaller value silently
 degrades the ranking to per-batch. Raise all three knobs together.
@@ -301,7 +301,9 @@ librarian/
   literature_search.py         Europe PMC search
   jats.py                      JATS full-text XML -> body paragraphs
   progress.py                  stdlib terminal spinner for live progress
-  prompts/                     query planner + relevance-judge prompts
+  prompts/
+    stage_1_europe_pmc_query_generation.md    query planner prompt
+    stage_3_paragraph_relevance_judge.md      relevance-judge prompt
   query_validation/            deterministic Europe PMC query validation
 ```
 

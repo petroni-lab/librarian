@@ -49,8 +49,8 @@ logger = logging.getLogger(__name__)
 
 # Prompts — co-located so this agent is self-contained.
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
-_QUERY_PROMPT_PATH = _PROMPTS_DIR / "europepmc_claude_librarian.md"
-_FILTER_PROMPT_PATH = _PROMPTS_DIR / "relevance_filter.md"
+_QUERY_PROMPT_PATH = _PROMPTS_DIR / "stage_1_europe_pmc_query_generation.md"
+_FILTER_PROMPT_PATH = _PROMPTS_DIR / "stage_3_paragraph_relevance_judge.md"
 
 # Europe PMC full-text fetch endpoint (PMC id -> JATS XML).
 _FULLTEXT_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML"
@@ -565,10 +565,16 @@ class LibrarianAgent:
                 f"- {e}" for e in previous_evidences
             )
 
+        # Fill {max_queries} in the budget guidance from the configured cap so the
+        # planner is instructed with the same N we later truncate to — no hardcoded
+        # count in the prompt.
+        budget_guidance = self._query_budget_guidance.replace(
+            "{max_queries}", str(self._max_queries)
+        )
         prompt = (
             self._query_prompt.replace("{today_date}", today.isoformat())
             .replace("{today_year}", str(today.year))
-            .replace("{query_budget_guidance}", self._query_budget_guidance)
+            .replace("{query_budget_guidance}", budget_guidance)
             .replace("{conversation}", f"User: {query}")
             .replace("{additional_context}", additional_context)
         )
