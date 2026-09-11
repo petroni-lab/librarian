@@ -7,12 +7,20 @@ requires-python = ">=3.10"
 license = { file = "LICENSE" }
 dependencies = [
     "requests>=2.31",   # Europe PMC HTTP calls + OpenAI-compatible LLM client
+    "langchain-core>=0.3", # EuropePMCRetriever in literature_search.py
     "bm25s>=0.2",       # BM25 paragraph ranking
     "pysbd>=0.3",       # sentence segmentation for evidence extraction
     "python-dotenv>=1.0", # load LLM_* config from a .env file
     "PyStemmer>=2.2",   # Snowball stemming for BM25 paragraph scoring
     "fastapi>=0.110",   # HTTP orchestrator (orchestrator.py)
     "uvicorn>=0.27",    # ASGI server for the orchestrator
+]
+
+[project.optional-dependencies]
+# Persistent look-aside cache. Optional and imported only when EPMC_CACHE_DIR is
+# set; without it the librarian still runs, it just re-fetches every run.
+cache = [
+    "diskcache>=5.6",   # EPMC_CACHE_DIR — local SQLite cache
 ]
 
 [tool.uv]
