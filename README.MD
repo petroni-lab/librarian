@@ -25,7 +25,22 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#-contributing)
 [![Stars](https://img.shields.io/github/stars/petroni-lab/librarian?style=social)](https://github.com/petroni-lab/librarian/stargazers)
 
+<br>
 
+<h4>Install as an agent skill</h4>
+
+[![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?style=for-the-badge&logo=claude&logoColor=white)](#a-install-as-an-agent-skill-plugin)
+[![Codex](https://img.shields.io/badge/Codex-install-412991?style=for-the-badge)](#a-install-as-an-agent-skill-plugin)
+[![Antigravity](https://img.shields.io/badge/Antigravity-install-4285F4?style=for-the-badge&logo=google&logoColor=white)](#a-install-as-an-agent-skill-plugin)
+[![opencode](https://img.shields.io/badge/opencode-install-1A1A1A?style=for-the-badge&logo=opencode&logoColor=white)](#a-install-as-an-agent-skill-plugin)
+
+```console
+/plugin marketplace add petroni-lab/librarian   &&   /plugin install librarian@librarian
+```
+
+<sub>Two commands in Claude Code. No API key — the skill uses your agent's own model access.</sub>
+
+<br>
 
 <h5>If EMBL AI Librarian is useful to you, please consider giving it a ⭐</h5>
 
@@ -35,22 +50,110 @@
 
 ## 🛠️ Installation
 
-**Prerequisites:** Python 3.10+
+Librarian has three entry points. Pick the one that matches how you want to use it —
+they share the same retrieval pipeline.
 
-The project is managed with [uv](https://docs.astral.sh/uv/). First install uv itself:
+| | What you get | Requires | LLM endpoint? |
+|---|---|---|---|
+| **[Agent skill](#a-install-as-an-agent-skill-plugin)** | literature evidence inside your coding agent | `uv`, plus an authenticated `claude` or `codex` CLI | **No** — borrows your CLI's auth |
+| **[Python class](#b-install-as-a-python-library)** | `LibrarianAgent` in your own code | `uv` | Yes |
+| **[HTTP API](#serving-it-over-http)** | a JSON/streaming service | `uv` | Yes |
+
+All three need **Python 3.10+** and [uv](https://docs.astral.sh/uv/):
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Then clone the repo. A single `uv sync` creates the virtual environment (fetching a
-compatible Python if needed) and installs every dependency:
+### A. Install as an agent skill (plugin)
+
+This repository is its own plugin marketplace, so installation is two commands and
+no file copying.
+
+**Claude Code:**
+```
+/plugin marketplace add petroni-lab/librarian
+/plugin install librarian@librarian
+```
+
+**Codex:**
+```bash
+codex plugin marketplace add petroni-lab/librarian
+codex plugin add librarian@librarian
+```
+
+**Antigravity and opencode** have no marketplace command — they discover skills from
+a directory, so installing means putting the skill where they scan. One clone and one
+symlink covers both:
+```bash
+git clone https://github.com/petroni-lab/librarian.git
+mkdir -p ~/.agents/skills && ln -s "$PWD/librarian/skills/librarian" ~/.agents/skills/librarian
+```
+
+| Agent | Scans | Note |
+|---|---|---|
+| Antigravity | `.agents/skills/` (workspace), `~/.agents/skills/` | defaults to `.agents/`; older builds also read `.agent/` |
+| opencode | `~/.agents/skills/`, `~/.claude/skills/`, `~/.config/opencode/skills/` | any of the three works |
+
+Keep the clone — the skill runs the Python package inside it (see the note below).
+
+Working *inside* a clone of this repo needs no setup at all: `.agents/skills/librarian`
+is a symlink to `skills/librarian`, so workspace discovery finds it as-is.
+
+Then start a new session and ask a biomedical question — the skill activates on its
+own:
+
+> *Find me evidence on whether metformin extends lifespan in mammals.*
+
+Two things to know:
+
+- **No API key or `.env` is needed for this path.** The two LLM stages (query
+  planning and relevance judging) run as one-shot child sessions of the `claude` or
+  `codex` CLI, using its existing authentication. That CLI must be installed and
+  authenticated on `PATH`, whichever harness you drive the skill from.
+- **The skill needs the whole repository, not just `skills/librarian/`.** The step
+  scripts are a thin driver: the retrieval engine (Europe PMC search, chunking, BM25,
+  evidence assembly) lives in the `librarian/` package alongside them. A marketplace
+  install clones the whole repo into the plugin cache, so this is automatic — but
+  copying the skill folder on its own will not work.
+- **Python dependencies install themselves on first use.** Installing a plugin does
+  *not* install Python packages, so the skill's steps run through
+  `skills/librarian/scripts/run.sh`, which provisions the environment with `uv` the
+  first time it is called. `uv` itself must be present; set `LIBRARIAN_PYTHON` to an
+  interpreter that already has the dependencies if you would rather not use it.
+
+### B. Install as a Python library
+
 ```bash
 git clone https://github.com/petroni-lab/librarian.git
 cd librarian
 uv sync
 ```
 
+`uv sync` creates the virtual environment (fetching a compatible Python if needed)
+and installs every dependency. Then, with an endpoint configured as in
+[Quickstart](#️-quickstart):
+
+```python
+from librarian.agent import LibrarianAgent
+from librarian.config import load_runtime_config
+
+agent = LibrarianAgent(runtime_config=load_runtime_config())
+evidence = agent.run("does metformin extend lifespan in mammals?")
+
+for paper in evidence:
+    print(paper["title"], paper["year"], paper["pmid"])
+    for snippet in paper["evidence_snippets"]:
+        print("  ", snippet)
+```
+
+`run()` returns one record per paper the relevance judge kept — no fixed top-k. It
+also takes `on_progress=callable` for live stage updates and the constructor takes
+`tracer=` for span tracing (see [`tracing_port.py`](librarian/tracing_port.py)).
+
 ## ▶️ Quickstart
+
+> Applies to the library and HTTP entry points. The [agent skill](#a-install-as-an-agent-skill-plugin)
+> needs none of this — it uses your CLI's own model access.
 
 The agent needs an OpenAI-compatible LLM endpoint (a self-hosted vLLM server or a remote
 provider). Configure it in a `.env` file — copy the template and edit:
@@ -110,6 +213,15 @@ liveness probe; interactive docs are at `/docs`.
 
 ## 📰 News
 
+* **[2026.09.11]** Librarian is now installable as an **agent skill** — two commands
+  in Claude Code or Codex, and a directory symlink for Antigravity and opencode.
+  See [🛠️ Installation](#️-installation). The same run is also served over HTTP by
+  [`orchestrator.py`](orchestrator.py), with blocking and streaming endpoints —
+  see [Serving it over HTTP](#serving-it-over-http).
+* **[2026.09.xx]** *(upcoming)* Evaluation harness: the benchmark suites and scripts
+  behind the reported numbers.
+* **[2026.09.xx]** *(upcoming)* Synthesis agent: turns retrieved evidence into a
+  cited answer.
 * **[2026.09.03]** Retrieval pipeline rework: paragraph-level pooling across
   sub-queries, a single relevance judge (replacing the two concurrent
   full-text/abstract judges), snippet-level citations, author affiliation,
@@ -324,6 +436,13 @@ to retrieval tuning:
 pyproject.toml                 project metadata + dependencies (managed by uv)
 main.py                        CLI entrypoint
 orchestrator.py                minimal FastAPI server (blocking + SSE endpoints)
+.claude-plugin/                plugin manifest (read by Claude Code AND Codex) + Claude marketplace
+.agents/plugins/               Codex marketplace index
+skills/librarian/
+  SKILL.md                     the agent skill (Agent Skills spec)
+  scripts/run.sh               launcher: resolves the project root, provisions deps via uv
+  scripts/step*.py             the four pipeline steps, reusing librarian/agent.py
+  prompts/summarizer.md        final-answer synthesis prompt
 librarian/
   agent.py                     the retrieval pipeline (start here)
   config.py                    LibrarianRuntimeConfig + config.toml loader
