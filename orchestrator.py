@@ -25,12 +25,16 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from librarian import LibrarianAgent
+from librarian import LibrarianAgent, load_runtime_config
 
 # Same as main.py: pick up LLM_BASE_URL / LLM_MODEL / LLM_API_KEY from a .env file.
 load_dotenv()
 
 app = FastAPI(title="Librarian Orchestrator")
+
+# Read the tuning knobs once, at import: a malformed librarian/config.toml
+# should fail the process at startup, not the first request.
+RUNTIME_CONFIG = load_runtime_config()
 
 
 class RunRequest(BaseModel):
@@ -56,7 +60,10 @@ def _run(
     # ponytail: a fresh agent per request. Construction just reads two prompt
     # files and builds an HTTP client; cache it in a module global if profiling
     # ever says otherwise.
-    agent = LibrarianAgent(full_text_enrichment=request.full_text_enrichment)
+    agent = LibrarianAgent(
+        runtime_config=RUNTIME_CONFIG,
+        full_text_enrichment=request.full_text_enrichment,
+    )
     papers = agent.run(request.query, on_progress=on_progress)
     return {
         "query": request.query,
