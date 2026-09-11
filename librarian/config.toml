@@ -1,0 +1,40 @@
+# Librarian runtime configuration.
+#
+# Self-contained: every knob the agent reads must be set here, there is no
+# fallback and no env-var override. Schema + what each knob means:
+# LibrarianRuntimeConfig in config.py. Comments in this file explain only why
+# these values are what they are.
+#
+# The values below are the ones that produced the LitQA2 accuracy reported in
+# the README — change them only if you intend to change retrieval behaviour.
+# For a one-off change (an ablation sweep, say), don't edit this file: use
+# dataclasses.replace() on the loaded config (see config.py).
+
+# Model requested when llm_model_name isn't passed to LibrarianAgent.
+# Empty means "no opinion": the LLM client falls back to the LLM_MODEL env var,
+# which is how this open-source build is normally pointed at a backend.
+default_model_name = ""
+
+# {max_queries} is filled at prompt-build time from num_subqueries, so the cap
+# and the instruction to the planner always agree (one knob drives both).
+query_budget_guidance = """
+- Generate AT MOST {max_queries} complementary queries.
+- Balance recall and precision across the set.
+- Include one broader high-recall safety-net query unless the request is already extremely specific.
+- Use the remaining queries for focused sub-questions, synonyms, or fielded variants that improve coverage without over-constraining the search."""
+
+# 7 sub-queries: the Stage-2 fan-out runs one search+BM25 thread per sub-query,
+# sized to the CPUs actually available (see _available_cpus in agent.py).
+num_subqueries = 7
+# 50 × 7 = 350 raw papers pooled across sub-queries. Every returned paper is
+# decomposed into paragraphs and BM25-ranked, so this is also the per-sub-query
+# recall lever.
+papers_per_subquery = 50
+paragraphs_per_subquery = 16
+# 16 × 7 = 112 ≤ 128 — the whole pool is judged in one call (see config.py).
+paragraphs_per_judge_batch = 128
+
+max_paragraph_words = 250
+paragraph_overlap_words = 50
+# 0.1 is the winning LitQA2 config; use 0 for deterministic, reproducible filtering.
+filter_temperature = 0.1

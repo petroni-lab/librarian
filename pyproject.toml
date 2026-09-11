@@ -11,6 +11,7 @@ dependencies = [
     "pysbd>=0.3",       # sentence segmentation for evidence extraction
     "python-dotenv>=1.0", # load LLM_* config from a .env file
     "PyStemmer>=2.2",   # Snowball stemming for BM25 paragraph scoring
+    "mashumaro[toml]>=3.22", # dataclass <-> TOML parsing for librarian/config.toml
     "fastapi>=0.110",   # HTTP orchestrator (orchestrator.py)
     "uvicorn>=0.27",    # ASGI server for the orchestrator
 ]
