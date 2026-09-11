@@ -38,7 +38,7 @@ import bm25s
 import pysbd
 import requests
 
-from librarian.config import load_runtime_config
+from librarian.config import LibrarianRuntimeConfig
 from librarian.jats import extract_body_paragraphs
 from librarian.literature_search import search_scientific_literature_structured
 from librarian.llm_client import create_llm_client, parse_json_response
@@ -485,6 +485,7 @@ class LibrarianAgent:
 
     def __init__(
         self,
+        runtime_config: LibrarianRuntimeConfig,
         full_text_enrichment: bool = True,
         verbose: bool = False,
         llm_base_url: Optional[str] = None,
@@ -493,6 +494,21 @@ class LibrarianAgent:
     ):
         """Build a librarian ready to retrieve evidence for a query.
 
+        :param runtime_config: Tuning knobs (sub-query count, page sizes, filter
+            temperature, ...). Build one with ``config.load_runtime_config()``
+            or a ``dataclasses.replace()`` of it for a one-off override.
+        :type runtime_config: LibrarianRuntimeConfig
+        :param full_text_enrichment: If ``False``, retrieve abstract-only
+            paragraphs instead of fetching open-access full text.
+        :type full_text_enrichment: bool
+        :param verbose: If ``True``, print per-stage progress and debug info.
+        :type verbose: bool
+        :param llm_base_url: Override for the LLM endpoint; falls back to the
+            client's own default resolution when omitted.
+        :type llm_base_url: str or None
+        :param llm_model_name: Override for the LLM model name; falls back to
+            ``runtime_config.default_model_name`` when omitted.
+        :type llm_model_name: str or None
         :param tracer: Span-tracing adapter (see ``tracing_port.py``). Defaults
             to ``NullTracer`` (no-op) — pass your own backend's adapter to
             trace a real run.
@@ -512,20 +528,22 @@ class LibrarianAgent:
         self._filter_done = 0
         self._filter_total = 0
 
+        # Tuning knobs come from the caller-supplied config (see config.py —
+        # load_runtime_config() for the shipped config.toml, or a
+        # dataclasses.replace() of it for a one-off override).
         # Explicit constructor args (llm_model_name) take priority over config.
-        runtime = load_runtime_config()
-        self._max_queries = runtime.max_query_count
-        self._query_budget_guidance = runtime.query_budget_guidance
-        self._papers_per_subquery = runtime.papers_per_subquery
-        self._paragraphs_per_subquery = runtime.paragraphs_per_subquery
-        self._paragraphs_per_judge_batch = runtime.paragraphs_per_judge_batch
-        self._max_paragraph_words = runtime.max_paragraph_words
-        self._paragraph_overlap_words = runtime.paragraph_overlap_words
-        self._filter_temperature = runtime.filter_temperature
+        self._num_subqueries = runtime_config.num_subqueries
+        self._query_budget_guidance = runtime_config.query_budget_guidance
+        self._papers_per_subquery = runtime_config.papers_per_subquery
+        self._paragraphs_per_subquery = runtime_config.paragraphs_per_subquery
+        self._paragraphs_per_judge_batch = runtime_config.paragraphs_per_judge_batch
+        self._max_paragraph_words = runtime_config.max_paragraph_words
+        self._paragraph_overlap_words = runtime_config.paragraph_overlap_words
+        self._filter_temperature = runtime_config.filter_temperature
 
         self.llm = create_llm_client(
             base_url=llm_base_url,
-            model_name=llm_model_name or runtime.default_model_name,
+            model_name=llm_model_name or runtime_config.default_model_name,
         )
         self._query_prompt = _QUERY_PROMPT_PATH.read_text(encoding="utf-8")
         self._filter_prompt = _FILTER_PROMPT_PATH.read_text(encoding="utf-8")
@@ -565,10 +583,16 @@ class LibrarianAgent:
                 f"- {e}" for e in previous_evidences
             )
 
+        # Fill {max_queries} in the budget guidance from the configured cap so the
+        # planner is instructed with the same N we later truncate to — no hardcoded
+        # count in the prompt.
+        budget_guidance = self._query_budget_guidance.replace(
+            "{max_queries}", str(self._num_subqueries)
+        )
         prompt = (
             self._query_prompt.replace("{today_date}", today.isoformat())
             .replace("{today_year}", str(today.year))
-            .replace("{query_budget_guidance}", self._query_budget_guidance)
+            .replace("{query_budget_guidance}", budget_guidance)
             .replace("{conversation}", f"User: {query}")
             .replace("{additional_context}", additional_context)
         )
@@ -624,7 +648,7 @@ class LibrarianAgent:
                 if q and q not in seen:
                     seen.add(q)
                     unique.append(q)
-            result = unique[: self._max_queries]
+            result = unique[: self._num_subqueries]
             self._tracer.set_span_attributes(
                 span,
                 {
@@ -1105,7 +1129,7 @@ class LibrarianAgent:
                 self._paragraphs_for_subquery
             )
             # One CPU-bound thread per sub-query, capped at the CPUs
-            # actually available so a large max_query_count can't
+            # actually available so a large num_subqueries can't
             # oversubscribe a small container.
             stage2_workers = min(max(len(queries), 1), _available_cpus())
             with ThreadPoolExecutor(max_workers=stage2_workers) as pool:

@@ -264,26 +264,57 @@ The result is a list of passage dicts:
 
 ## ⚙️ Configuration
 
-Defaults live in `librarian/config.py`, and are identical to the settings used in every
-experiment reported in the paper. A few knobs can be overridden via env vars without
-editing code:
+Retrieval knobs live in [`librarian/config.toml`](librarian/config.toml), parsed into
+the frozen `LibrarianRuntimeConfig` dataclass in `librarian/config.py`. The shipped
+values are identical to the settings used in every experiment reported in the paper.
 
-| Env var | Default | Meaning |
+The file is self-contained and every knob is required — there is no fallback and no
+env-var override. A knob missing from the TOML, or a `num_subqueries` below 3, fails
+loudly at load rather than silently defaulting:
+
+| Knob (`config.toml`) | Default | Meaning |
 |---|---|---|
-| `LITERATURE_MAX_QUERY_COUNT` | 7 | max sub-queries generated |
-| `LITERATURE_PAPERS_PER_SUBQUERY` | 50 | Europe PMC results fetched per sub-query |
-| `LITERATURE_PARAGRAPHS_PER_SUBQUERY` | 16 | top-BM25 paragraphs kept per sub-query |
-| `LITERATURE_PARAGRAPHS_PER_JUDGE_BATCH` | 128 | paragraphs per Stage-3 LLM call |
-| `LITERATURE_MAX_PARAGRAPH_WORDS` | 250 | window size before a long paragraph is split |
-| `LITERATURE_PARAGRAPH_OVERLAP_WORDS` | 50 | overlap between adjacent split windows |
-| `LITERATURE_BM25_STEMMING` | on | Snowball stemming for BM25 (`0` to disable) |
-| `LITERATURE_FILTER_TEMPERATURE` | 0.1 | relevance-judge temperature |
-| `LLM_REASONING_EFFORT` | unset | `reasoning_effort` sent on every chat completion (e.g. `low`, `medium`, `high`); omit for models that don't support it |
+| `default_model_name` | `""` | model to request; empty falls back to the `LLM_MODEL` env var |
+| `query_budget_guidance` | see file | planner instructions; `{max_queries}` is filled from `num_subqueries` |
+| `num_subqueries` | 7 | sub-queries the planner generates and runs |
+| `papers_per_subquery` | 50 | Europe PMC results fetched per sub-query |
+| `paragraphs_per_subquery` | 16 | top-BM25 paragraphs kept per sub-query |
+| `paragraphs_per_judge_batch` | 128 | paragraphs per Stage-3 LLM call |
+| `max_paragraph_words` | 250 | window size before a long paragraph is split |
+| `paragraph_overlap_words` | 50 | overlap between adjacent split windows |
+| `filter_temperature` | 0.1 | relevance-judge temperature |
 
-`paragraphs_per_judge_batch` should be `>= paragraphs_per_subquery * max_query_count`
+`paragraphs_per_judge_batch` should be `>= paragraphs_per_subquery * num_subqueries`
 so the whole pool is judged in one call — the judge ranks globally, but results from
 several batches are only concatenated in batch order, so a smaller value silently
 degrades the ranking to per-batch. Raise all three knobs together.
+
+`LibrarianAgent` has no implicit default: the config is a mandatory constructor
+argument, so every caller decides its own.
+
+```python
+from librarian import LibrarianAgent, load_runtime_config
+
+agent = LibrarianAgent(runtime_config=load_runtime_config())
+```
+
+For a one-off change (an ablation sweep, say) don't edit the file — `replace()` the
+loaded config. Validation re-runs, so a sweep is checked exactly like the file is:
+
+```python
+from dataclasses import replace
+
+cfg = replace(load_runtime_config(), num_subqueries=3, papers_per_subquery=20)
+agent = LibrarianAgent(runtime_config=cfg)
+```
+
+Two settings stay outside the config file, since they belong to the process rather than
+to retrieval tuning:
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `LITERATURE_BM25_STEMMING` | on | Snowball stemming for BM25 (`0` to disable) |
+| `LLM_REASONING_EFFORT` | unset | `reasoning_effort` sent on every chat completion (e.g. `low`, `medium`, `high`); omit for models that don't support it |
 
 ---
 
@@ -295,7 +326,8 @@ main.py                        CLI entrypoint
 orchestrator.py                minimal FastAPI server (blocking + SSE endpoints)
 librarian/
   agent.py                     the retrieval pipeline (start here)
-  config.py                    tuning knobs (env-var overridable)
+  config.py                    LibrarianRuntimeConfig + config.toml loader
+  config.toml                  the tuning knobs themselves
   tracing_port.py              TracingPort protocol + no-op default (optional tracer=)
   llm_client.py                minimal OpenAI-compatible client
   literature_search.py         Europe PMC search

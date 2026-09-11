@@ -14,7 +14,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from librarian import LibrarianAgent
+from librarian import LibrarianAgent, load_runtime_config
 from librarian.progress import Spinner
 
 # Load LLM_BASE_URL / LLM_MODEL / LLM_API_KEY from a .env file if present.
@@ -29,7 +29,11 @@ def main() -> None:
     # On a terminal, show a live spinner and keep the agent's own logs quiet so
     # they don't fight the spinner. When piped/redirected, fall back to plain logs.
     interactive = sys.stderr.isatty()
-    agent = LibrarianAgent(verbose=not interactive)
+    # Tuning knobs come from librarian/config.toml; edit that file to change
+    # them, or dataclasses.replace() the loaded config for a one-off run.
+    agent = LibrarianAgent(
+        runtime_config=load_runtime_config(), verbose=not interactive
+    )
     if interactive:
         with Spinner() as spinner:
             passages = agent.run(query, on_progress=spinner.update)

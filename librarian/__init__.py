@@ -6,5 +6,6 @@ of the agent: no tracing, no database, no caching, no Slack — just the flow.
 """
 
 from librarian.agent import LibrarianAgent
+from librarian.config import LibrarianRuntimeConfig, load_runtime_config
 
-__all__ = ["LibrarianAgent"]
+__all__ = ["LibrarianAgent", "LibrarianRuntimeConfig", "load_runtime_config"]
