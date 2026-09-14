@@ -1,22 +1,12 @@
-"""Author-year citation keys and the paper blocks the summarizer cites from.
-
-Two consumers share this module, which is why it lives in the package rather
-than next to either of them:
-
-  ``skills/librarian/scripts/step4_finalize.py``  writes ``04_report.md``
-  ``librarian/synthesis.py``                      builds the summarizer's papers text
-
-Both need the same thing: one block per paper carrying a ready-made ``Cite as:``
-markdown link, so the model copies a citation instead of assembling one out of
-metadata. Deriving a surname, noticing that two papers share an author and year,
-and picking the a/b suffix are all things Python does exactly and a model does
-approximately.
+"""
+Helper file to build author-year citation keys and the paper blocks the 
+summarizer cites from.
 """
 
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any, Dict, List
+from typing import Any
 
 
 def _short_authors(authors: str, keep: int = 3) -> str:
@@ -41,7 +31,7 @@ def _first_author_surname(authors: str) -> str:
     return " ".join(parts)
 
 
-def citation_keys(evidence: List[Dict[str, Any]]) -> List[str]:
+def citation_keys(evidence: list[dict[str, Any]]) -> list[str]:
     """The author-year citation key for each paper, in report order.
 
     The summarizer cites papers by these keys rather than by list position, so
@@ -54,7 +44,7 @@ def citation_keys(evidence: List[Dict[str, Any]]) -> List[str]:
     :return: One key per record, e.g. ``["Chen 2023a", "Chen 2023b", "Kuo 2012"]``.
     :rtype: list[str]
     """
-    bases: List[str] = []
+    bases: list[str] = []
     for record in evidence:
         surname = _first_author_surname(record["authors"])
         year = str(record["year"]).strip()
@@ -69,7 +59,7 @@ def citation_keys(evidence: List[Dict[str, Any]]) -> List[str]:
 
     shared = Counter(bases)
     used: Counter = Counter()
-    keys: List[str] = []
+    keys: list[str] = []
     for base in bases:
         if shared[base] == 1:
             keys.append(base)
@@ -81,7 +71,7 @@ def citation_keys(evidence: List[Dict[str, Any]]) -> List[str]:
     return keys
 
 
-def render_papers(evidence: List[Dict[str, Any]]) -> str:
+def render_papers(evidence: list[dict[str, Any]]) -> str:
     """One compact block per paper: citation, link, and the judge-cited spans.
 
     The heading is the ready-made markdown citation for the paper, so the
@@ -98,7 +88,7 @@ def render_papers(evidence: List[Dict[str, Any]]) -> str:
     if not evidence:
         return "No papers survived the relevance judge."
 
-    lines: List[str] = []
+    lines: list[str] = []
     for key, record in zip(citation_keys(evidence), evidence):
         identifiers = []
         if record["pmid"]:
@@ -123,7 +113,7 @@ def render_papers(evidence: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def render_report(query: str, evidence: List[Dict[str, Any]], summary: str) -> str:
+def render_report(query: str, evidence: list[dict[str, Any]], summary: str) -> str:
     """The step-4 report: a titled header, the run's stats line, then the papers.
 
     :param query: The user's original question.
