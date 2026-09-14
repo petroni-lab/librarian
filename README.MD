@@ -442,7 +442,6 @@ skills/librarian/
   SKILL.md                     the agent skill (Agent Skills spec)
   scripts/run.sh               launcher: resolves the project root, provisions deps via uv
   scripts/step*.py             the four pipeline steps, reusing librarian/agent.py
-  prompts/summarizer.md        final-answer synthesis prompt
 librarian/
   agent.py                     the retrieval pipeline (start here)
   config.py                    LibrarianRuntimeConfig + config.toml loader
@@ -452,7 +451,7 @@ librarian/
   literature_search.py         Europe PMC search
   jats.py                      JATS full-text XML -> body paragraphs
   progress.py                  stdlib terminal spinner for live progress
-  prompts/                     query planner + relevance-judge prompts
+  prompts/                     query planner, relevance-judge, summarizer prompts
   query_validation/            deterministic Europe PMC query validation
 ```
 
