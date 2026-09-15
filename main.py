@@ -17,7 +17,7 @@ Configure the LLM backend in a `.env` file (copy `.env.example`) or via env vars
 import argparse
 import json
 import sys
-from typing import Any, Dict, List
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -53,7 +53,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _print_passages(query: str, passages: List[Dict[str, Any]]) -> None:
+def _print_passages(query: str, passages: list[dict[str, Any]]) -> None:
     """The retrieval-only view: one block per passage, then the full JSON."""
     print(f"\n=== {len(passages)} evidence passages for: {query!r} ===\n")
     for i, passage in enumerate(passages, 1):
@@ -67,7 +67,7 @@ def _print_passages(query: str, passages: List[Dict[str, Any]]) -> None:
     print(json.dumps(passages, indent=2, ensure_ascii=False))
 
 
-def _print_references(passages: List[Dict[str, Any]]) -> None:
+def _print_references(passages: list[dict[str, Any]]) -> None:
     """Resolve the answer's inline citation keys to titles and links.
 
     The keys come from ``citation_keys`` — the same function that built the
@@ -105,35 +105,32 @@ def main() -> None:
     args = _parse_args()
     query = " ".join(args.query).strip() or DEFAULT_QUERY
 
-    # On a terminal, show a live spinner and keep the agents' own logs quiet so
-    # they don't fight the spinner. When piped/redirected, fall back to plain logs.
+    # Keep the agents' own logs quiet on a terminal so they don't fight the
+    # spinner; piped or redirected, those logs are all the progress there is.
     interactive = sys.stderr.isatty()
     # Tuning knobs come from librarian/config.toml; edit that file to change
     # them, or dataclasses.replace() the loaded config for a one-off run.
     librarian = LibrarianAgent(
         runtime_config=load_runtime_config(), verbose=not interactive
     )
-    # Both agents take the same run(query, on_progress=...), so the mode only
-    # decides which one is driven — and what its result is printed as.
-    agent = (
-        librarian
-        if args.retrieval_only
-        else SynthesisAgent(librarian, verbose=not interactive)
-    )
 
-    if interactive:
-        with Spinner() as spinner:
-            result = agent.run(query, on_progress=spinner.update)
-    else:
-        result = agent.run(query)
+    # Spinner disables itself off a TTY and update() is then inert, so both
+    # modes drive it unconditionally. Printing happens after it is torn down,
+    # or the spinner's line would interleave with the output.
+    summary = ""
+    with Spinner() as spinner:
+        passages = librarian.run(query, on_progress=spinner.update)
+        if not args.retrieval_only:
+            spinner.update("Synthesizing answer")
+            summary = SynthesisAgent(verbose=not interactive).run(query, passages)
 
     if args.retrieval_only:
-        _print_passages(query, result)
+        _print_passages(query, passages)
         return
 
     print()
-    print(result["summary"])
-    _print_references(result["passages"])
+    print(summary)
+    _print_references(passages)
 
 
 if __name__ == "__main__":
