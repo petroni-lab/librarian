@@ -48,8 +48,8 @@ stdout; the local script validates and writes it to the run directory.
 
 The root agent sees only paths, counts, and the step-4 report. It must never
 read `01_query_prompt.md`, `02_paragraphs.json`, files under `03_judge/`, or
-`04_evidence.json`. The only exception is the package's `librarian/prompts/summarizer.md`
-read in Step 5 below.
+`04_evidence.json`. The only exception is the package's
+`../../librarian/prompts/summarizer.md` read in Step 5 below.
 
 Do not use the Claude Code `Agent` tool or a Codex native subagent for this
 workflow: either would make the child perform an extra Read and Write tool call.
