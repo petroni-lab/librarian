@@ -1,15 +1,11 @@
 """SynthesisAgent — turns the librarian's ranked evidence into a cited answer.
 
-Two steps, and no routing: every query retrieves, then summarizes.
+Two steps: every query retrieves, then summarizes.
 
   1. retrieve    delegate to the injected :class:`~librarian.agent.LibrarianAgent`.
   2. _summarize  write a grounded answer over the passages it returned.
 
 ``run`` returns ``{"summary", "passages", "search_queries"}``.
-
-The librarian is injected rather than constructed here: a caller that offers a
-retrieval-only mode needs one anyway, so there stays a single construction site
-and a single reader of ``config.toml``.
 """
 
 from __future__ import annotations
@@ -17,8 +13,9 @@ from __future__ import annotations
 import datetime
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from librarian.agent import LibrarianAgent
 from librarian.citations import render_papers
@@ -60,7 +57,7 @@ _NO_PAPERS_MESSAGE = (
 )
 
 
-def _fill(template: str, values: Dict[str, str]) -> str:
+def _fill(template: str, values: dict[str, str]) -> str:
     """Substitute every ``{placeholder}`` in ``template`` in a single pass.
 
     One pass is the point: chained ``str.replace`` calls rescan text they just
@@ -85,10 +82,10 @@ class SynthesisAgent:
     def __init__(
         self,
         librarian: LibrarianAgent,
-        llm_base_url: Optional[str] = None,
-        llm_model_name: Optional[str] = None,
+        llm_base_url: str | None = None,
+        llm_model_name: str | None = None,
         verbose: bool = False,
-        tracer: Optional[TracingPort] = None,
+        tracer: TracingPort | None = None,
     ):
         """Build an agent that answers over whatever ``librarian`` retrieves.
 
@@ -124,7 +121,7 @@ class SynthesisAgent:
         """Serialize compact trace payloads safely for span attributes."""
         return json.dumps(payload, default=str, ensure_ascii=True)
 
-    def _build_prompt(self, query: str, passages: List[Dict[str, Any]]) -> str:
+    def _build_prompt(self, query: str, passages: list[dict[str, Any]]) -> str:
         """Fill the summarizer prompt's eight placeholders for this run."""
         today = datetime.date.today()
         return _fill(
@@ -141,7 +138,7 @@ class SynthesisAgent:
             },
         )
 
-    def _summarize(self, query: str, passages: List[Dict[str, Any]]) -> str:
+    def _summarize(self, query: str, passages: list[dict[str, Any]]) -> str:
         """Write the grounded answer, or the no-papers line when nothing was kept."""
         if not passages:
             # Nothing to ground an answer in, so nothing worth an LLM call.
@@ -179,8 +176,8 @@ class SynthesisAgent:
     def run(
         self,
         query: str,
-        on_progress: Optional[Callable[[str], None]] = None,
-    ) -> Dict[str, Any]:
+        on_progress: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
         """Retrieve evidence for ``query`` and synthesize a cited answer.
 
         :param query: The user's research question.

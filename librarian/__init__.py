@@ -2,8 +2,7 @@
 
 ``LibrarianAgent`` turns a natural-language biology question into ranked
 evidence passages from Europe PMC, and ``SynthesisAgent`` writes a cited answer
-over those passages. This is the open-source, infra-free version of the agent:
-no tracing, no database, no caching, no Slack — just the flow.
+over those passages.
 """
 
 from librarian.agent import LibrarianAgent
