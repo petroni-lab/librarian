@@ -1,11 +1,11 @@
-"""SynthesisAgent — turns the librarian's ranked evidence into a cited answer.
+"""SynthesisAgent — turns ranked evidence passages into a cited answer.
 
-Two steps: every query retrieves, then summarizes.
+One step: ``run(query, passages)`` writes a grounded answer and returns it.
 
-  1. retrieve    delegate to the injected :class:`~librarian.agent.LibrarianAgent`.
-  2. _summarize  write a grounded answer over the passages it returned.
-
-``run`` returns ``{"summary", "passages", "search_queries"}``.
+Retrieval is the caller's job, so the passages can come from a
+:class:`~librarian.agent.LibrarianAgent` run, a cached ``04_evidence.json``, or
+anywhere else that produces the same records. Nothing here imports the
+librarian, and re-synthesizing over the same evidence costs no new search.
 """
 
 from __future__ import annotations
@@ -13,11 +13,9 @@ from __future__ import annotations
 import datetime
 import json
 import re
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from librarian.agent import LibrarianAgent
 from librarian.citations import render_papers
 from librarian.llm_client import create_llm_client
 from librarian.tracing_port import NullTracer, TracingPort
@@ -77,21 +75,17 @@ def _fill(template: str, values: dict[str, str]) -> str:
 
 
 class SynthesisAgent:
-    """Retrieve evidence for a question, then write a grounded answer over it."""
+    """Write a grounded, cited answer over evidence the caller already has."""
 
     def __init__(
         self,
-        librarian: LibrarianAgent,
         llm_base_url: str | None = None,
         llm_model_name: str | None = None,
         verbose: bool = False,
         tracer: TracingPort | None = None,
     ):
-        """Build an agent that answers over whatever ``librarian`` retrieves.
+        """Build an agent that answers over passages handed to ``run``.
 
-        :param librarian: The retrieval agent to delegate to. Injected, so the
-            caller owns its configuration and can also use it on its own.
-        :type librarian: LibrarianAgent
         :param llm_base_url: Override for the LLM endpoint; falls back to the
             client's own ``LLM_BASE_URL`` resolution when omitted.
         :type llm_base_url: str or None
@@ -104,7 +98,6 @@ class SynthesisAgent:
             to ``NullTracer`` (no-op).
         :type tracer: TracingPort or None
         """
-        self.librarian = librarian
         self.verbose = verbose
         self._tracer: TracingPort = tracer if tracer is not None else NullTracer()
         # Both default to None so the client resolves LLM_BASE_URL / LLM_MODEL
@@ -138,15 +131,26 @@ class SynthesisAgent:
             },
         )
 
-    def _summarize(self, query: str, passages: list[dict[str, Any]]) -> str:
-        """Write the grounded answer, or the no-papers line when nothing was kept."""
+    def run(self, query: str, passages: list[dict[str, Any]]) -> str:
+        """Write a grounded answer to ``query`` from ``passages``.
+
+        :param query: The user's research question.
+        :type query: str
+        :param passages: Ranked evidence records, as ``LibrarianAgent.run``
+            returns them. Order is the citation order.
+        :type passages: list[dict[str, Any]]
+        :return: The answer, citing papers by the ``Cite as:`` keys the
+            passages carry. When ``passages`` is empty, a line saying the
+            search found nothing — no LLM call is made.
+        :rtype: str
+        """
         if not passages:
             # Nothing to ground an answer in, so nothing worth an LLM call.
             return _NO_PAPERS_MESSAGE
 
         prompt = self._build_prompt(query, passages)
         with self._tracer.start_span(
-            "synthesis.summarize",
+            "synthesis.run",
             attributes={
                 "openinference.span.kind": "LLM",
                 "paper.count": len(passages),
@@ -156,76 +160,24 @@ class SynthesisAgent:
                 "input.mime_type": "application/json",
             },
         ) as span:
-            answer = self.llm.chat_completion(
-                [
-                    {
-                        "role": "system",
-                        "content": "You are a professional scientific summarizer.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=_SYNTHESIS_TEMPERATURE,
-                max_tokens=_SYNTHESIS_MAX_TOKENS,
-            ).strip()
+            try:
+                answer = self.llm.chat_completion(
+                    [
+                        {
+                            "role": "system",
+                            "content": "You are a professional scientific summarizer.",
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=_SYNTHESIS_TEMPERATURE,
+                    max_tokens=_SYNTHESIS_MAX_TOKENS,
+                ).strip()
+            except Exception as exc:
+                self._tracer.mark_span_error(span, exc)
+                raise
+            self._log(f"summarized {len(passages)} passages")
             self._tracer.set_span_attributes(
                 span,
                 {"output.value": answer[:2000], "output.mime_type": "text/plain"},
             )
         return answer
-
-    def run(
-        self,
-        query: str,
-        on_progress: Callable[[str], None] | None = None,
-    ) -> dict[str, Any]:
-        """Retrieve evidence for ``query`` and synthesize a cited answer.
-
-        :param query: The user's research question.
-        :type query: str
-        :param on_progress: Called with the current stage name, forwarded to the
-            librarian so retrieval and synthesis report to the same display.
-        :type on_progress: callable or None
-        :return: ``{"summary", "passages", "search_queries"}`` — the answer, the
-            ranked passages it was written from, and the sub-queries the
-            librarian actually ran.
-        :rtype: dict[str, Any]
-        """
-        with self._tracer.start_span(
-            "synthesis.run",
-            attributes={
-                "openinference.span.kind": "CHAIN",
-                "input.value": self._trace_json({"query": query}),
-                "input.mime_type": "application/json",
-            },
-        ) as run_span:
-            try:
-                passages = self.librarian.run(query, on_progress=on_progress)
-                if on_progress is not None:
-                    on_progress("Synthesizing answer")
-                summary = self._summarize(query, passages)
-            except Exception as exc:
-                self._tracer.mark_span_error(run_span, exc)
-                raise
-            self._log(f"summarized {len(passages)} passages")
-            self._tracer.set_span_attributes(
-                run_span,
-                {
-                    "retrieval.passage_count": len(passages),
-                    "output.value": self._trace_json(
-                        {
-                            "passage_count": len(passages),
-                            "summary_preview": summary[:500],
-                        }
-                    ),
-                    "output.mime_type": "application/json",
-                },
-            )
-
-        # last_run_debug is only assigned once Stage 3 completes, so a run that
-        # retrieved nothing leaves the attribute unset entirely.
-        librarian_debug = getattr(self.librarian, "last_run_debug", {})
-        return {
-            "summary": summary,
-            "passages": passages,
-            "search_queries": librarian_debug.get("search_queries", []),
-        }
