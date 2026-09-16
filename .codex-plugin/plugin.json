@@ -1,0 +1,31 @@
+{
+  "name": "librarian",
+  "version": "0.2.0",
+  "description": "Retrieve ranked Europe PMC evidence passages for biomedical research questions.",
+  "author": {
+    "name": "Petroni Lab, EMBL",
+    "url": "https://github.com/petroni-lab"
+  },
+  "homepage": "https://github.com/petroni-lab/librarian",
+  "repository": "https://github.com/petroni-lab/librarian",
+  "license": "MIT",
+  "keywords": ["biomedical", "literature-search", "europe-pmc", "evidence-retrieval"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "EMBL AI Librarian",
+    "shortDescription": "Ranked Europe PMC evidence for biomedical questions",
+    "longDescription": "Retrieves and ranks scientific evidence passages from Europe PMC for a biomedical research question: generates targeted sub-queries, retrieves and BM25-ranks full-text paragraphs, and applies an LLM relevance filter so you get citable, ranked evidence instead of raw search results.",
+    "developerName": "Petroni Lab, EMBL",
+    "category": "Research",
+    "capabilities": ["Instructions"],
+    "websiteURL": "https://github.com/petroni-lab/librarian",
+    "defaultPrompt": [
+      "Find evidence on whether metformin affects lifespan.",
+      "What does the literature say about CRISPR off-target effects?",
+      "Summarize recent evidence on gut microbiome and depression."
+    ],
+    "brandColor": "#18974C",
+    "composerIcon": "./assets/ai-librarian.png",
+    "logo": "./assets/ai-librarian.png"
+  }
+}
