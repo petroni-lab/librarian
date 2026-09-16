@@ -67,14 +67,16 @@ def _print_passages(query: str, passages: list[dict[str, Any]]) -> None:
     print(json.dumps(passages, indent=2, ensure_ascii=False))
 
 
-def _print_references(passages: list[dict[str, Any]]) -> None:
-    """Resolve the answer's inline citation keys to titles and links.
+def _print_retrieved(passages: list[dict[str, Any]]) -> None:
+    """List every retrieved paper under the key the answer cites it by.
 
     The keys come from ``citation_keys`` — the same function that built the
-    ``Cite as:`` lines the model copied — so this list and the answer's inline
-    citations always agree. The prompt forbids the model from writing its own
-    bibliography, which is what makes printing one here deterministic rather
-    than a second, possibly conflicting, set of references.
+    ``Cite as:`` lines the model copied — so any inline citation in the answer
+    resolves here to the paper it names. This is every paper retrieved, not
+    only the cited ones: the answer may lean on three of twenty and all twenty
+    are listed, which is why the heading is not "References". The prompt
+    forbids the model from writing its own bibliography, so this stays the
+    only list printed rather than one of two that could disagree.
     """
     if not passages:
         return
@@ -84,7 +86,7 @@ def _print_references(passages: list[dict[str, Any]]) -> None:
     # reads as one block rather than a ragged left edge.
     indent = max(len(key) for key in keys) + 5
 
-    print("\nReferences")
+    print("\nRetrieved papers")
     for key, passage in zip(keys, passages):
         identifiers = []
         if passage["pmid"]:
@@ -130,7 +132,7 @@ def main() -> None:
 
     print()
     print(summary)
-    _print_references(passages)
+    _print_retrieved(passages)
 
 
 if __name__ == "__main__":
