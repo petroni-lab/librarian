@@ -1,5 +1,5 @@
 """
-Helper file to build author-year citation keys and the paper blocks the 
+Helper file to build author-year citation keys and the paper blocks the
 summarizer cites from.
 """
 
@@ -96,16 +96,17 @@ def render_papers(evidence: list[dict[str, Any]]) -> str:
         if record["doi"]:
             identifiers.append(f"doi:{record['doi']}")
         venue = " ".join(part for part in (record["journal"], record["year"]) if part)
-        source = "full text available" if record["has_fulltext"] else "abstract only"
+        # Deliberately no full-text-availability line. The only flag we have is
+        # Europe PMC's inEPMC/hasFreeFullText *claim*, and ~8% of the papers it
+        # marks fail the fetch and are read from their abstract alone. The
+        # summarizer reads this block, so a wrong claim here is one the model
+        # repeats. Re-add it only from a real fetch outcome.
         citation = f"[{key}]({record['url']})" if record["url"] else f"[{key}]"
         lines.append(f"## {record['title']}")
         lines.append(f"- Cite as: {citation}")
         lines.append(f"- {_short_authors(record['authors'])}")
         lines.append(
-            "- "
-            + " · ".join(
-                part for part in (venue, " · ".join(identifiers), source) if part
-            )
+            "- " + " · ".join(part for part in (venue, " · ".join(identifiers)) if part)
         )
         for span in record["evidence_snippets"]:
             lines.append(f"- Evidence: {span}")
