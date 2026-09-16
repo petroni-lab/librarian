@@ -96,11 +96,6 @@ def render_papers(evidence: list[dict[str, Any]]) -> str:
         if record["doi"]:
             identifiers.append(f"doi:{record['doi']}")
         venue = " ".join(part for part in (record["journal"], record["year"]) if part)
-        # Deliberately no full-text-availability line. The only flag we have is
-        # Europe PMC's inEPMC/hasFreeFullText *claim*, and ~8% of the papers it
-        # marks fail the fetch and are read from their abstract alone. The
-        # summarizer reads this block, so a wrong claim here is one the model
-        # repeats. Re-add it only from a real fetch outcome.
         citation = f"[{key}]({record['url']})" if record["url"] else f"[{key}]"
         lines.append(f"## {record['title']}")
         lines.append(f"- Cite as: {citation}")
