@@ -169,6 +169,13 @@ cp .env.example .env
 uv run main.py "does metformin extend lifespan in mammals?"
 ```
 
+That retrieves the evidence and synthesizes a cited answer over it. To stop after
+retrieval and print the ranked passages plus the raw JSON instead:
+
+```bash
+uv run main.py "does metformin extend lifespan in mammals?" --retrieval-only
+```
+
 `main.py` loads `.env` automatically. You can also just export the same variables
 in your shell.
 
@@ -213,6 +220,10 @@ liveness probe; interactive docs are at `/docs`.
 
 ## 📰 News
 
+* **[2026.09.14]** Synthesis agent: `SynthesisAgent` turns the retrieved evidence
+  into a cited answer, and `main.py` now does so by default — pass `--retrieval-only`
+  for the previous ranked-passages output. It reuses the skill's summarizer prompt,
+  so the citation discipline is identical whichever path produced the answer.
 * **[2026.09.11]** Librarian is now installable as an **agent skill** — two commands
   in Claude Code or Codex, and a directory symlink for Antigravity and opencode.
   See [🛠️ Installation](#️-installation). The same run is also served over HTTP by
@@ -220,8 +231,6 @@ liveness probe; interactive docs are at `/docs`.
   see [Serving it over HTTP](#serving-it-over-http).
 * **[2026.09.xx]** *(upcoming)* Evaluation harness: the benchmark suites and scripts
   behind the reported numbers.
-* **[2026.09.xx]** *(upcoming)* Synthesis agent: turns retrieved evidence into a
-  cited answer.
 * **[2026.09.03]** Retrieval pipeline rework: paragraph-level pooling across
   sub-queries, a single relevance judge (replacing the two concurrent
   full-text/abstract judges), snippet-level citations, author affiliation,
@@ -434,7 +443,7 @@ to retrieval tuning:
 
 ```
 pyproject.toml                 project metadata + dependencies (managed by uv)
-main.py                        CLI entrypoint
+main.py                        CLI entrypoint (synthesis by default, --retrieval-only)
 orchestrator.py                minimal FastAPI server (blocking + SSE endpoints)
 .claude-plugin/                plugin manifest (read by Claude Code AND Codex) + Claude marketplace
 .agents/plugins/               Codex marketplace index
@@ -442,9 +451,10 @@ skills/librarian/
   SKILL.md                     the agent skill (Agent Skills spec)
   scripts/run.sh               launcher: resolves the project root, provisions deps via uv
   scripts/step*.py             the four pipeline steps, reusing librarian/agent.py
-  prompts/summarizer.md        final-answer synthesis prompt
 librarian/
   agent.py                     the retrieval pipeline (start here)
+  synthesis.py                 SynthesisAgent: cited answer over the evidence
+  citations.py                 author-year citation keys + the summarizer's paper blocks
   config.py                    LibrarianRuntimeConfig + config.toml loader
   config.toml                  the tuning knobs themselves
   tracing_port.py              TracingPort protocol + no-op default (optional tracer=)
@@ -452,7 +462,7 @@ librarian/
   literature_search.py         Europe PMC search
   jats.py                      JATS full-text XML -> body paragraphs
   progress.py                  stdlib terminal spinner for live progress
-  prompts/                     query planner + relevance-judge prompts
+  prompts/                     query planner, relevance-judge, summarizer prompts
   query_validation/            deterministic Europe PMC query validation
 ```
 

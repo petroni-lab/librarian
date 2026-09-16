@@ -48,8 +48,8 @@ stdout; the local script validates and writes it to the run directory.
 
 The root agent sees only paths, counts, and the step-4 report. It must never
 read `01_query_prompt.md`, `02_paragraphs.json`, files under `03_judge/`, or
-`04_evidence.json`. The only exception is the local `prompts/summarizer.md`
-read in Step 5 below.
+`04_evidence.json`. The only exception is the package's
+`../../librarian/prompts/summarizer.md` read in Step 5 below.
 
 Do not use the Claude Code `Agent` tool or a Codex native subagent for this
 workflow: either would make the child perform an extra Read and Write tool call.
@@ -152,7 +152,8 @@ proceed to Step 5, staying within its evidence.
 
 ## Step 5 — synthesize the final answer
 
-After every successful Step 4, read `prompts/summarizer.md` in full, then use
+After every successful Step 4, read `librarian/prompts/summarizer.md` in full,
+then use
 its structure, source-fidelity rules, and citation discipline to synthesize
 the Step-4 evidence report into the final answer presented to the user. Always
 use this step, whether the user's request was a broad search/overview/summary
