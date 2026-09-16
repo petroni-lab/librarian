@@ -2,10 +2,13 @@
 
 One step: ``run(query, passages)`` writes a grounded answer and returns it.
 
-Retrieval is the caller's job, so the passages can come from a
-:class:`~librarian.agent.LibrarianAgent` run, a cached ``04_evidence.json``, or
-anywhere else that produces the same records. Nothing here imports the
-librarian, and re-synthesizing over the same evidence costs no new search.
+Retrieval is the caller's job. The passages are what
+:class:`~librarian.agent.LibrarianAgent`'s ``run`` returns — either live, or
+round-tripped through a run's ``04_evidence.json``, which is those same records
+serialized. That one shape is the contract: the record fields are read
+directly, so a record from any other producer is a bug, not a supported input.
+Nothing here imports the librarian, so the two agents stay independent, and
+re-synthesizing over cached evidence costs no new search.
 """
 
 from __future__ import annotations
