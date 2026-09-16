@@ -49,8 +49,8 @@ logger = logging.getLogger(__name__)
 
 # Prompts — co-located so this agent is self-contained.
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
-_QUERY_PROMPT_PATH = _PROMPTS_DIR / "europepmc_claude_librarian.md"
-_FILTER_PROMPT_PATH = _PROMPTS_DIR / "relevance_filter.md"
+_QUERY_PROMPT_PATH = _PROMPTS_DIR / "stage_1_europe_pmc_query_generation.md"
+_FILTER_PROMPT_PATH = _PROMPTS_DIR / "stage_3_paragraph_relevance_judge.md"
 
 # Europe PMC full-text fetch endpoint (PMC id -> JATS XML).
 _FULLTEXT_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML"

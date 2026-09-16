@@ -299,7 +299,7 @@ gives **+6.8 Bio / +10.9 Neu**. See the paper for the full evaluation and ablati
 <summary><b>Stage 1: Subqueries Generation</b></summary>
 
 The LLM turns the question into up to N complementary Europe PMC sub-queries
-(`prompts/europepmc_claude_librarian.md`). Each sub-query is checked by a deterministic
+(`prompts/stage_1_europe_pmc_query_generation.md`). Each sub-query is checked by a deterministic
 syntax validator (`query_validation/`, pure parsing — no LLM call); invalid field names
 and malformed Boolean expressions are rejected.
 
@@ -344,7 +344,7 @@ so a paragraph relevant to several sub-queries costs the downstream judge budget
 
 The merged paragraph pool is segmented into sentences with pySBD, each given a stable
 identifier, and judged in batches of `paragraphs_per_judge_batch` paragraphs
-(`prompts/relevance_filter.md`). One LLM call returns an ordered list of sentence
+(`prompts/stage_3_paragraph_relevance_judge.md`). One LLM call returns an ordered list of sentence
 identifiers, which simultaneously filters irrelevant paragraphs, re-ranks the relevant
 ones, and extracts the supporting sentences. Cited sentences are grouped by paper into
 contiguous evidence spans (`evidence_snippets`) in reading order — a paper whose cited
