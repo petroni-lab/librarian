@@ -22,8 +22,7 @@ from typing import Optional
 from mashumaro.mixins.toml import DataClassTOMLMixin
 
 
-# One query per role in query_budget_guidance: the high-recall safety net plus
-# the focused sub-question/synonym/fielded variants it is balanced against.
+# One query per role in query_budget_guidance's recall/coverage/precision split.
 MIN_SUBQUERIES = 3
 
 
@@ -42,8 +41,11 @@ class LibrarianRuntimeConfig(DataClassTOMLMixin):
     # Model used when llm_model_name isn't passed explicitly to LibrarianAgent.
     # Empty means the LLM client falls back to the LLM_MODEL env var.
     default_model_name: Optional[str]
-    # {max_queries} is filled at prompt-build time from num_subqueries, so the cap
-    # and the instruction to the planner always agree (one knob drives both).
+    # How the query budget is spent, split across recall / coverage / precision
+    # roles. Held here rather than in the prompt because it is the tunable part;
+    # the prompt refers to it as "the budget above". {max_queries} is filled at
+    # prompt-build time from num_subqueries, so the cap and the instruction to
+    # the planner always agree (one knob drives both).
     query_budget_guidance: str
     # ── The four primary sizing knobs ────────────────────────────────────────
     # How many sub-queries the planner generates and runs. Must be >= MIN_SUBQUERIES

@@ -15,13 +15,17 @@
 # which is how this open-source build is normally pointed at a backend.
 default_model_name = ""
 
-# {max_queries} is filled at prompt-build time from num_subqueries, so the cap
-# and the instruction to the planner always agree (one knob drives both).
+# Verbatim from bio-agents' agents/librarian/config_prod.toml, so both repos plan
+# queries the same way. {max_queries} is filled at prompt-build time from
+# num_subqueries, so the cap and the instruction to the planner always agree.
+# The recall/coverage/precision split lives here rather than in the prompt: it is
+# the tunable part, and it is what MIN_SUBQUERIES = 3 exists to protect — a budget
+# below 3 cannot give each role a query.
 query_budget_guidance = """
-- Generate AT MOST {max_queries} complementary queries.
-- Balance recall and precision across the set.
-- Include one broader high-recall safety-net query unless the request is already extremely specific.
-- Use the remaining queries for focused sub-questions, synonyms, or fielded variants that improve coverage without over-constraining the search."""
+Generate AT MOST {max_queries} complementary queries, spent as follows (recall over precision — a downstream filter handles precision):
+- AT MOST ~2/5 of them as recall queries — broad plain-text baselines, no field tags, core concepts joined with OR synonyms. Your recall safety net. Keep them genuinely different: vary the phrasing and the synonym set, do not re-emit one query three ways.
+- AT MOST ~2/5 of them as coverage queries — distinct angles on the question: a different synonym set, a related sub-concept, or a different field/entity from the syntax reference below. One concept each, at most 1 AND.
+- AT MOST ~1/5 of them as precision queries — targeted structured queries using whichever fields from the reference best fit the co-required concepts (controlled vocabulary, entity, or section fields), at most 1 AND. When an exact answer exists, these find it."""
 
 # 7 sub-queries: the Stage-2 fan-out runs one search+BM25 thread per sub-query,
 # sized to the CPUs actually available (see _available_cpus in agent.py).

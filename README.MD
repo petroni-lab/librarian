@@ -387,7 +387,7 @@ loudly at load rather than silently defaulting:
 | Knob (`config.toml`) | Default | Meaning |
 |---|---|---|
 | `default_model_name` | `""` | model to request; empty falls back to the `LLM_MODEL` env var |
-| `query_budget_guidance` | see file | planner instructions; `{max_queries}` is filled from `num_subqueries` |
+| `query_budget_guidance` | see file | how the budget is split across recall / coverage / precision queries; `{max_queries}` is filled from `num_subqueries` |
 | `num_subqueries` | 7 | sub-queries the planner generates and runs |
 | `papers_per_subquery` | 50 | Europe PMC results fetched per sub-query |
 | `paragraphs_per_subquery` | 16 | top-BM25 paragraphs kept per sub-query |
