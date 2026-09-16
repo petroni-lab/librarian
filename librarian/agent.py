@@ -53,6 +53,11 @@ from librarian.tracing_port import NullTracer, TracingPort
 logging.getLogger("bm25s").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
+# Marks a paper whose full text was actually retrieved and parsed this run.
+# Private to the paper dict as it travels Stage 2 → the evidence record; it is
+# surfaced as the public "fulltext_read" field, never as an Europe PMC key.
+_FULLTEXT_READ_KEY = "_fulltext_read"
+
 # Prompts — co-located so this agent is self-contained.
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _QUERY_PROMPT_PATH = _PROMPTS_DIR / "stage_1_europe_pmc_query_generation.md"
@@ -841,6 +846,13 @@ class LibrarianAgent:
             "url": str(paper.get("url") or ""),
             "affiliation": _first_affiliation(paper),
             "has_fulltext": bool(paper.get("inEPMC") or paper.get("hasFreeFullText")),
+            # has_fulltext is Europe PMC's *claim* that open-access full text
+            # exists; fulltext_read is whether this run actually got it. They
+            # disagree exactly when a fetch failed, which is the case that used
+            # to be invisible: the record said "full text available" for a paper
+            # read from its abstract alone. has_fulltext keeps its meaning so the
+            # output contract is unchanged.
+            "fulltext_read": bool(paper.get(_FULLTEXT_READ_KEY)),
         }
 
     # ── Body extraction from the prefetched full text ────────────────────────
@@ -864,6 +876,11 @@ class LibrarianAgent:
         if not fulltext.ok:
             self._log(f"full-text fetch failed for {pmcid}: {fulltext.error}")
             return []
+        # Recorded on the paper so _passage_from_paper can report what was
+        # actually read. The batch is per sub-query and a paper found by several
+        # sub-queries is a separate dict each time, so this is never shared
+        # across the Stage-2 threads.
+        paper[_FULLTEXT_READ_KEY] = True
         return extract_body_paragraphs(fulltext.xml)
 
     # ── Step 5: single-pass LLM relevance filter ─────────────────────────────
