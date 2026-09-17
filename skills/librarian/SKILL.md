@@ -2,7 +2,7 @@
 name: librarian
 description: Retrieve Europe PMC evidence for a biomedical research question. Use when the user needs papers, citations, or literature-backed scientific evidence.
 license: MIT
-compatibility: Requires Python 3.10+, uv, and network access to Europe PMC. Runs in any Agent Skills-compatible harness, but the two LLM steps shell out to a child session, so the `claude` or `codex` CLI must be installed and authenticated on PATH.
+compatibility: Requires Python 3.10+, uv, and network access to Europe PMC. Runs in any Agent Skills-compatible harness, but the two LLM steps shell out to a child session, so the `claude`, `codex`, or Antigravity `agy` CLI must be installed and authenticated on PATH.
 metadata:
   version: "0.2.0"
 ---
@@ -13,7 +13,7 @@ Run the librarian pipeline without a served LLM. The scripts reuse
 `librarian/agent.py` for Europe PMC search, full-text chunking, BM25
 ranking, and evidence assembly.
 
-Steps 1 and 3 invoke a fresh Claude Code or Codex CLI session for the two LLM
+Steps 1 and 3 invoke a fresh Claude Code, Codex, or Antigravity CLI session for the two LLM
 operations. The root agent never reads their large prompts and never creates an
 `Agent` subagent. Step 5 is a response-only synthesis mode: it reads the
 literature-synthesis prompt after retrieval is complete, not either pipeline
@@ -51,8 +51,8 @@ read `01_query_prompt.md`, `02_paragraphs.json`, files under `03_judge/`, or
 `04_evidence.json`. The only exception is the package's
 `../../librarian/prompts/summarizer.md` read in Step 5 below.
 
-Do not use the Claude Code `Agent` tool or a Codex native subagent for this
-workflow: either would make the child perform an extra Read and Write tool call.
+Use the direct CLI launcher rather than native subagent tools in any harness;
+this keeps prompt and result file handling in the local scripts.
 
 ## Setup
 
@@ -63,16 +63,24 @@ no absolute path to configure:
 
 ```bash
 RUN="<directory containing this SKILL.md>/scripts/run.sh"
-PROVIDER="claude"  # or "codex"
+PROVIDER="claude"  # or "codex" or "antigravity"
 ```
 
 When installed as a plugin, that directory is
 `${CLAUDE_PLUGIN_ROOT}/skills/librarian`. Set `LIBRARIAN_PYTHON` to a Python
 interpreter that already has Librarian's dependencies if `uv` is unavailable.
 
-Set `PROVIDER` to `claude` or `codex`. If you are running inside one of those
-two, use that one. Otherwise use whichever is installed and authenticated on
-PATH — those are the only two child providers the launcher implements.
+Set `PROVIDER` to `claude`, `codex`, or `antigravity`. Honor an explicit user
+choice; otherwise use the provider matching your host (Antigravity →
+`antigravity`). In other hosts, use an installed, authenticated provider.
+Keep the same provider for steps 1 and 3; do not silently switch on failure.
+
+The Antigravity provider calls the official `agy` CLI, which must be on PATH
+and authenticated once through an interactive `agy` session. It sends one
+JSON-wrapped prompt through stdin and extracts the completed response from
+the event stream, using the same timeout and output validation as other
+providers. It uses the configured default model and permissions. See the
+[Antigravity headless documentation](https://antigravity.google/docs/cli/headless/).
 
 The launcher gives Codex child sessions a temporary writable state directory
 automatically, copying authentication and signed workspace-policy caches from

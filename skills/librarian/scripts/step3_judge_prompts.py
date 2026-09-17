@@ -4,7 +4,7 @@
 The batch-building half of ``agent.py::_relevance_filter`` plus
 ``_evaluate_batch``'s substitution: one judge item per paragraph, batched
 ``paragraphs_per_judge_batch`` paragraphs per call — one LLM call there, one
-fresh Claude Code or Codex CLI session here. Prod sizes that batch to hold the
+fresh Claude Code, Codex, or Antigravity CLI session here. Prod sizes that batch to hold the
 whole pool (48), so a normal run makes one globally ranked judge call.
 
     python3 step3_judge_prompts.py --run DIR --provider claude
@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import _runs
-from _direct_session import run_direct_session
+from _direct_session import PROVIDERS, run_direct_session
 from librarian.agent import _FILTER_PROMPT_PATH
 
 
@@ -41,7 +41,7 @@ def main() -> int:
         description="Judge paragraph relevance in fresh CLI sessions (step 3 of 4)."
     )
     parser.add_argument("--run", required=True, help="run directory from step 1")
-    parser.add_argument("--provider", choices=("claude", "codex"), required=True)
+    parser.add_argument("--provider", choices=PROVIDERS, required=True)
     args = parser.parse_args()
 
     run_dir = _runs.resolve_run(args.run)
