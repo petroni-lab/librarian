@@ -54,6 +54,10 @@ done
 # calls load_dotenv() on it, so accept either source.
 read_key() {
     if [ -n "${!1:-}" ]; then printf '%s' "${!1}"; return 0; fi
+    # No .env is the normal state for a fresh clone. Without this guard `sed`
+    # fails, `pipefail` propagates it, and `set -e` kills the run with no
+    # message at all -- the key check below never gets to explain itself.
+    [ -f "$REPO_ROOT/.env" ] || return 0
     sed -nE "s/^[[:space:]]*(export[[:space:]]+)?$1=[\"']?([^\"'#[:space:]]+).*/\2/p" \
         "$REPO_ROOT/.env" 2>/dev/null | head -1
 }
