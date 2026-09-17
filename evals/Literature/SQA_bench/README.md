@@ -63,9 +63,10 @@ No API keys. The judge models need NVLink — without it NCCL falls back to PCIe
 peer-to-peer and they die in `initialize_model_parallel`.
 
 `[sqa] apptainer_image` in `literature_eval.toml` is the container their vLLM
-runs in; it defaults to `docker://vllm/vllm-openai:v0.29.0`, which apptainer
-pulls and converts on first use. Point it at a local `.sif` instead if you have
-one. **Leave it empty and `multi` is skipped rather than failing** — `--bench
+runs in. Apptainer takes either form in that one field — a `docker://` URI,
+which it pulls and converts to a SIF on first use (several GB, cached in
+`$APPTAINER_CACHEDIR`), or the path of a `.sif` you already have. It defaults
+to `docker://vllm/vllm-openai:v0.29.0`, so it works without a prepared image. **Leave it empty and `multi` is skipped rather than failing** — `--bench
 sqa` still produces the bio and neuro Citation F1 rows, which need no container.
 Asking for `--only multi` without one is an error, since that is the thing you
 asked for.

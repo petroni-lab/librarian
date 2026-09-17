@@ -49,6 +49,10 @@ PORT=8000
 # No default that is right for everyone: point it at a vllm-openai image you
 # can read. `[sqa] apptainer_image` in literature_eval.toml sets it once.
 APPTAINER_IMAGE="${APPTAINER_IMAGE:-}"
+# Scratch for the judge container's pip cache and TMPDIR. Per-user by default,
+# because two people on one node must not share them.
+SQA_SCRATCH_DIR="${SQA_SCRATCH_DIR:-${TMPDIR:-/tmp}/sqa-multi-${USER:-$(id -un)}}"
+HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
 KILL_OWN_GPU_PROCESSES=false
 
 PRED_FILE=""
@@ -650,6 +654,11 @@ start_apptainer_vllm() {
     # does not stop Python reading ~/.local/lib/python*/site-packages, so a
     # user-site package shadows the container's own. A user-site transformers
     # fails on `is_offline_mode` from a mismatched huggingface_hub.
+    # The judges' vLLM needs a writable HF cache, pip cache and TMPDIR inside the
+    # container. Bind them from the host, and create them first -- apptainer
+    # refuses to bind a source that does not exist, and these are per-user paths
+    # that nothing else makes.
+    mkdir -p "$HF_HOME" "$SQA_SCRATCH_DIR/pip-cache" "$SQA_SCRATCH_DIR/tmp"
     setsid apptainer exec --nv --cleanenv \
         --env CUDA_VISIBLE_DEVICES="$selected_gpus" \
         ${NCCL_DEBUG:+--env NCCL_DEBUG="$NCCL_DEBUG"} \
@@ -657,10 +666,9 @@ start_apptainer_vllm() {
         ${NCCL_SHM_DISABLE:+--env NCCL_SHM_DISABLE="$NCCL_SHM_DISABLE"} \
         ${NCCL_IB_DISABLE:+--env NCCL_IB_DISABLE="$NCCL_IB_DISABLE"} \
         ${NCCL_CUMEM_ENABLE:+--env NCCL_CUMEM_ENABLE="$NCCL_CUMEM_ENABLE"} \
-        --bind "/scratch/sigillo/hf_cache:/root/.cache/huggingface:rw" \
-        --bind "/scratch/sigillo/pylibs:/opt/pylibs:rw" \
-        --bind "/scratch/sigillo/pip-cache:/opt/pip-cache:rw" \
-        --bind "/scratch/sigillo/tmp:/opt/tmp:rw" \
+        --bind "$HF_HOME:/root/.cache/huggingface:rw" \
+        --bind "$SQA_SCRATCH_DIR/pip-cache:/opt/pip-cache:rw" \
+        --bind "$SQA_SCRATCH_DIR/tmp:/opt/tmp:rw" \
         --env HF_TOKEN="${HF_TOKEN:-}" \
         --env HF_HOME=/root/.cache/huggingface \
         --env HF_HUB_CACHE=/root/.cache/huggingface/hub \

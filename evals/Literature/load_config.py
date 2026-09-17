@@ -49,6 +49,7 @@ SPEC: list[tuple[str, str, str | None]] = [
     ("sqa.synthesis_model", "SYNTHESIS_MODEL", "LIBRARIAN_MODEL"),
     ("sqa.judge_gpus", "JUDGE_GPUS", None),
     ("sqa.apptainer_image", "APPTAINER_IMAGE", None),
+    ("sqa.scratch_dir", "SQA_SCRATCH_DIR", None),
     ("proclaim.verdict_model", "PROCLAIM_VERDICT_MODEL", None),
     ("proclaim.verdict_url", "PROCLAIM_VERDICT_URL", None),
     ("proclaim.librarian_url", "PROCLAIM_LIBRARIAN_URL", "LIBRARIAN_URL"),
