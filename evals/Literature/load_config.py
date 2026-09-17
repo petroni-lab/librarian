@@ -97,12 +97,16 @@ def resolve(config_path: Path, env: dict[str, str] | None = None) -> dict[str, s
 
     :param config_path: The TOML file to read.
     :param env: The environment to treat as already-set; defaults to the real one.
-    :returns: Only the variables that need exporting, in dependency order.
+    :returns: ``(exports, inherited)`` -- the variables that need exporting, in
+        dependency order, and the names of those whose value came from another
+        variable rather than the file. A flag that moves the parent has to move
+        those too, which the caller cannot work out on its own.
     :raises FileNotFoundError: if ``config_path`` does not exist.
     """
     env = dict(os.environ if env is None else env)
     data = tomllib.loads(config_path.read_text(encoding="utf-8"))
     out: dict[str, str] = {}
+    inherited: list[str] = []
 
     for dotted, var, inherit in SPEC:
         if env.get(var):  # a real environment variable wins
@@ -113,6 +117,8 @@ def resolve(config_path: Path, env: dict[str, str] | None = None) -> dict[str, s
             text = _expand(text, env)
         if not text and inherit:
             text = env.get(inherit, "") or out.get(inherit, "")
+            if text:
+                inherited.append(var)
         if not text:
             continue
         out[var] = text
@@ -123,7 +129,7 @@ def resolve(config_path: Path, env: dict[str, str] | None = None) -> dict[str, s
         out["RESULTS_ROOT"] = str(HERE / "results")
     if not env.get("HF_HOME"):
         out["HF_HOME"] = str(Path.home() / ".cache" / "huggingface")
-    return out
+    return out, inherited
 
 
 def main() -> int:
@@ -132,12 +138,14 @@ def main() -> int:
         print(f"ERROR: no config at {path}", file=sys.stderr)
         return 1
     try:
-        resolved = resolve(path)
+        resolved, inherited = resolve(path)
     except Exception as exc:  # a broken TOML should name itself, not traceback
         print(f"ERROR: could not read {path}: {exc}", file=sys.stderr)
         return 1
     for var, value in resolved.items():
         print(f"export {var}={shlex.quote(value)}")
+    # The caller re-derives these if a flag moves what they inherited from.
+    print(f"export LITERATURE_INHERITED={shlex.quote(' '.join(inherited))}")
     return 0
 
 
@@ -160,7 +168,7 @@ max_samples = 16
         p = Path(d) / "c.toml"
         p.write_text(toml)
 
-        got = resolve(p, env={})
+        got, _ = resolve(p, env={})
         assert got["LIBRARIAN_URL"] == "http://x:8000/v1", got
         # blank + inherit -> the inherited value, not empty
         assert got["SYNTHESIS_MODEL"] == "m1", got
@@ -172,19 +180,19 @@ max_samples = 16
         assert got["RESULTS_ROOT"].endswith("/results"), got
 
         # a real environment variable wins, and inheritance follows it
-        got = resolve(p, env={"LIBRARIAN_MODEL": "override"})
+        got, _ = resolve(p, env={"LIBRARIAN_MODEL": "override"})
         assert "LIBRARIAN_MODEL" not in got, got
         assert got["SYNTHESIS_MODEL"] == "override", got
 
         # $VAR and ~ are expanded against the passed env, not the real one
         p.write_text('[paths]\nresults_root = "/scratch/$USER/out"\n')
-        assert resolve(p, env={"USER": "someone"})["RESULTS_ROOT"] == "/scratch/someone/out"
+        assert resolve(p, env={"USER": "someone"})[0]["RESULTS_ROOT"] == "/scratch/someone/out"
         p.write_text('[paths]\nresults_root = "~/out"\n')
-        assert resolve(p, env={"HOME": "/home/x"})["RESULTS_ROOT"] == "/home/x/out"
+        assert resolve(p, env={"HOME": "/home/x"})[0]["RESULTS_ROOT"] == "/home/x/out"
 
         # values with spaces survive the round trip through the shell
         p.write_text('[paths]\nresults_root = "/tmp/a b"\n')
-        line = f"export RESULTS_ROOT={shlex.quote(resolve(p, env={})['RESULTS_ROOT'])}"
+        line = f"export RESULTS_ROOT={shlex.quote(resolve(p, env={})[0]['RESULTS_ROOT'])}"
         assert line == "export RESULTS_ROOT='/tmp/a b'", line
     print("load_config self-check ok")
 

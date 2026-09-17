@@ -884,13 +884,28 @@ if not args.skip_citation_eval:
     print("CITATION EVAL (AutoAIS)")
     print(f"  Predictions: {final_path}")
     print(f"{'=' * 60}")
-    subprocess.run(
+    completed = subprocess.run(
         citation_cmd,
         cwd=str(
             PROJECT_ROOT / "evals" / "Literature" / "SQA_bench" / "code" / "scripts"
         ),
-        check=True,
     )
+    if completed.returncode != 0:
+        # The scoring stack is torch + transformers against your own CUDA, so it
+        # is installed separately from the harness. Predictions are already on
+        # disk; say how to score them rather than losing the run to a traceback.
+        print(
+            f"\nERROR: AutoAIS scoring failed (exit {completed.returncode}).\n"
+            "       If the cause above is a missing torch/transformers, the local\n"
+            "       scoring stack is not installed. It is deliberately separate --\n"
+            "       it builds against your CUDA:\n\n"
+            "         uv pip install -r evals/Literature/SQA_bench/code/requirements.txt\n\n"
+            f"       The predictions are already written to\n         {final_path}\n"
+            "       so re-running the same command with --resume scores them\n"
+            "       without answering the questions again.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     score_path = final_path + ".score_post_fix"
     if os.path.exists(score_path):
         with open(score_path) as f:

@@ -121,6 +121,8 @@ eval "$("$BOOT_PYTHON" "$SCRIPT_DIR/load_config.py")"
 export PYTHON
 
 BENCH=""
+LIBRARIAN_URL_SET=false
+LIBRARIAN_MODEL_SET=false
 # In-process is the default: the agents are built in the eval process and talk
 # to $LIBRARIAN_URL directly, so a clone needs nothing but that endpoint.
 # --via-api opts into routing through a running orchestrator.py instead.
@@ -140,8 +142,8 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --bench) BENCH="$2"; shift 2 ;;
         --only) ONLY="${ONLY:+$ONLY,}$2"; shift 2 ;;
-        --librarian-url) LIBRARIAN_URL="$2"; shift 2 ;;
-        --librarian-model) LIBRARIAN_MODEL="$2"; shift 2 ;;
+        --librarian-url) LIBRARIAN_URL="$2"; LIBRARIAN_URL_SET=true; shift 2 ;;
+        --librarian-model) LIBRARIAN_MODEL="$2"; LIBRARIAN_MODEL_SET=true; shift 2 ;;
         --answer-model) ANSWER_MODEL="$2"; shift 2 ;;
         --answer-url) ANSWER_URL="$2"; shift 2 ;;
         --results-root) RESULTS_ROOT="$2"; shift 2 ;;
@@ -233,6 +235,21 @@ preflight_endpoint() {
     echo "OK    $label: $want @ $url"
 }
 export -f list_served_models probe_chat_model preflight_endpoint
+
+# --librarian-url/--librarian-model arrive after the config has been read, so a
+# value that INHERITED from the librarian is still pointing at the file's. Left
+# alone, `--librarian-model X` silently synthesises with the config's model
+# instead -- which fails at the synthesis step, not at startup. Only values the
+# config did not set explicitly are moved; LITERATURE_INHERITED names them.
+inherited() { case " ${LITERATURE_INHERITED:-} " in *" $1 "*) return 0 ;; esac; return 1; }
+if [ "$LIBRARIAN_MODEL_SET" = true ]; then
+    inherited SYNTHESIS_MODEL          && SYNTHESIS_MODEL="$LIBRARIAN_MODEL"
+    inherited PROCLAIM_LIBRARIAN_MODEL && PROCLAIM_LIBRARIAN_MODEL="$LIBRARIAN_MODEL"
+    inherited LIBRARIAN_API_MODEL      && LIBRARIAN_API_MODEL="$LIBRARIAN_MODEL"
+fi
+if [ "$LIBRARIAN_URL_SET" = true ]; then
+    inherited PROCLAIM_LIBRARIAN_URL && PROCLAIM_LIBRARIAN_URL="$LIBRARIAN_URL"
+fi
 
 if [ -z "$LIBRARIAN_URL" ] && [ "$VIA_API" != true ]; then
     echo "ERROR: set --librarian-url (or LIBRARIAN_URL) to the endpoint serving $LIBRARIAN_MODEL." >&2
