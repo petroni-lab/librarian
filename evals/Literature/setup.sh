@@ -52,7 +52,23 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_BIN="${PYTHON:-python}"
+# `uv sync` creates .venv but does not put it on PATH, and plenty of systems
+# have no bare `python` at all -- so resolve an interpreter that exists rather
+# than dying at the one step that needs one.
+resolve_python() {
+    if [ -n "${PYTHON:-}" ]; then printf '%s' "$PYTHON"; return; fi
+    if [ -x "$SCRIPT_DIR/../../.venv/bin/python" ]; then
+        printf '%s' "$SCRIPT_DIR/../../.venv/bin/python"; return
+    fi
+    if command -v python3 >/dev/null 2>&1; then printf 'python3'; return; fi
+    printf 'python'
+}
+PYTHON_BIN="$(resolve_python)"
+command -v "$PYTHON_BIN" >/dev/null 2>&1 || [ -x "$PYTHON_BIN" ] || {
+    echo "ERROR: no Python interpreter found ($PYTHON_BIN). Run \`uv sync --extra evals\`" >&2
+    echo "       at the repository root, or set PYTHON=/path/to/python." >&2
+    exit 1
+}
 
 CHECK_ONLY=false
 WANT="all"
