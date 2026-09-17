@@ -70,6 +70,8 @@
 # Only `--only multi` needs four, for the two Prometheus 8x7B judges at
 # tensor-parallel size 4 — and it is a 29-question subset, so skipping it still
 # leaves Citation F1 on the full 1451- and 1308-question bio and neuro sets.
+# `--bench sqa` does exactly that on its own when the judges cannot run here:
+# it skips multi with a note and keeps the two rows that did.
 #
 # Multi-GPU note: those judges need NVLink. On cards without it NCCL falls back
 # to PCIe peer-to-peer and they die in initialize_model_parallel with

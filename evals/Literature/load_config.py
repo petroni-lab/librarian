@@ -55,6 +55,7 @@ SPEC: list[tuple[str, str, str | None]] = [
     ("proclaim.librarian_model", "PROCLAIM_LIBRARIAN_MODEL", "LIBRARIAN_MODEL"),
     ("proclaim.subagent_url", "PROCLAIM_SUBAGENT_URL", None),
     ("proclaim.subagent_model", "PROCLAIM_SUBAGENT_MODEL", None),
+    ("proclaim.apptainer_image", "PROCLAIM_APPTAINER_IMAGE", None),
     ("api.url", "LIBRARIAN_API_URL", None),
     ("api.model", "LIBRARIAN_API_MODEL", "LIBRARIAN_MODEL"),
     ("paths.results_root", "RESULTS_ROOT", None),

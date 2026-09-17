@@ -177,15 +177,29 @@ subagent_served() {
 
 require_subagent() {
     subagent_served && return 0
-    cat >&2 <<EOF
-ERROR: the ProClaim evidence subagent is not serving '$PROCLAIM_SUBAGENT_MODEL'
-       at $PROCLAIM_SUBAGENT_URL. Start it, then re-run:
-
-  vllm serve Qwen/Qwen3.5-9B --served-model-name $PROCLAIM_SUBAGENT_MODEL \\
-      --port 9900 --gpu-memory-utilization 0.55 --max-model-len 32768
-
-       Already have one elsewhere? Point PROCLAIM_SUBAGENT_URL at it.
-EOF
+    local port
+    port="$(sed -nE 's#.*:([0-9]+).*#\1#p' <<<"$PROCLAIM_SUBAGENT_URL")"
+    port="${port:-9900}"
+    {
+        echo "ERROR: the ProClaim evidence subagent is not serving '$PROCLAIM_SUBAGENT_MODEL'"
+        echo "       at $PROCLAIM_SUBAGENT_URL. Start it, then re-run:"
+        echo
+        if [ -n "${PROCLAIM_APPTAINER_IMAGE:-}" ]; then
+            # An image is configured, so offer the containerised form first.
+            echo "  apptainer exec --nv $PROCLAIM_APPTAINER_IMAGE \\"
+            echo "      vllm serve Qwen/Qwen3.5-9B --served-model-name $PROCLAIM_SUBAGENT_MODEL \\"
+            echo "      --port $port --gpu-memory-utilization 0.55 --max-model-len 32768"
+        else
+            echo "  vllm serve Qwen/Qwen3.5-9B --served-model-name $PROCLAIM_SUBAGENT_MODEL \\"
+            echo "      --port $port --gpu-memory-utilization 0.55 --max-model-len 32768"
+            echo
+            echo "       No local vLLM? Set \`[proclaim] apptainer_image\` in"
+            echo "       literature_eval.toml (e.g. docker://vllm/vllm-openai:v0.29.0)"
+            echo "       and this will show the containerised command instead."
+        fi
+        echo
+        echo "       Already have one elsewhere? Point PROCLAIM_SUBAGENT_URL at it."
+    } >&2
     exit 1
 }
 

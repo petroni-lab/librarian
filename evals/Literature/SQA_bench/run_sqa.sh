@@ -126,7 +126,25 @@ run_autoais_bench() {
 if want bio; then run_autoais_bench bio bio; fi
 if want neu; then run_autoais_bench neu neuro; fi
 
-if want multi; then
+# multi is the one target with requirements the other two do not share: a
+# container image, apptainer, and $JUDGE_GPUS GPUs. Asking for it explicitly and
+# not having them is an error; running the default three on a box that cannot
+# host the judges skips it and keeps the Citation F1 rows that did run.
+multi_skip_reason=""
+if want multi && [ -z "${APPTAINER_IMAGE:-}" ]; then
+    multi_skip_reason="no container image set — put one in \`[sqa] apptainer_image\`
+       (literature_eval.toml), e.g. docker://vllm/vllm-openai:v0.29.0"
+fi
+
+if want multi && [ -n "$multi_skip_reason" ]; then
+    if [ -n "$ONLY" ]; then
+        echo "ERROR: --only multi needs a container for the Prometheus judges:" >&2
+        echo "       $multi_skip_reason" >&2
+        exit 1
+    fi
+    echo "SKIP  multi — $multi_skip_reason"
+    echo "      bio and neuro above are unaffected; they need no container."
+elif want multi; then
     # Defaults to data/scholarqa_multi/scholar_multi_biomed_eval.json — the
     # paper's Bio+Neu subset of the multidisciplinary questions.
     cmd=(
@@ -146,14 +164,25 @@ if want multi; then
     [ -n "${LIMIT:-}" ] && cmd+=(--limit "$LIMIT")
     echo "RUN   ${cmd[*]}"
     if [ "$DRY_RUN" != true ]; then
-        command -v apptainer >/dev/null || { echo "ERROR: apptainer not found; --only multi needs it." >&2; exit 1; }
-        # Prometheus at TP=4 will not fit on fewer GPUs; say so now, not 40 minutes in.
-        gpu_count="$(nvidia-smi -L 2>/dev/null | wc -l)"
-        [ "$gpu_count" -ge "$JUDGE_GPUS" ] || {
-            echo "ERROR: --only multi needs >= $JUDGE_GPUS GPUs for the Prometheus judges; found $gpu_count." >&2
-            exit 1
-        }
-        mkdir -p "$RESULTS_ROOT/sqa_multi_bio"
-        "${cmd[@]}"
+        # Prometheus at TP=4 will not fit on fewer GPUs; say so now, not 40
+        # minutes in.
+        env_problem=""
+        command -v apptainer >/dev/null || env_problem="apptainer is not installed"
+        if [ -z "$env_problem" ]; then
+            gpu_count="$(nvidia-smi -L 2>/dev/null | wc -l)"
+            [ "$gpu_count" -ge "$JUDGE_GPUS" ] \
+                || env_problem="the Prometheus judges need >= $JUDGE_GPUS GPUs; found $gpu_count"
+        fi
+        if [ -n "$env_problem" ]; then
+            if [ -n "$ONLY" ]; then
+                echo "ERROR: --only multi cannot run here: $env_problem." >&2
+                exit 1
+            fi
+            echo "SKIP  multi — $env_problem."
+            echo "      bio and neuro above are unaffected; they need neither."
+        else
+            mkdir -p "$RESULTS_ROOT/sqa_multi_bio"
+            "${cmd[@]}"
+        fi
     fi
 fi

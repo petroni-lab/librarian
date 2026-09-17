@@ -89,9 +89,11 @@ L="--librarian-url http://localhost:8000/v1 --librarian-model glm-5-fp8"
 Rung 0 is worth running on its own first: it is the one that tells you whether
 `setup.sh` fetched everything, without spending a token.
 
-Two things deliberately have no smoke rung. `sqa --only multi` wants four H100s
-and an `APPTAINER_IMAGE`, and `proclaim --only proclaim` wants a third endpoint
-(the evidence subagent) — start those only when the cheaper rungs pass.
+Two things deliberately have no smoke rung: `sqa --only multi` wants four H100s,
+and `proclaim --only proclaim` wants a third endpoint (the evidence subagent).
+Start those only when the cheaper rungs pass. Neither blocks the rest —
+`--bench sqa` skips `multi` when it cannot run and keeps the bio and neuro rows,
+and `--only verifier` is the ProClaim arm that needs no subagent.
 
 ---
 
@@ -150,7 +152,7 @@ model = "glm-5-fp8"
 
 [sqa]
 synthesis_model = ""     # empty means "inherit" — here, librarian.model
-apptainer_image = ""     # only --only multi needs this
+apptainer_image = "docker://vllm/vllm-openai:v0.29.0"   # only --only multi
 ```
 
 Precedence is **flags > environment variables > the file**, so nothing in it is
@@ -167,7 +169,8 @@ LITERATURE_EVAL_CONFIG=~/my_eval.toml ./evals/Literature/literature_eval.sh --be
 The only required setting is `[librarian] url`. Worth knowing about:
 `[paths] results_root` (defaults to `evals/Literature/results/`, git-ignored),
 `[paths] python` (defaults to the repo's `.venv`, then `python3`), and — only
-for `sqa --only multi` — `[sqa] apptainer_image`.
+for `sqa --only multi` — `[sqa] apptainer_image`, which already names a public
+vLLM image apptainer can pull.
 
 [`load_config.py`](load_config.py) is what maps the TOML onto the flat
 environment variables the runner scripts read. To drive a per-bench runner
@@ -223,6 +226,12 @@ need. The GPUs are for **scoring**, not retrieval.
 | `proclaim` | 1 × ≥24 GB | evidence subagent | `ANTHROPIC_API_KEY` |
 | `sqa --only bio` / `neu` | 1 × ≥8 GB | — | none |
 | `sqa --only multi` | 4 × H100 | 2 × Prometheus judge | none |
+
+`--bench sqa` runs all three targets and **skips `multi` rather than failing**
+when the box cannot host the judges — no container image configured, no
+apptainer, or fewer than `[sqa] judge_gpus` GPUs. The bio and neuro Citation F1
+rows still land. `--only multi` errors instead, because then it is what you
+asked for.
 
 Pick the tier you need rather than the largest:
 
@@ -296,7 +305,7 @@ vllm serve Qwen/Qwen3.5-9B --served-model-name qwen3.5-9b \
 the librarian and a verdict model.
 
 **`sqa --only multi`** starts its two judge endpoints for you, running
-`vllm serve` inside apptainer (`APPTAINER_IMAGE`) for
+`vllm serve` inside apptainer (`[sqa] apptainer_image`) for
 `prometheus-eval/prometheus-bgb-8x7b-v2.0` (answer quality) and then
 `prometheus-eval/prometheus-8x7b-v2.0` (relevance) — one after the other, so
 4 GPUs covers both. It fails early if fewer are visible.
