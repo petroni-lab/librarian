@@ -65,16 +65,33 @@ vllm serve zai-org/GLM-5-FP8 --served-model-name glm-5-fp8 --port 8000
 GLM-5 numbers; a different model makes them incomparable rather than wrong, so
 say which one you used when you report a result.
 
-**4. Smoke-test it** before committing to a full run — three questions, no
-scoring model to download, a few minutes:
+**4. Smoke-test it** before committing to a full run. `--limit N` caps the
+question count on every bench, and `--dry-run` prints the commands without
+calling anything. Work up the ladder — each rung adds one requirement:
 
 ```bash
-./evals/Literature/literature_eval.sh --bench litqa2 --limit 3 \
-    --librarian-url http://localhost:8000/v1 --librarian-model glm-5-fp8
+L="--librarian-url http://localhost:8000/v1 --librarian-model glm-5-fp8"
+
+# 0. nothing is called; checks wiring, paths and that setup.sh ran
+./evals/Literature/literature_eval.sh --bench all --dry-run $L
+
+# 1. no GPU, no scoring model to download. Needs OPENAI_API_KEY.
+./evals/Literature/literature_eval.sh --bench litqa2,labbench --limit 3 $L
+
+# 2. one >=8 GB GPU: downloads AutoAIS (~6.5 GB) on first use
+./evals/Literature/literature_eval.sh --bench sqa --only bio --limit 3 $L
+
+# 3. one >=24 GB GPU. Needs ANTHROPIC_API_KEY. `verifier` is the cheap arm —
+#    it is the one that does NOT need the evidence subagent.
+./evals/Literature/literature_eval.sh --bench proclaim --only verifier --limit 3 $L
 ```
 
-`--dry-run` prints every command without calling anything; run that first if you
-only want to see what a given invocation would do.
+Rung 0 is worth running on its own first: it is the one that tells you whether
+`setup.sh` fetched everything, without spending a token.
+
+Two things deliberately have no smoke rung. `sqa --only multi` wants four H100s
+and an `APPTAINER_IMAGE`, and `proclaim --only proclaim` wants a third endpoint
+(the evidence subagent) — start those only when the cheaper rungs pass.
 
 ---
 

@@ -22,16 +22,15 @@
 # disk, so there is no committed baseline to diff against — this script is the
 # durable record of how the number was produced.
 #
-# The evidence subagent (qwen3.5-9b on localhost) is started here if nothing is
-# already serving it, and stopped again on exit. Point PROCLAIM_SUBAGENT_URL at a
-# non-local host to use someone else's server instead — then nothing is started.
+# The `proclaim` arm needs a THIRD endpoint, the evidence subagent. This script
+# does not start it for you: if nothing answers at PROCLAIM_SUBAGENT_URL it
+# prints the `vllm serve` line to run and stops. Point PROCLAIM_SUBAGENT_URL at
+# an existing server to use that instead. `--only verifier` does not need it.
 #
 # Env: LIBRARIAN_URL (required), LIBRARIAN_MODEL, PROCLAIM_VERDICT_MODEL,
 #      PROCLAIM_VERDICT_URL, PROCLAIM_SUBAGENT_URL, PROCLAIM_SUBAGENT_MODEL,
 #      PROCLAIM_LIBRARIAN_URL, PROCLAIM_LIBRARIAN_MODEL (arm 2 retrieves
 #      in-process; these default to the values pinned in the YAML config),
-#      PROCLAIM_SUBAGENT_HF_MODEL, PROCLAIM_SUBAGENT_GPUS,
-#      PROCLAIM_SUBAGENT_WAIT_SECONDS,
 #      RESULTS_ROOT, LIMIT, ONLY, DRY_RUN. ANTHROPIC_API_KEY must be set.
 set -euo pipefail
 
