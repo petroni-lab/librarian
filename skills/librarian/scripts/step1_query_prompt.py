@@ -3,7 +3,7 @@
 
 ``agent.py::_generate_queries`` minus the LLM call: the same substitutions on the
 same ``prompts/stage_1_europe_pmc_query_generation.md`` template, written out as a
-direct CLI input. A fresh Claude Code or Codex session receives that file through
+direct CLI input. A fresh Claude Code, Codex, or Antigravity session receives that file through
 stdin and its JSON response is written back into the run.
 
     python3 step1_query_prompt.py --provider claude "<research question>"
@@ -18,7 +18,7 @@ import datetime
 from pathlib import Path
 
 import _runs
-from _direct_session import run_direct_session
+from _direct_session import PROVIDERS, run_direct_session
 from librarian.agent import _QUERY_PROMPT_PATH
 
 
@@ -44,7 +44,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Generate Europe PMC queries in a fresh CLI session (step 1 of 4)."
     )
-    parser.add_argument("--provider", choices=("claude", "codex"), required=True)
+    parser.add_argument("--provider", choices=PROVIDERS, required=True)
     parser.add_argument("query", help="the user's research question, verbatim")
     args = parser.parse_args()
 

@@ -55,7 +55,7 @@ they share the same retrieval pipeline.
 
 | | What you get | Requires | LLM endpoint? |
 |---|---|---|---|
-| **[Agent skill](#a-install-as-an-agent-skill-plugin)** | literature evidence inside your coding agent | `uv`, plus an authenticated `claude` or `codex` CLI | **No** — borrows your CLI's auth |
+| **[Agent skill](#a-install-as-an-agent-skill-plugin)** | literature evidence inside your coding agent | `uv`, plus an authenticated `claude`, `codex`, or `agy` CLI | **No** — borrows your CLI's auth |
 | **[Python class](#b-install-as-a-python-library)** | `LibrarianAgent` in your own code | `uv` | Yes |
 | **[HTTP API](#serving-it-over-http)** | a JSON/streaming service | `uv` | Yes |
 
@@ -107,9 +107,11 @@ own:
 Two things to know:
 
 - **No API key or `.env` is needed for this path.** The two LLM stages (query
-  planning and relevance judging) run as one-shot child sessions of the `claude` or
-  `codex` CLI, using its existing authentication. That CLI must be installed and
+  planning and relevance judging) run as one-shot child sessions of the `claude`,
+  `codex`, or Antigravity `agy` CLI, using its existing authentication. That CLI must be installed and
   authenticated on `PATH`, whichever harness you drive the skill from.
+  Inside Antigravity, the skill selects `--provider antigravity` for both stages;
+  authenticate the official `agy` CLI once interactively before running it.
 - **The skill needs the whole repository, not just `skills/librarian/`.** The step
   scripts are a thin driver: the retrieval engine (Europe PMC search, chunking, BM25,
   evidence assembly) lives in the `librarian/` package alongside them. A marketplace

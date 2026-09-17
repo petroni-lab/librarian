@@ -1,4 +1,4 @@
-"""Run an isolated Claude Code or Codex CLI session for one rendered prompt.
+"""Run a fresh Claude Code, Codex, or Antigravity session for one rendered prompt.
 
 The root agent passes paths to this module, never the prompt contents. The child
 CLI receives the prompt through stdin and its final JSON response is validated
@@ -8,6 +8,7 @@ and written locally, avoiding model Read and Write tool calls.
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import socket
 import subprocess
@@ -17,6 +18,8 @@ from typing import Any, Dict, List, Optional
 
 import _runs
 from librarian.llm_client import parse_json_response
+
+PROVIDERS = ("claude", "codex", "antigravity")
 
 
 def _response_schema(key: str) -> Dict[str, Any]:
@@ -31,9 +34,10 @@ def _response_schema(key: str) -> Dict[str, Any]:
 
 def _require_cli(provider: str) -> str:
     """Return the installed CLI executable or stop with an actionable error."""
-    executable = shutil.which(provider)
+    cli = "agy" if provider == "antigravity" else provider
+    executable = shutil.which(cli)
     if executable is None:
-        raise SystemExit(f"{provider} CLI is not installed or not on PATH.")
+        raise SystemExit(f"{provider} CLI ({cli}) is not installed or not on PATH.")
     return executable
 
 
@@ -163,6 +167,24 @@ def _run_command(
             ) from None
 
 
+def _antigravity_response(raw_output: str) -> str:
+    """Extract the single completed turn from AGY's documented NDJSON stream."""
+    try:
+        events = [json.loads(line) for line in raw_output.splitlines() if line.strip()]
+        results = [event["result"] for event in events if event.get("event") == "result"]
+        if len(results) != 1 or results[0].get("status") != "SUCCESS":
+            raise ValueError
+        structured = results[0].get("structured_output")
+        if isinstance(structured, dict):
+            return json.dumps(structured)
+        response = results[0]["response"]
+        if not isinstance(response, str):
+            raise ValueError
+        return response
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise SystemExit("Antigravity did not return one successful model response.") from None
+
+
 def run_direct_session(
     provider: str,
     prompt_path: Path,
@@ -171,13 +193,13 @@ def run_direct_session(
 ) -> None:
     """Run a fresh CLI model session and save its validated JSON response.
 
-    :param provider: CLI provider, either ``claude`` or ``codex``.
+    :param provider: CLI provider: ``claude``, ``codex``, or ``antigravity``.
     :param prompt_path: Rendered prompt file streamed directly to the child CLI.
     :param output_path: JSON hand-off file consumed by the next pipeline step.
     :param output_key: Required list field in the model response.
     """
-    if provider not in ("claude", "codex"):
-        raise SystemExit("provider must be 'claude' or 'codex'.")
+    if provider not in PROVIDERS:
+        raise SystemExit(f"provider must be one of {', '.join(PROVIDERS)}.")
     executable = _require_cli(provider)
     if provider == "codex":
         # The isolated Codex CLI uses ChatGPT; fail before its long reconnect loop.
@@ -192,7 +214,21 @@ def run_direct_session(
                 "(exec_command sandbox_permissions='require_escalated'), "
                 "or run it in your normal terminal. Do not fall back to web search."
             ) from None
-    if provider == "claude":
+    if provider == "antigravity":
+        # AGY accepts stdin prompts as user events; EOF ends this fresh session.
+        with tempfile.TemporaryDirectory(dir=prompt_path.parent) as temporary_directory:
+            input_path = Path(temporary_directory) / "input.jsonl"
+            input_path.write_text(json.dumps({
+                "event": "user",
+                "message": {"content": prompt_path.read_text(encoding="utf-8")},
+            }) + "\n", encoding="utf-8")
+            completed = _run_command([
+                executable, "--input-format", "stream-json",
+                "--output-format", "stream-json",
+                "--json-schema", json.dumps(_response_schema(output_key)),
+            ], input_path)
+        raw_response = completed.stdout
+    elif provider == "claude":
         completed = _run_command(_claude_command(executable), prompt_path)
         raw_response = completed.stdout
     elif provider == "codex":
@@ -217,4 +253,6 @@ def run_direct_session(
     if completed.returncode != 0:
         message = completed.stderr.strip() or completed.stdout.strip()
         raise SystemExit(f"{provider} session failed: {message}")
+    if provider == "antigravity":
+        raw_response = _antigravity_response(raw_response)
     _runs.write_json(output_path, _validate_response(raw_response, output_key))
