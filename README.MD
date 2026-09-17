@@ -515,7 +515,7 @@ librarian/
   query_validation/            deterministic Europe PMC query validation
 evals/Literature/
   literature_eval.sh           one command for all four benchmark suites
-  literature_eval.conf         every endpoint, model and path, in one file
+  literature_eval.toml         every endpoint, model and path, in one file
   setup.sh                     clone the benchmarks, apply our changes, fetch data
   orchestrator_client.py       the optional --via-api transport
   AstaBench/ LabBench/ ProClaim/ SQA_bench/     one directory per suite

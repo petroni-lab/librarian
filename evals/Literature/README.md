@@ -140,23 +140,43 @@ that produced its baseline.
 ## Configuration
 
 Every endpoint, model and path lives in
-[`literature_eval.conf`](literature_eval.conf), which `literature_eval.sh`
-sources before anything else — there is no need to edit the per-bench runners.
-Precedence is **flags > environment variables > the config file**, so nothing in
-it is sticky:
+[`literature_eval.toml`](literature_eval.toml), grouped by which bench uses it —
+there is no need to edit the per-bench runners:
 
-```bash
-# one-off override
-LIBRARIAN_URL=http://myhost:8080/v1 ./evals/Literature/literature_eval.sh --bench litqa2
+```toml
+[librarian]              # the one endpoint every bench needs
+url   = ""               # required; or pass --librarian-url
+model = "glm-5-fp8"
 
-# a personal profile kept outside the repo — nothing in the repo changes
-LITERATURE_EVAL_CONFIG=~/my_eval.conf ./evals/Literature/literature_eval.sh --bench litqa2
+[sqa]
+synthesis_model = ""     # empty means "inherit" — here, librarian.model
+apptainer_image = ""     # only --only multi needs this
 ```
 
-The settings most worth setting: `LIBRARIAN_URL` / `LIBRARIAN_MODEL` (required),
-`PYTHON` (an absolute interpreter path, or `uv run python`), `RESULTS_ROOT`
-(defaults to `evals/Literature/results/`, which is git-ignored), and — only for
-`sqa --only multi` — `APPTAINER_IMAGE`.
+Precedence is **flags > environment variables > the file**, so nothing in it is
+sticky:
+
+```bash
+# one-off override, no editing
+LIBRARIAN_URL=http://myhost:8080/v1 ./evals/Literature/literature_eval.sh --bench litqa2
+
+# a personal profile kept outside the repo
+LITERATURE_EVAL_CONFIG=~/my_eval.toml ./evals/Literature/literature_eval.sh --bench litqa2
+```
+
+The only required setting is `[librarian] url`. Worth knowing about:
+`[paths] results_root` (defaults to `evals/Literature/results/`, git-ignored),
+`[paths] python` (defaults to the repo's `.venv`, then `python3`), and — only
+for `sqa --only multi` — `[sqa] apptainer_image`.
+
+[`load_config.py`](load_config.py) is what maps the TOML onto the flat
+environment variables the runner scripts read. To drive a per-bench runner
+directly, apply the same config first:
+
+```bash
+eval "$(python evals/Literature/load_config.py)"
+bash evals/Literature/SQA_bench/run_sqa.sh --only bio
+```
 
 `MAX_SAMPLES` / `MAX_CONNECTIONS` / `MAX_WORKERS` are wall-clock only and never
 change a score.
@@ -365,7 +385,8 @@ MIT respectively, as their NOTICEs record.
 
 ```
 literature_eval.sh        one entry point for all four benches (start here)
-literature_eval.conf      every endpoint, model and path, in one file
+literature_eval.toml      every endpoint, model and path, in one file
+load_config.py            maps that TOML onto the runners' environment variables
 setup.sh                  clone the upstream benchmarks, apply overlay/, fetch data
 orchestrator_client.py    the --via-api transport
 

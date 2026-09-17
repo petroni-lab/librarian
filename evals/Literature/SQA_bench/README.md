@@ -61,7 +61,8 @@ AutoAIS, `prometheus_eval.py` for the two judge passes, `run_utils.py`, and
 
 No API keys. The judge models need NVLink — without it NCCL falls back to PCIe
 peer-to-peer and they die in `initialize_model_parallel`. `APPTAINER_IMAGE` in
-`literature_eval.conf` must point at a vLLM image you can read.
+`[sqa] apptainer_image` in `literature_eval.toml` must point at a vLLM image
+you can read.
 
 AutoAIS also runs on CPU with identical scores, but roughly **40× slower**
 (measured: 1046 s vs 25 s for 3 questions) — fine for a smoke run, not for the

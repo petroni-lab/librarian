@@ -26,7 +26,7 @@ REMOTE_LIBRARIAN=false
 VIA_API=false
 # Bare `python` is whatever is first on PATH, which in a non-interactive shell
 # is often not the environment the harness was installed into -- the symptom is
-# `No module named 'dotenv'`. literature_eval.conf documents PYTHON as the one
+# `No module named 'dotenv'`. `[paths] python` in literature_eval.toml is the one
 # knob for this.
 PYTHON_BIN="${PYTHON:-python}"
 NO_LIBRARIAN=false
@@ -47,7 +47,7 @@ MIN_FREE_MB=0
 SERVER_WAIT_SECONDS="${SERVER_WAIT_SECONDS:-3600}"
 PORT=8000
 # No default that is right for everyone: point it at a vllm-openai image you
-# can read. literature_eval.conf is where to set it once.
+# can read. `[sqa] apptainer_image` in literature_eval.toml sets it once.
 APPTAINER_IMAGE="${APPTAINER_IMAGE:-}"
 KILL_OWN_GPU_PROCESSES=false
 

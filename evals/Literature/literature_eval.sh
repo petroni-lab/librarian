@@ -85,19 +85,38 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Every user-specific endpoint, cache and scratch path lives in one config file
-# so nobody has to edit the per-bench runners. It uses := assignments, so real
-# environment variables and the flags below still take precedence over it.
-# LITERATURE_EVAL_CONFIG points at a personal profile kept outside the repo.
 export LITERATURE_DIR="$SCRIPT_DIR"
+
+# An interpreter has to be resolved before the config can be read, because the
+# config is TOML and load_config.py is what reads it. `uv sync` creates .venv
+# without putting it on PATH, and a bare `python` does not exist on many
+# systems, so prefer the one the install just made.
+if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
+    BOOT_PYTHON="$REPO_ROOT/.venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    BOOT_PYTHON=python3
+else
+    BOOT_PYTHON=python
+fi
+command -v "$BOOT_PYTHON" >/dev/null 2>&1 || [ -x "$BOOT_PYTHON" ] || {
+    echo "ERROR: no Python interpreter found. Run \`uv sync --extra evals\` at the" >&2
+    echo "       repository root, or put one on PATH." >&2; exit 1; }
+
+# Every user-specific endpoint, cache and scratch path lives in one TOML file so
+# nobody has to edit the per-bench runners. load_config.py maps it onto the flat
+# environment variables the runners read, leaving any variable that is already
+# set alone -- so a real environment variable, and the flags below, still win.
+# LITERATURE_EVAL_CONFIG points at a personal profile kept outside the repo.
 if [ -n "${LITERATURE_EVAL_CONFIG:-}" ]; then
     [ -f "$LITERATURE_EVAL_CONFIG" ] || {
         echo "ERROR: LITERATURE_EVAL_CONFIG not found: $LITERATURE_EVAL_CONFIG" >&2; exit 1; }
-else
-    LITERATURE_EVAL_CONFIG="$SCRIPT_DIR/literature_eval.conf"
+    export LITERATURE_EVAL_CONFIG
 fi
-# shellcheck source=/dev/null
-[ -f "$LITERATURE_EVAL_CONFIG" ] && . "$LITERATURE_EVAL_CONFIG"
+eval "$("$BOOT_PYTHON" "$SCRIPT_DIR/load_config.py")"
+# paths.python in the config, if set, is what the runners use; otherwise the
+# interpreter resolved above is already the right answer.
+: "${PYTHON:=$BOOT_PYTHON}"
+export PYTHON
 
 BENCH=""
 # In-process is the default: the agents are built in the eval process and talk

@@ -4,7 +4,7 @@ set -euo pipefail
 # Bare `python` is whatever is first on PATH, which in a non-interactive shell
 # is often not the environment the harness was installed into -- the symptom
 # here is `No module named 'numpy'` once the Prometheus judges are already
-# loaded. literature_eval.conf documents PYTHON as the one knob for this.
+# loaded. `[paths] python` in literature_eval.toml is the one knob for this.
 PYTHON_BIN="${PYTHON:-python}"
 
 # End-to-end evaluation pipeline for ScholarQA-Multi on Kubernetes
