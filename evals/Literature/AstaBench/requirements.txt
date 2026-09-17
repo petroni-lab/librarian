@@ -1,0 +1,24 @@
+# Generated from asta-bench's pyproject.toml [project.dependencies]
+# (https://github.com/allenai/asta-bench, pinned in ../setup.sh)
+inspect_ai==0.3.203
+agent-eval[leaderboard]==0.1.47
+openai>=2.30.0
+pydantic>=2.11.4
+litellm==1.82.3
+datasets~=3.2.0
+huggingface_hub
+google-genai>=1.70.0
+nltk
+tabulate
+click==8.1.8
+nora_lib-impl~=1.1.0
+mcp~=1.10
+httpx~=0.28.1
+httpx-sse>=0.4.2
+h2~=4.2.0
+pandas
+scipy
+anthropic>=0.87.0
+platformdirs
+numpy
+diskcache

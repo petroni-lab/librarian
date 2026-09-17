@@ -5,3 +5,24 @@ __pycache__/
 venv/
 *.egg-info/
 .env
+
+# ── Eval harness ─────────────────────────────────────────────────────────────
+# Run outputs. RESULTS_ROOT defaults here; nothing under it is committed.
+evals/Literature/results/
+# Upstream benchmark repositories. setup.sh clones them at a pinned commit and
+# copies the matching overlay/ over them; only the overlay is ours and committed.
+evals/Literature/AstaBench/vendor/
+evals/Literature/SQA_bench/code/
+evals/Literature/ProClaim/ProClaim_src/
+# Benchmark data that is not ours to redistribute. setup.sh takes the
+# ScholarQABench files out of that clone; run_litqa2.sh builds the LitQA2 split
+# on first use. The committed id lists beside them are what pin each subset.
+evals/Literature/SQA_bench/data/*
+!evals/Literature/SQA_bench/data/*/
+evals/Literature/SQA_bench/data/*/*
+!evals/Literature/SQA_bench/data/*/*_ids.txt
+evals/Literature/AstaBench/data/*/*
+!evals/Literature/AstaBench/data/*/*_ids.txt
+# ProClaim's two claim sets are not ours either: they arrive with the ProClaim
+# clone, at ProClaim_src/datasets/, and are read straight from there.
+evals/Literature/ProClaim/data/

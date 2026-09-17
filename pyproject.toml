@@ -16,5 +16,33 @@ dependencies = [
     "uvicorn>=0.27",    # ASGI server for the orchestrator
 ]
 
+# The benchmark harness under evals/Literature. Install with:
+#   uv sync --extra evals
+# This covers driving the benchmarks and the LitQA2/LAB-Bench scoring, all of
+# which is API-hosted. It deliberately does NOT pull the local scoring stacks
+# (torch, transformers, vllm, fastchat) that ScholarQA-Bench's AutoAIS and
+# Prometheus judges need — those are GPU- and CUDA-specific, so they stay in
+# evals/Literature/SQA_bench/code/requirements.txt to install separately.
+[project.optional-dependencies]
+evals = [
+    "inspect_ai==0.3.203",      # the eval runner AstaBench tasks are written for
+    "agent-eval[leaderboard]==0.1.47",
+    "openai>=2.30.0",           # LAB-Bench + LitQA2 answering models
+    "litellm==1.82.3",          # provider routing for the judges
+    "anthropic>=0.87.0",        # ProClaim verdict model
+    "datasets~=3.2.0",          # LitQA2 / LAB-Bench from the HF Hub
+    "huggingface_hub",
+    "httpx~=0.28.1",
+    "httpx-sse>=0.4.2",
+    "opentelemetry-api",        # bio_agent_wrapper propagates spans across threads
+    "tqdm>=4.66",
+    "PyYAML>=6.0",              # ProClaim pipeline config
+    "nltk",                     # sentence splitting in the SQA scorers
+    "pandas",
+    "numpy",
+    "scipy",
+    "tabulate",
+]
+
 [tool.uv]
 package = false

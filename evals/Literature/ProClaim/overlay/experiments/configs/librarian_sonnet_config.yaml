@@ -1,0 +1,79 @@
+# ──────────────────────────────────────────────────────────────────────
+# ProClaim + librarian config — Sonnet-4.6 evidence programmer
+#
+# Identical to signor_librarian_config.yaml / connectomedb_librarian_config.yaml
+# except the outer evidence-programmer LLM is anthropic/claude-sonnet-4-6 (the
+# original ProClaim direct-config model) instead of openai/gpt-5.4. Retrieval
+# still routes through the in-process librarian (glm-5-fp8), and the evidence
+# subagent still runs the local Qwen vLLM endpoint — exactly the original
+# ProClaim setup, only with the librarian retrieval backend.
+#
+# The two per-subset librarian configs are functionally identical for the
+# librarian path (they differ only in comments and output_dir, and output_dir is
+# overridden per-claim by the harness), so this single file is applied to every
+# subset via `--config`.
+#
+# Usage:
+#   python -m evals.Literature.ProClaim.proclaim_librarian \
+#     --proclaim-path evals/Literature/ProClaim \
+#     --subset all \
+#     --config experiments/configs/librarian_sonnet_config.yaml \
+#     --out-dir evals/Literature/ProClaim/results/proclaim_librarian_sonnet46
+# ──────────────────────────────────────────────────────────────────────
+
+mode: direct
+
+# Retrieval backend: "librarian" routes all retrieval through the in-process
+# LibrarianAgent.
+retrieval_backend: librarian
+
+# Librarian agent LLM — points at the vLLM model service. Independent of the
+# evidence-programmer model below.
+# Overridden by run_proclaim.sh via --librarian-base-url (which passes
+# PROCLAIM_LIBRARIAN_URL, defaulting to LIBRARIAN_URL). Set it here only to
+# pin an endpoint for a standalone run.
+librarian_llm_base_url: http://localhost:8000/v1
+librarian_llm_model: glm-5-fp8
+
+# Verification workflow parameters
+max_iterations: 2   # ProClaim librarian sparse-evidence recovery budget
+max_turns: 10
+
+# LLM configuration — the ProClaim evidence programmer (NOT the librarian).
+llm:
+  # Outer agent: Claude via LiteLLM (anthropic/ prefix → Anthropic API,
+  # reads ANTHROPIC_API_KEY from .env). Matches the original ProClaim
+  # signor_direct_config.yaml evidence-programmer model.
+  model: anthropic/claude-sonnet-4-6
+
+  # Subagent: used inside bash for evidence_api calls, including fact extraction
+  # and gap analysis. Points at the local Qwen vLLM endpoint.
+  subagent_model: qwen3.5-9b
+  subagent_base_url: http://localhost:9900/v1
+
+  temperature: 0.0
+  disable_thinking: true   # matches standard ProClaim: Qwen subagent runs without thinking
+  stream: true
+
+# Sufficiency backend.
+#
+# Do not use the SciFact-trained MLP for librarian retrieval runs: librarian
+# evidence pools are larger and more mechanism-focused than the classifier's
+# training pools, which makes its probabilities poorly calibrated here.
+sufficiency_backend: llm
+
+# Output paths (overridden per-claim by the harness)
+output_dir: results/proclaim_librarian_sonnet46
+
+# MLP model dir (used if sufficiency_backend: mlp)
+mlp_model_dir: models/sufficiency_classifier
+
+# Prompt options
+include_subclaim_examples: false
+claim_only: true
+
+# Logging
+verbose: false
+
+# Web-search
+disable_web_search: true

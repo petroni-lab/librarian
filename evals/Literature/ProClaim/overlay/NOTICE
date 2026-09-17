@@ -1,0 +1,72 @@
+This directory holds our changes to ProClaim,
+
+    https://github.com/saezlab/ProClaim
+    Saez-Rodriguez lab. Licensed under the GNU General Public License v3.0.
+
+    "ProClaim: Sufficiency-Aware Evidence Programming for In-the-Wild
+     Scientific Claim Verification"
+
+LICENSING
+ProClaim is **GPL-3.0**, not MIT. The repository's root LICENSE does not apply
+to this directory: these files are modified versions of GPL-3.0 originals, and
+new files written against them, so they carry GPL-3.0 obligations. The full
+licence text arrives with the clone, at `../ProClaim_src/LICENSE.txt`.
+
+WHAT IS HERE
+Not a copy of ProClaim: only the 10 files we changed or added, each at the path
+it occupies upstream. `../../setup.sh` clones ProClaim at
+
+    6316258ba31386657389fea5bb2db2c97362e06c
+
+into `../ProClaim_src/` and copies this directory over it.
+
+WHAT WE ADDED — THE LIBRARIAN RETRIEVAL BACKEND
+ProClaim retrieves with PubMed and Semantic Scholar. The paper's "ProClaim
+0.80" row instead retrieves with the librarian, and **that backend exists
+nowhere upstream** — the word "librarian" does not appear in any branch of the
+ProClaim repository. It is this repository's contribution, which is why these
+files are committed here rather than fetched.
+
+  - `src/proclaim/verification/librarian_search.py` (412 lines) and
+    `librarian_query_generator.py` (386) — new. The backend itself: it runs an
+    in-process `LibrarianAgent` and adds the papers and evidence snippets it
+    returns to an `EvidenceState`.
+  - `src/proclaim/verification/evidence_programming_direct.py` — adds
+    `_verify_librarian_one_shot()` and its helpers, the single-pass
+    verification path the librarian backend runs, and hands off to it at the
+    top of `verify_claim_direct()`. `build_subprocess_env()` gains the
+    `AGENT_LLM_*` and `LIBRARIAN_LLM_*` variables, and drops the MLP
+    classifier for a librarian run, which decides sufficiency from extracted
+    facts instead.
+  - `src/proclaim/verification/config.py` — `retrieval_backend: "pubmed" |
+    "librarian"` plus the two librarian endpoint settings, exported through
+    `build_sdk_env()`.
+  - `src/proclaim/verification/evidence_api.py` — re-exports the five
+    librarian retrieval functions, and makes `function_docs()` and
+    `schema_docs()` describe whichever backend is active.
+  - `src/proclaim/verification/prompts.py` — `LIBRARIAN_DIRECT_SYSTEM_PROMPT`.
+  - `src/proclaim/verification/model_registry.py` — `get_agent_llm()`, the
+    outer-agent model the librarian run emits its verdict on.
+  - `experiments/configs/{librarian_sonnet,signor_librarian,connectomedb_librarian}_config.yaml`
+    — the three configs that select the backend.
+
+`retrieval_backend` defaults to `"pubmed"`, so ProClaim's own behaviour is
+unchanged unless a config asks for the librarian.
+
+Once `setup.sh` has run, the exact and current statement of what we changed is
+the clone's own diff:
+
+    git -C ../ProClaim_src diff      # the 8 modified files
+    git -C ../ProClaim_src status    # `??` marks the 2 files we added
+
+REPRODUCIBILITY
+The "ProClaim 0.80" row was measured against the project's pre-release tree,
+under its old package name `pkevolve`, before this public release existed. The
+integration above is ported onto the release. The authors describe the release
+as the cleaned-up version of that code, and nothing here depends on behaviour
+the port changed — but the row has not yet been re-measured on it.
+
+DATA
+The two claim sets are ProClaim's own and are not redistributed here: they
+arrive with the clone, at `../ProClaim_src/datasets/{signor,connectomedb}.csv`,
+and the harness reads them from there.

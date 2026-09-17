@@ -1,0 +1,55 @@
+This directory holds our changes to AstaBench,
+
+    https://github.com/allenai/asta-bench
+
+Copyright the Allen Institute for Artificial Intelligence (AI2).
+Licensed under the Apache License, Version 2.0; see LICENSE beside this file.
+
+WHAT IS HERE
+Not a copy of AstaBench: only the 8 files we changed or added, each at the path
+it occupies upstream. `../../setup.sh --bench litqa2` clones asta-bench at
+
+    a9e338070ffff195cb4cc5ddcbcf9ca8805f141d
+
+into `../vendor/` and copies this directory over it. The pin is not cosmetic —
+these files were written against that tree, and nothing checks that a later one
+still fits them.
+
+**LitQA2 is the only AstaBench task this harness runs.** AstaBench's other
+benchmarks come from the clone untouched, and are not part of the paper's
+results. We deliberately ship no changes to them.
+
+MODIFICATIONS
+As required by section 4(b) of the License: **every file in this directory is a
+modified version of its upstream original, or new.** Once `setup.sh` has run,
+the exact and current statement of what we changed is the clone's own diff:
+
+    git -C ../vendor diff       # the 7 modified files, line by line
+    git -C ../vendor status     # `??` marks astabench/types/__init__.py, added
+
+In summary:
+
+  - `evals/labbench/litqa2/task.py` — the LitQA2 task itself. Tolerates
+    `huggingface_hub` >= 1.0, which removed `HfFolder`, and resolves the Hub
+    token from several env vars so a stale one does not shadow a valid
+    `hf auth login` cache. Adds one metric, `accuracy` (fraction correct,
+    ignoring sureness), alongside the existing ones; upstream's `accuracy`,
+    `precision` and `coverage` are left as they were and keep computing what
+    they did.
+  - `tools/asta_tools.py` — configurable MCP timeouts, and treat `httpcore`
+    and `httpx` timeouts, and exception groups on Python < 3.11, as retryable.
+  - `constants.py`, `types/__init__.py`, `__init__.py`, `evals/__init__.py`,
+    `evals/labbench/__init__.py`, `tools/__init__.py` — a shared
+    `get_hf_token()` helper, and imports trimmed to the modules the LitQA2
+    task actually loads.
+
+None of this changes what LitQA2 measures.
+
+DATA
+LitQA2's rows are not redistributed here. `run_litqa2.sh` builds the
+91-question `europepmc_fulltext` split on first use from
+
+    https://huggingface.co/datasets/futurehouse/lab-bench   (CC-BY-SA-4.0)
+
+and `../data/litqa2_europepmc_fulltext/litqa2_public_subset_ids.txt` pins
+exactly which rows it contains.
