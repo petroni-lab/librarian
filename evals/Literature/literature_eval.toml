@@ -74,11 +74,12 @@ librarian_model = ""                          # inherits librarian.model
 # `vllm serve` line and stops.
 subagent_url   = "http://localhost:9900/v1"
 subagent_model = "qwen3.5-9b"
-# Optional, and the same two forms as [sqa] apptainer_image: a docker:// URI or
-# a local .sif. With one set, the "start the subagent" message prints the
-# containerised command instead of a bare `vllm serve` — useful when vLLM is
-# not installed on the box.
-apptainer_image = ""
+# The container the evidence subagent runs in. With this set, run_proclaim.sh
+# starts the subagent itself and stops it on exit — `--only proclaim` needs no
+# manual step. One already answering at subagent_url is reused and left alone.
+# Same two forms as [sqa] apptainer_image: a docker:// URI, or a local .sif.
+# Empty means "I will start it myself", and the script says how.
+apptainer_image = "docker://vllm/vllm-openai:v0.29.0"
 
 
 # ── The --via-api transport (optional) ───────────────────────────────────────

@@ -35,14 +35,10 @@ debugging. The inference adapter does not pass those fields to the librarian.
 cloned by `../setup.sh` to `ProClaim_src/` from
   [saezlab/ProClaim](https://github.com/saezlab/ProClaim) (**GPL-3.0**) with our
   librarian retrieval backend laid over it — see [`overlay/`](overlay/NOTICE).
-  It needs its own
-  environment (`cd ProClaim_src && uv sync`) and a third endpoint, the evidence
-  subagent, which you start yourself:
-
-  ```bash
-  vllm serve Qwen/Qwen3.5-9B --served-model-name qwen3.5-9b \
-      --port 9900 --gpu-memory-utilization 0.55 --max-model-len 32768
-  ```
+  It needs its own environment (`cd ProClaim_src && uv sync`) and a third
+  endpoint, the evidence subagent — which the runner starts for you from
+  `[proclaim] apptainer_image`, and stops on exit. A subagent already answering
+  at `[proclaim] subagent_url` is reused and left running.
 
   `--only verifier` needs neither.
 

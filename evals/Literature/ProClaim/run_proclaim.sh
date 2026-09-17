@@ -22,10 +22,11 @@
 # disk, so there is no committed baseline to diff against — this script is the
 # durable record of how the number was produced.
 #
-# The `proclaim` arm needs a THIRD endpoint, the evidence subagent. This script
-# does not start it for you: if nothing answers at PROCLAIM_SUBAGENT_URL it
-# prints the `vllm serve` line to run and stops. Point PROCLAIM_SUBAGENT_URL at
-# an existing server to use that instead. `--only verifier` does not need it.
+# The `proclaim` arm needs a THIRD endpoint, the evidence subagent. With
+# `[proclaim] apptainer_image` set in literature_eval.toml this script starts it
+# itself and stops it on exit; a subagent already answering at
+# PROCLAIM_SUBAGENT_URL is reused and left alone. Without an image it prints the
+# `vllm serve` line and stops. `--only verifier` does not need it at all.
 #
 # Env: LIBRARIAN_URL (required), LIBRARIAN_MODEL, PROCLAIM_VERDICT_MODEL,
 #      PROCLAIM_VERDICT_URL, PROCLAIM_SUBAGENT_URL, PROCLAIM_SUBAGENT_MODEL,
@@ -175,28 +176,78 @@ subagent_served() {
         | grep -q "\"id\":[[:space:]]*\"$PROCLAIM_SUBAGENT_MODEL\""
 }
 
-require_subagent() {
-    subagent_served && return 0
-    local port
+# The HF repo behind PROCLAIM_SUBAGENT_MODEL, and how long to wait for it.
+SUBAGENT_HF_MODEL="${PROCLAIM_SUBAGENT_HF_MODEL:-Qwen/Qwen3.5-9B}"
+SUBAGENT_WAIT_SECONDS="${PROCLAIM_SUBAGENT_WAIT_SECONDS:-1200}"
+
+start_subagent() {
+    local port vllm_pid deadline
     port="$(sed -nE 's#.*:([0-9]+).*#\1#p' <<<"$PROCLAIM_SUBAGENT_URL")"
-    port="${port:-9900}"
+    [[ "$port" =~ ^[0-9]+$ ]] \
+        || { echo "ERROR: no port in PROCLAIM_SUBAGENT_URL='$PROCLAIM_SUBAGENT_URL'." >&2; exit 1; }
+
+    echo "Starting $PROCLAIM_SUBAGENT_MODEL via apptainer ($PROCLAIM_APPTAINER_IMAGE)"
+    mkdir -p "${HF_HOME:-$HOME/.cache/huggingface}"
+    # Armed only on the path that starts a server, so a subagent someone else is
+    # already running is never torn down. setsid gives it its own process group,
+    # so the trap can take the whole thing with it.
+    trap 'kill -- -$vllm_pid 2>/dev/null || true' EXIT
+    # PYTHONNOUSERSITE is not optional: --cleanenv clears variables but does not
+    # stop Python reading ~/.local, and a user-site transformers there shadows
+    # the container's, failing on `is_offline_mode` from a mismatched
+    # huggingface_hub. 0.55 / 32768 is the measured footprint for Qwen3.5-9B on
+    # a >=24 GB card.
+    setsid apptainer exec --nv --cleanenv \
+        --bind "${HF_HOME:-$HOME/.cache/huggingface}:/root/.cache/huggingface:rw" \
+        --env HF_HOME=/root/.cache/huggingface \
+        --env HF_HUB_CACHE=/root/.cache/huggingface/hub \
+        --env HF_TOKEN="${HF_TOKEN:-}" \
+        --env PYTHONNOUSERSITE=1 \
+        "$PROCLAIM_APPTAINER_IMAGE" \
+        bash -lc "vllm serve $SUBAGENT_HF_MODEL \
+            --served-model-name $PROCLAIM_SUBAGENT_MODEL --port $port \
+            --gpu-memory-utilization 0.55 --max-model-len 32768" &
+    vllm_pid=$!
+
+    echo "Waiting up to ${SUBAGENT_WAIT_SECONDS}s for $PROCLAIM_SUBAGENT_MODEL on port $port ..."
+    deadline=$(( SECONDS + SUBAGENT_WAIT_SECONDS ))
+    until subagent_served; do
+        # A dead launcher means an env/GPU error already printed above; do not
+        # sit out the full timeout waiting for a server that will never appear.
+        kill -0 "$vllm_pid" 2>/dev/null \
+            || { echo "ERROR: vLLM exited before serving $PROCLAIM_SUBAGENT_MODEL (see output above)." >&2; exit 1; }
+        [ "$SECONDS" -lt "$deadline" ] \
+            || { echo "ERROR: the evidence subagent did not come up in ${SUBAGENT_WAIT_SECONDS}s." >&2
+                 echo "       Raise PROCLAIM_SUBAGENT_WAIT_SECONDS if it was still loading." >&2
+                 exit 1; }
+        sleep 10
+    done
+    echo "Evidence subagent ready at $PROCLAIM_SUBAGENT_URL"
+}
+
+# Reuse a running subagent, else start one from the configured image, else say
+# what to do. Only `--only proclaim` needs it; `--only verifier` never calls this.
+require_subagent() {
+    subagent_served && { echo "Reusing the evidence subagent at $PROCLAIM_SUBAGENT_URL"; return 0; }
+    if [ -n "${PROCLAIM_APPTAINER_IMAGE:-}" ] && command -v apptainer >/dev/null 2>&1; then
+        start_subagent
+        return 0
+    fi
+    local port
+    port="$(sed -nE 's#.*:([0-9]+).*#\1#p' <<<"$PROCLAIM_SUBAGENT_URL")"; port="${port:-9900}"
     {
         echo "ERROR: the ProClaim evidence subagent is not serving '$PROCLAIM_SUBAGENT_MODEL'"
-        echo "       at $PROCLAIM_SUBAGENT_URL. Start it, then re-run:"
+        echo "       at $PROCLAIM_SUBAGENT_URL, and it cannot be started for you:"
+        [ -n "${PROCLAIM_APPTAINER_IMAGE:-}" ] \
+            && echo "       apptainer is not installed." \
+            || echo "       no \`[proclaim] apptainer_image\` is set in literature_eval.toml."
         echo
-        if [ -n "${PROCLAIM_APPTAINER_IMAGE:-}" ]; then
-            # An image is configured, so offer the containerised form first.
-            echo "  apptainer exec --nv $PROCLAIM_APPTAINER_IMAGE \\"
-            echo "      vllm serve Qwen/Qwen3.5-9B --served-model-name $PROCLAIM_SUBAGENT_MODEL \\"
-            echo "      --port $port --gpu-memory-utilization 0.55 --max-model-len 32768"
-        else
-            echo "  vllm serve Qwen/Qwen3.5-9B --served-model-name $PROCLAIM_SUBAGENT_MODEL \\"
-            echo "      --port $port --gpu-memory-utilization 0.55 --max-model-len 32768"
-            echo
-            echo "       No local vLLM? Set \`[proclaim] apptainer_image\` in"
-            echo "       literature_eval.toml (e.g. docker://vllm/vllm-openai:v0.29.0)"
-            echo "       and this will show the containerised command instead."
-        fi
+        echo "       Set one (e.g. docker://vllm/vllm-openai:v0.29.0) and this"
+        echo "       script starts and stops the subagent itself. Or start it"
+        echo "       yourself and re-run:"
+        echo
+        echo "  vllm serve $SUBAGENT_HF_MODEL --served-model-name $PROCLAIM_SUBAGENT_MODEL \\"
+        echo "      --port $port --gpu-memory-utilization 0.55 --max-model-len 32768"
         echo
         echo "       Already have one elsewhere? Point PROCLAIM_SUBAGENT_URL at it."
     } >&2

@@ -86,14 +86,30 @@ L="--librarian-url http://localhost:8000/v1 --librarian-model glm-5-fp8"
 ./evals/Literature/literature_eval.sh --bench proclaim --only verifier --limit 3 $L
 ```
 
+The two heavier targets are rungs of their own. Neither needs a server started
+by hand: each brings up the models it scores with, from the container image in
+`literature_eval.toml`, and stops them on exit.
+
+```bash
+# 4. the full ProClaim pipeline. Starts the evidence subagent (Qwen3.5-9B)
+#    from [proclaim] apptainer_image, waits for it, and stops it afterwards.
+#    One >=24 GB GPU. Needs ANTHROPIC_API_KEY.
+./evals/Literature/literature_eval.sh --bench proclaim --only proclaim --limit 3 $L
+
+# 5. ScholarQA-Multi. Starts each Prometheus 8x7B judge in turn from
+#    [sqa] apptainer_image — answer quality, then relevance — so 4 GPUs cover
+#    both. 29 questions, no --limit needed. No API key.
+./evals/Literature/literature_eval.sh --bench sqa --only multi $L
+```
+
 Rung 0 is worth running on its own first: it is the one that tells you whether
 `setup.sh` fetched everything, without spending a token.
 
-Two things deliberately have no smoke rung: `sqa --only multi` wants four H100s,
-and `proclaim --only proclaim` wants a third endpoint (the evidence subagent).
-Start those only when the cheaper rungs pass. Neither blocks the rest —
-`--bench sqa` skips `multi` when it cannot run and keeps the bio and neuro rows,
-and `--only verifier` is the ProClaim arm that needs no subagent.
+Rungs 4 and 5 are last only because of what they reserve — a card for the
+subagent, four for the judges — not because they need setting up. Neither blocks
+the rest: `--bench sqa` skips `multi` when the GPUs or the image are missing and
+keeps the bio and neuro rows, and `--only verifier` is the ProClaim arm that
+needs no subagent at all.
 
 ---
 
@@ -293,13 +309,10 @@ Its dependencies are not the harness's, so it gets its own environment:
 cd evals/Literature/ProClaim/ProClaim_src && uv sync
 ```
 
-It also needs a third endpoint — the evidence subagent — which you start
-yourself:
-
-```bash
-vllm serve Qwen/Qwen3.5-9B --served-model-name qwen3.5-9b \
-    --port 9900 --gpu-memory-utilization 0.55 --max-model-len 32768
-```
+It also needs a third endpoint, the evidence subagent — but `run_proclaim.sh`
+starts that itself from `[proclaim] apptainer_image` and stops it on exit. One
+already answering at `[proclaim] subagent_url` is reused and left running. You
+only start it by hand if you clear that image.
 
 `--only verifier` (the 0.66 Verifier Agent row) needs neither and runs with just
 the librarian and a verdict model.
@@ -309,30 +322,6 @@ the librarian and a verdict model.
 `prometheus-eval/prometheus-bgb-8x7b-v2.0` (answer quality) and then
 `prometheus-eval/prometheus-8x7b-v2.0` (relevance) — one after the other, so
 4 GPUs covers both. It fails early if fewer are visible.
-
----
-
-## What is ours
-
-None of the four upstream benchmarks knows anything about the librarian. Searched
-across every branch of each one, the word appears in **zero lines of code** —
-0 hits in `asta-bench`, 0 in `saezlab/ProClaim`, and the 3 in `ScholarQABench`
-are inside ScholarQA-CS *question data*, not source. The integration in each
-suite is this repository's contribution, which is the whole reason these files
-are committed here rather than fetched.
-
-| Suite | Ours | From upstream |
-|---|---|---|
-| shared harness | 8 files — the runner, config, `llm_compat.py`, the `--via-api` transport, `setup.sh` | — |
-| LitQA2 | 16 — `bio_agent_wrapper.py` (the solver), the open judges, the split reconstruction | 8 files, as [`AstaBench/overlay/`](AstaBench/overlay/NOTICE) |
-| LAB-Bench | 8 — `solvers.py`, `labbench_compat.py`, the runner and audit | — (streamed from the Hub) |
-| ScholarQA-Bench | 10 — `run_sqa_new_stack.py`, `numbered_citations.py`, the subset reconstruction | 4 files, as [`SQA_bench/overlay/`](SQA_bench/overlay/NOTICE) |
-| ProClaim | 5, plus 10 as [`ProClaim/overlay/`](ProClaim/overlay/NOTICE) — the librarian retrieval backend, which exists in no upstream branch | [ProClaim](https://github.com/saezlab/ProClaim) (GPL-3.0) |
-
-ProClaim is the clearest case: its public release has no librarian backend at
-all, so `retrieval_backend: "pubmed" | "librarian"`, the two modules behind it
-and the three YAML configs that select it exist nowhere upstream. They are why
-that arm cannot be reduced to a clone plus an overlay the way the other two are.
 
 ---
 
