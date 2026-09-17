@@ -1,4 +1,5 @@
-# Generated from /g/petroni/code/asta-bench/pyproject.toml [project.dependencies]
+# Generated from asta-bench's pyproject.toml [project.dependencies]
+# (https://github.com/allenai/asta-bench, pinned in ../setup.sh)
 inspect_ai==0.3.203
 agent-eval[leaderboard]==0.1.47
 openai>=2.30.0
