@@ -229,8 +229,9 @@ liveness probe; interactive docs are at `/docs`.
   See [🛠️ Installation](#️-installation). The same run is also served over HTTP by
   [`orchestrator.py`](orchestrator.py), with blocking and streaming endpoints —
   see [Serving it over HTTP](#serving-it-over-http).
-* **[2026.09.xx]** *(upcoming)* Evaluation harness: the benchmark suites and scripts
-  behind the reported numbers.
+* **[2026.09.16]** Evaluation harness released: the four benchmark suites behind
+  the reported numbers, driven by one command. See
+  [🧪 Reproducing the benchmarks](#-reproducing-the-benchmarks).
 * **[2026.09.03]** Retrieval pipeline rework: paragraph-level pooling across
   sub-queries, a single relevance judge (replacing the two concurrent
   full-text/abstract judges), snippet-level citations, author affiliation,
@@ -294,6 +295,54 @@ gives **+6.8 Bio / +10.9 Neu**. See the paper for the full evaluation and ablati
   bar chart of Citation F1 / LitQA2 accuracy vs. baselines.
 -->
 <div align="center"><img src="assets/benchmark_summary.png" alt="Benchmark results: Librarian vs. baselines on ScholarQA-Bench, ProClaim-eval, open-form LitQA2, and LAB-Bench" width="80%"></div>
+
+---
+
+## 🧪 Reproducing the benchmarks
+
+The harness behind every number above lives in
+[`evals/Literature/`](evals/Literature/). One command reproduces the
+**+Librarian** row of each of the paper's four literature tables:
+
+```bash
+uv sync --extra evals
+./evals/Literature/setup.sh          # or --bench litqa2 to fetch just one suite
+./evals/Literature/literature_eval.sh --bench all \
+    --librarian-url http://localhost:8000/v1 --librarian-model glm-5-fp8
+```
+
+`setup.sh` fetches only what the benches you name need, so a single suite never
+pulls another's inputs. ProClaim's second arm additionally wants its own
+environment (`cd evals/Literature/ProClaim/ProClaim_src && uv sync`).
+
+`--bench` also takes one suite or a comma-separated subset, `--limit N` caps the
+question count for a smoke run, and `--dry-run` prints every command without
+calling anything.
+
+| `--bench` | Suite | Reproduces | Needs |
+|---|---|---|---|
+| `litqa2` | Open-form LitQA2 | Cov 95.6 / Prec 82.6 / Acc 78.9 | `OPENAI_API_KEY`, no GPU |
+| `labbench` | LAB-Bench | SeqQA 63.8, ProtocolQA 73.1, DbQA 36.2, Cloning 48.5 | `OPENAI_API_KEY`, no GPU |
+| `proclaim` | ProClaim-eval | Verifier 0.66, ProClaim 0.80 | `ANTHROPIC_API_KEY`, 1 GPU |
+| `sqa` | ScholarQA-Bench | Citation F1 (Bio, Neu) + LLM judge (Multi) | no key; 1 GPU, or 4 for Multi |
+
+**`litqa2` and `labbench` need no GPU** and are the two to start with — the
+GPUs the other two want are for *scoring*, not retrieval.
+
+Every suite needs an OpenAI-compatible endpoint serving the librarian model: the
+librarian is an agent, not a model, so it plans sub-queries and judges paragraphs
+through an LLM and has no offline fallback. The paper's numbers are GLM-5
+numbers; a different model makes a result incomparable rather than wrong.
+
+Neither the benchmark repositories nor their data are copied into this
+repository. `setup.sh` clones each upstream benchmark at a pinned commit, copies
+over the files we changed — the only ones committed here — and rebuilds the
+paper's subsets from the committed id lists. Those changes live in each suite's
+`overlay/`, so the clone's own `git diff` is an exact statement of what we
+altered. One caveat worth knowing before you redistribute anything:
+[`ProClaim/overlay/`](evals/Literature/ProClaim/overlay/NOTICE) is **GPL-3.0**,
+not MIT. See the [harness README](evals/Literature/README.md) for the full
+setup, hardware tiers and data provenance.
 
 ---
 
@@ -464,6 +513,13 @@ librarian/
   progress.py                  stdlib terminal spinner for live progress
   prompts/                     query planner, relevance-judge, summarizer prompts
   query_validation/            deterministic Europe PMC query validation
+evals/Literature/
+  literature_eval.sh           one command for all four benchmark suites
+  literature_eval.conf         every endpoint, model and path, in one file
+  setup.sh                     clone the benchmarks, apply our changes, fetch data
+  orchestrator_client.py       the optional --via-api transport
+  AstaBench/ LabBench/ ProClaim/ SQA_bench/     one directory per suite
+    <suite>/overlay/           our changes to that upstream benchmark, and only those
 ```
 
 ---

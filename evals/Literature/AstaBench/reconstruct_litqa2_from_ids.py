@@ -6,6 +6,13 @@ full rows from the public `futurehouse/lab-bench` LitQA2 dataset on the Hugging
 Face Hub and writes them out in the same shape as
 litqa2_full_europepmc_fulltext.json, ready for check_litqa2_europepmc_fulltext.py
 downstream tooling or evals.Literature.AstaBench.litqa2_open_judge.
+
+The rows come from the Hugging Face Hub, not from this repository:
+
+    https://huggingface.co/datasets/futurehouse/lab-bench   (CC-BY-SA-4.0)
+
+LitQA2 is the only task this harness takes from AstaBench
+(https://github.com/allenai/asta-bench); its other benchmarks are not run here.
 """
 
 from __future__ import annotations
@@ -53,7 +60,9 @@ def main() -> None:
 
     missing = ids - {row["id"] for row in rows}
     if missing:
-        print(f"warning: {len(missing)} id(s) not found in futurehouse/lab-bench: {sorted(missing)}")
+        print(
+            f"warning: {len(missing)} id(s) not found in futurehouse/lab-bench: {sorted(missing)}"
+        )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n")

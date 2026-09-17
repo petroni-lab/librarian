@@ -13,19 +13,22 @@ Then:
     curl -N localhost:8080/run-agent/stream \
         -H 'content-type: application/json' \
         -d '{"query": "does metformin extend lifespan in mammals?"}'
+
+Both run endpoints take an optional "agent": "librarian" (the default, ranked
+evidence only) or "literature_synthesis" (the same evidence plus a cited answer).
 """
 
 import json
 import queue
 import threading
-from typing import Any, Callable, Dict, Iterator, Optional
+from typing import Any, Callable, Dict, Iterator, Literal, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from librarian import LibrarianAgent, load_runtime_config
+from librarian import LibrarianAgent, SynthesisAgent, load_runtime_config
 
 # Same as main.py: pick up LLM_BASE_URL / LLM_MODEL / LLM_API_KEY from a .env file.
 load_dotenv()
@@ -44,6 +47,13 @@ class RunRequest(BaseModel):
     full_text_enrichment: bool = Field(
         default=True,
         description="Rank over full-text paragraphs; false falls back to abstracts only.",
+    )
+    agent: Literal["librarian", "literature_synthesis"] = Field(
+        default="librarian",
+        description=(
+            "'librarian' returns ranked evidence and an empty summary; "
+            "'literature_synthesis' also writes a cited answer over it."
+        ),
     )
 
 
@@ -65,10 +75,22 @@ def _run(
         full_text_enrichment=request.full_text_enrichment,
     )
     papers = agent.run(request.query, on_progress=on_progress)
+
+    # The librarian never writes prose, so its summary is empty rather than
+    # absent: one response shape means a client can swap agents without
+    # reshaping anything.
+    summary = ""
+    if request.agent == "literature_synthesis":
+        if on_progress is not None:
+            on_progress("Synthesizing answer")
+        summary = SynthesisAgent().run(request.query, papers)
+
     return {
         "query": request.query,
         "search_queries": agent.last_run_debug.get("search_queries", []),
         "papers": papers,
+        "summary": summary,
+        "action": "search",
     }
 
 
@@ -146,7 +168,13 @@ def _self_check() -> None:
 
     def ok_run(request: RunRequest, on_progress=None) -> Dict[str, Any]:
         on_progress("Searching Europe PMC")
-        return {"query": request.query, "search_queries": ["q"], "papers": []}
+        return {
+            "query": request.query,
+            "search_queries": ["q"],
+            "papers": [],
+            "summary": "",
+            "action": "search",
+        }
 
     def boom_run(request: RunRequest, on_progress=None) -> Dict[str, Any]:
         raise RuntimeError("nope")

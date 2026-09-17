@@ -1,0 +1,5 @@
+# Eval-specific dependencies. The knowledge-layer agents' own deps (bm25s, pysbd,
+# requests, ...) come from the repo's base environment.
+openai>=1.40.0
+datasets>=2.19.0   # only needed when loading from HuggingFace (no --data-file)
+tqdm>=4.66.0

@@ -1,0 +1,54 @@
+This directory holds our changes to ScholarQABench,
+
+    https://github.com/AkariAsai/ScholarQABench
+
+Copyright (c) 2024 Akari Asai.
+Licensed under the MIT License; see LICENSE beside this file. The License's
+copyright and permission notice must travel with any copy of this code.
+
+WHAT IS HERE
+Not a copy of ScholarQABench: only the 4 files we changed, each at the path it
+occupies upstream. `../../setup.sh` clones ScholarQABench at
+
+    95e6fc52b0a8a0ce0a74956029991e3bb00c38b9
+
+into `../code/` and copies this directory over it. The clone is also where the
+benchmark data comes from — `setup.sh` copies the bio, neuro and multi files out
+of it into `../data/`, so nothing here is downloaded twice.
+
+`rubrics/prometheus_rubrics_v8.json` is not here because we did not change it;
+it comes from the clone as-is.
+
+MODIFICATIONS
+**All four files are modified versions of their upstream originals.** Once
+`setup.sh` has run, the exact and current statement of what we changed is the
+clone's own diff:
+
+    git -C ../code diff
+
+In summary:
+
+  - `scripts/citation_correctness_eval.py` — roughly twice its upstream length.
+    Added: a configurable AutoAIS input-token cap with an out-of-memory fallback
+    that retries at successively shorter limits, chunked scoring with an
+    optional model reload per chunk (`--autoais_chunk_size`,
+    `--autoais_reload_model_per_chunk`), and a per-question results dump. These
+    make the full 1451- and 1308-question sets scoreable on one GPU; they do not
+    change how a citation is judged.
+  - `scripts/prometheus_eval.py` — points at a judge served over an
+    OpenAI-compatible endpoint (`--judge_model litellm_openai`,
+    `--judge_base_url`) instead of loading it in-process, and splits scoring
+    into the two passes `--judge_pass org_cov` and `--judge_pass relevance`.
+  - `scripts/run_utils.py` — retry with exponential backoff on rate limits,
+    plus logging and formatting.
+  - `requirements.txt` — the CUDA-specific scoring stack: drops the pinned
+    `torch==2.4.0+cu121` and the `vllm` line that cannot install on macOS, and
+    adds the packages the two scorers above import.
+
+WHAT WE DID NOT CHANGE
+Everything else in the clone is upstream's, untouched. Note that our internal
+tree also carries changes to the ScholarQA-CS scripts
+(`rubric_eval.py`, `scholarqacs_rubric.py`, `convert_answer_scholar_cs.py`,
+`parse_annotations.py`). They are deliberately not shipped here: this harness
+never invokes them, and the CS split is not one of the paper's rows. After
+`setup.sh`, those files are present in their unmodified upstream form.
