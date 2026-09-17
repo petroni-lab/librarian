@@ -26,6 +26,7 @@ import os
 import shlex
 import sys
 from pathlib import Path
+from string import Template
 from typing import Any
 
 try:  # Python 3.11+
@@ -64,6 +65,21 @@ SPEC: list[tuple[str, str, str | None]] = [
 ]
 
 
+def _expand(text: str, env: dict[str, str]) -> str:
+    """Expand ``$VAR`` and a leading ``~`` against *env*.
+
+    TOML has no interpolation, so a path written as ``~/scratch/evals`` or
+    ``/scratch/$USER/out`` would otherwise reach the shell literally. Expanded
+    against the passed environment rather than ``os.environ`` so the result
+    depends only on the inputs.
+    """
+    text = Template(text).safe_substitute(env)
+    if text.startswith("~"):
+        home = env.get("HOME") or str(Path.home())
+        text = home + text[1:]
+    return text
+
+
 def _dig(data: dict[str, Any], dotted: str) -> Any:
     """Return ``data["a"]["b"]`` for ``"a.b"``, or ``None`` if absent."""
     node: Any = data
@@ -91,6 +107,8 @@ def resolve(config_path: Path, env: dict[str, str] | None = None) -> dict[str, s
             continue
         value = _dig(data, dotted)
         text = "" if value is None else str(value)
+        if text:
+            text = _expand(text, env)
         if not text and inherit:
             text = env.get(inherit, "") or out.get(inherit, "")
         if not text:
@@ -155,6 +173,12 @@ max_samples = 16
         got = resolve(p, env={"LIBRARIAN_MODEL": "override"})
         assert "LIBRARIAN_MODEL" not in got, got
         assert got["SYNTHESIS_MODEL"] == "override", got
+
+        # $VAR and ~ are expanded against the passed env, not the real one
+        p.write_text('[paths]\nresults_root = "/scratch/$USER/out"\n')
+        assert resolve(p, env={"USER": "someone"})["RESULTS_ROOT"] == "/scratch/someone/out"
+        p.write_text('[paths]\nresults_root = "~/out"\n')
+        assert resolve(p, env={"HOME": "/home/x"})["RESULTS_ROOT"] == "/home/x/out"
 
         # values with spaces survive the round trip through the shell
         p.write_text('[paths]\nresults_root = "/tmp/a b"\n')
