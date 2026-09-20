@@ -439,6 +439,29 @@ to retrieval tuning:
 | `LITERATURE_BM25_STEMMING` | on | Snowball stemming for BM25 (`0` to disable) |
 | `LLM_REASONING_EFFORT` | unset | `reasoning_effort` sent on every chat completion (e.g. `low`, `medium`, `high`); omit for models that don't support it |
 
+### Full-text cache (optional)
+
+`librarian/literature_search.py` is bio-agents' `libs/literature_search.py`, kept
+identical apart from the Redis backend, which is dropped here. Both search results
+and open-access full text are cached across runs. The cache is off unless
+`EPMC_CACHE_DIR` is set, and needs its extra installed — `uv sync --extra cache`,
+or `pip install 'librarian[cache]'`.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `EPMC_CACHE_DIR` | unset | directory for a diskcache (SQLite) cache; unset disables caching entirely |
+| `EPMC_CACHE_TTL_DAYS` | 60 | lifetime of a cached search result or full text |
+| `EPMC_CACHE_NEGATIVE_TTL_DAYS` | 7 | lifetime of a cached *failure* — shorter so a paper that leaves embargo is not skipped for two months |
+| `EPMC_CACHE_DEBUG` | unset | `1` logs cache hits/misses to stderr |
+| `LITERATURE_EPMC_SYNONYM` | unset | `true` asks Europe PMC to expand MeSH/UniProt synonyms (broader recall) |
+
+Failures are cached because ~15% of the papers Europe PMC flags as open access have no
+fetchable `fullTextXML`. Only *permanent* statuses (400/403/404/410) are treated as
+final, and only after a confirming second request — Europe PMC intermittently 404s
+documents that do exist, and an unconfirmed negative would degrade those papers to
+abstract-only for days. Transient failures (429/5xx, timeouts) are retried on the next
+read instead.
+
 ---
 
 ## 📁 Layout
