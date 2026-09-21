@@ -92,7 +92,12 @@ def _codex_command(
     schema_path: Path,
     response_path: Path,
 ) -> List[str]:
-    """Build an isolated Codex command whose final message goes to a file."""
+    """Build an isolated, low-latency Codex command.
+
+    These sessions only return one small JSON object, so Luna at low effort is
+    sufficient and materially faster. Empty environment values restore the
+    Codex CLI defaults.
+    """
     command = [
         executable,
         "exec",
@@ -104,6 +109,14 @@ def _codex_command(
         str(prompt_path.parent),
         "-s",
         "read-only",
+    ]
+    model = os.environ.get("LIBRARIAN_CODEX_MODEL", "gpt-5.6-luna").strip()
+    effort = os.environ.get("LIBRARIAN_CODEX_EFFORT", "low").strip()
+    if model:
+        command += ["-m", model]
+    if effort:
+        command += ["-c", f'model_reasoning_effort="{effort}"']
+    command += [
         "--output-schema",
         str(schema_path),
         "--output-last-message",

@@ -89,9 +89,12 @@ loading still fails, report it and ask the user to run Codex once from their
 normal terminal to refresh authentication and policy caches, then retry the
 skill.
 
-Keep the `RUN_DIR` printed by step 1 and pass it explicitly to later steps. The
-direct CLI sessions use the provider's configured default model. Never add a
-`--model` flag to these steps.
+Keep the `RUN_DIR` printed by step 1 and pass it explicitly to later steps.
+Claude uses its configured default model. Codex uses `gpt-5.6-luna` at low
+effort because both child tasks are bounded JSON transformations. Override with
+`LIBRARIAN_CODEX_MODEL` or `LIBRARIAN_CODEX_EFFORT`; set either to an empty
+value to restore the Codex CLI default. These are still Codex CLI sessions using
+the user's existing authentication and plan, not API calls from `.env`.
 
 Run the steps in two shell calls, not four. Every root-agent turn between steps
 costs a full model round-trip on top of the work, and only one decision point in
@@ -115,6 +118,10 @@ PMC rule below, and if it holds run the rest in one more call:
 `low`, which is what keeps the judge step fast. Raise it only to test whether a
 harder question needs more reasoning — the judge ranks paragraphs it has already
 been handed, so it normally does not.
+
+Codex child sessions likewise default to `LIBRARIAN_CODEX_MODEL=gpt-5.6-luna`
+and `LIBRARIAN_CODEX_EFFORT=low`. Raise either only when benchmarking shows a
+quality gain worth the extra latency and usage.
 
 ## Step 1 — plan Europe PMC queries
 

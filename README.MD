@@ -123,6 +123,35 @@ Two things to know:
   first time it is called. `uv` itself must be present; set `LIBRARIAN_PYTHON` to an
   interpreter that already has the dependencies if you would rather not use it.
 
+#### Child model and effort controls
+
+The skill uses the authenticated CLI's subscription or plan, not the `LLM_*`
+settings used by `main.py`. Its short-lived query-planner and relevance-judge
+sessions default to:
+
+| Provider | Child model | Effort | Overrides |
+|---|---|---|---|
+| Claude Code | configured Claude model | `low` | `LIBRARIAN_CLAUDE_EFFORT` |
+| Codex | `gpt-5.6-luna` | `low` | `LIBRARIAN_CODEX_MODEL`, `LIBRARIAN_CODEX_EFFORT` |
+| Antigravity | configured `agy` defaults | configured default | none |
+
+Set overrides before starting the parent agent so its child processes inherit
+them. For example:
+
+```bash
+export LIBRARIAN_CODEX_MODEL=gpt-5.6-terra
+export LIBRARIAN_CODEX_EFFORT=medium
+codex
+
+# Or raise only Claude's effort; its configured model remains unchanged.
+export LIBRARIAN_CLAUDE_EFFORT=medium
+claude
+```
+
+Set any override to an empty value to restore that CLI's default for the child
+session. The low-effort defaults are intentional: both stages return one bounded
+JSON object from material already supplied in their prompts.
+
 ### B. Install as a Python library
 
 ```bash
