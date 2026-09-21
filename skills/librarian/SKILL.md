@@ -85,15 +85,39 @@ Keep the `RUN_DIR` printed by step 1 and pass it explicitly to later steps. The
 direct CLI sessions use the provider's configured default model. Never add a
 `--model` flag to these steps.
 
+Run the steps in two shell calls, not four. Every root-agent turn between steps
+costs a full model round-trip on top of the work, and only one decision point in
+the pipeline is genuinely the root agent's: whether Europe PMC came through.
+
+```bash
+"$RUN" step1_query_prompt --provider "$PROVIDER" "<user question>" && \
+  "$RUN" step2_retrieve --run "<RUN_DIR printed above>"
+```
+
+Step 1 prints `RUN_DIR` before step 2 needs it, so substitute it into the second
+half of the same command. Then read the `paragraphs=` count, apply the Europe
+PMC rule below, and if it holds run the rest in one more call:
+
+```bash
+"$RUN" step3_judge_prompts --run "<RUN_DIR>" --provider "$PROVIDER" && \
+  "$RUN" step4_finalize --run "<RUN_DIR>"
+```
+
+`LIBRARIAN_CLAUDE_EFFORT` sets the child sessions' effort level; it defaults to
+`low`, which is what keeps the judge step fast. Raise it only to test whether a
+harder question needs more reasoning — the judge ranks paragraphs it has already
+been handed, so it normally does not.
+
 ## Step 1 — plan Europe PMC queries
 
 ```bash
 "$RUN" step1_query_prompt --provider "$PROVIDER" "<user question>"
 ```
 
-The script creates `RUN_DIR`, renders `01_query_prompt.md`, starts a fresh CLI
-session with that file as stdin, and writes the returned `{"queries": [...]}`
-to `01_queries.json`. No prompt content enters the root agent's context.
+Chain step 2 onto this call as shown under Setup. The script creates
+`RUN_DIR`, renders `01_query_prompt.md`, starts a fresh CLI session with that
+file as stdin, and writes the returned `{"queries": [...]}` to
+`01_queries.json`. No prompt content enters the root agent's context.
 
 ## Step 2 — retrieve, chunk, and rank
 

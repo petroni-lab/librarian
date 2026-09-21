@@ -51,7 +51,18 @@ def _validate_response(raw_response: str, key: str) -> Dict[str, List[str]]:
 
 
 def _claude_command(executable: str) -> List[str]:
-    """Build a one-turn Claude Code command with no inherited project context."""
+    """Build a one-turn Claude Code command with no inherited project context.
+
+    ``--effort`` is the one knob that matters for latency here. Both prompts ask
+    for a single JSON object from material already in front of the model — the
+    planner picks query strings, the judge ranks paragraphs it can read — so
+    extended thinking buys nothing and costs a lot: on a 173 KB judge batch the
+    default effort spent ~5k thinking tokens and 55 s, ``low`` spent none and
+    took 9 s, and the two returned the same paragraphs. It also keeps a large
+    batch clear of the 180-second timeout in ``_run_command``. Override with
+    ``LIBRARIAN_CLAUDE_EFFORT`` (low, medium, high, xhigh, max); an empty value
+    drops the flag and restores the CLI default.
+    """
     command = [
         executable,
         "-p",
@@ -65,6 +76,9 @@ def _claude_command(executable: str) -> List[str]:
         "--output-format",
         "text",
     ]
+    effort = os.environ.get("LIBRARIAN_CLAUDE_EFFORT", "low").strip()
+    if effort:
+        command += ["--effort", effort]
     return command
 
 
