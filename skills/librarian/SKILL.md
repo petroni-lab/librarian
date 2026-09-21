@@ -79,7 +79,8 @@ The Antigravity provider calls the official `agy` CLI, which must be on PATH
 and authenticated once through an interactive `agy` session. It sends one
 JSON-wrapped prompt through stdin and extracts the completed response from
 the event stream, using the same timeout and output validation as other
-providers. It uses the configured default model and permissions. See the
+providers. It uses the configured permissions and `gemini-3.7-flash-low`. See
+the
 [Antigravity headless documentation](https://antigravity.google/docs/cli/headless/).
 
 The launcher gives Codex child sessions a temporary writable state directory
@@ -122,6 +123,12 @@ been handed, so it normally does not.
 Codex child sessions likewise default to `LIBRARIAN_CODEX_MODEL=gpt-5.6-luna`
 and `LIBRARIAN_CODEX_EFFORT=low`. Raise either only when benchmarking shows a
 quality gain worth the extra latency and usage.
+
+Antigravity bakes the reasoning tier into the model slug, so it defaults to
+`LIBRARIAN_ANTIGRAVITY_MODEL=gemini-3.7-flash-low`: about twice as fast as the
+`-high` tier, at roughly two thirds of its judge recall. Set the variable to
+`gemini-3.7-flash-high` when a question is worth the fuller evidence sweep, or
+to an empty value to use the account default.
 
 ## Step 1 — plan Europe PMC queries
 

@@ -133,7 +133,7 @@ sessions default to:
 |---|---|---|---|
 | Claude Code | configured Claude model | `low` | `LIBRARIAN_CLAUDE_EFFORT` |
 | Codex | `gpt-5.6-luna` | `low` | `LIBRARIAN_CODEX_MODEL`, `LIBRARIAN_CODEX_EFFORT` |
-| Antigravity | configured `agy` defaults | configured default | none |
+| Antigravity | `gemini-3.7-flash-low` | tier is in the model slug | `LIBRARIAN_ANTIGRAVITY_MODEL`, `LIBRARIAN_ANTIGRAVITY_EFFORT` |
 
 Set overrides before starting the parent agent so its child processes inherit
 them. For example:
