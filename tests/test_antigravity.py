@@ -26,6 +26,22 @@ with patch.dict('os.environ', {
     assert '-m' not in command
     assert '-c' not in command
 
+with patch.dict('os.environ', {}, clear=True):
+    command = sessions._antigravity_command('/bin/agy', 'queries')
+    assert command[command.index('--model') + 1] == 'gemini-3.7-flash-low'
+    assert '--effort' not in command
+
+with patch.dict('os.environ', {
+    'LIBRARIAN_ANTIGRAVITY_MODEL': 'gemini-3.7-flash-high',
+    'LIBRARIAN_ANTIGRAVITY_EFFORT': 'medium',
+}, clear=True):
+    command = sessions._antigravity_command('/bin/agy', 'queries')
+    assert command[command.index('--model') + 1] == 'gemini-3.7-flash-high'
+    assert command[command.index('--effort') + 1] == 'medium'
+
+with patch.dict('os.environ', {'LIBRARIAN_ANTIGRAVITY_MODEL': ''}, clear=True):
+    assert '--model' not in sessions._antigravity_command('/bin/agy', 'queries')
+
 with tempfile.TemporaryDirectory() as directory:
     prompt = Path(directory) / 'prompt.md'
     output = Path(directory) / 'output.json'

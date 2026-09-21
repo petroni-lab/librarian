@@ -86,6 +86,50 @@ def _claude_command(executable: str) -> List[str]:
     return command
 
 
+def _antigravity_command(executable: str, output_key: str) -> List[str]:
+    """Build a one-turn AGY command on a fast, explicitly chosen model.
+
+    AGY bakes the reasoning tier into the model slug, so picking the model is
+    picking the effort. On a 71-paragraph metformin judge batch, mean of two
+    runs each, measured against Claude's 56 selected ids as the reference:
+
+    ==========================  ========  ======
+    model                       time      recall
+    ==========================  ========  ======
+    ``gemini-3.7-flash-low``    ~17 s     38%
+    ``gemini-3.7-flash-medium`` ~35 s     45%
+    ``gemini-3.7-flash-high``   ~35 s     58%
+    ==========================  ========  ======
+
+    ``medium`` is dominated — it costs what ``high`` costs and returns less —
+    so the useful choice is the two ends. The default takes ``low`` for roughly
+    twice the speed, accepting that the judge surfaces less evidence; this step
+    is recall-oriented, so a miss drops a paragraph from the final answer for
+    good. Set ``LIBRARIAN_ANTIGRAVITY_MODEL=gemini-3.7-flash-high`` when a
+    question deserves the fuller sweep, or to an empty value to restore the
+    account default. AGY latency also carries heavy provider variance (an
+    identical batch ran 7.5 s once and 67.4 s on a rerun), so treat these times
+    as ranks, not guarantees. ``LIBRARIAN_ANTIGRAVITY_EFFORT`` (low, medium,
+    high) remains available for slugs that carry no tier suffix.
+    """
+    command = [
+        executable,
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--json-schema",
+        json.dumps(_response_schema(output_key)),
+    ]
+    model = os.environ.get("LIBRARIAN_ANTIGRAVITY_MODEL", "gemini-3.7-flash-low").strip()
+    if model:
+        command += ["--model", model]
+    effort = os.environ.get("LIBRARIAN_ANTIGRAVITY_EFFORT", "").strip()
+    if effort:
+        command += ["--effort", effort]
+    return command
+
+
 def _codex_command(
     executable: str,
     prompt_path: Path,
@@ -249,11 +293,9 @@ def run_direct_session(
                 "event": "user",
                 "message": {"content": prompt_path.read_text(encoding="utf-8")},
             }) + "\n", encoding="utf-8")
-            completed = _run_command([
-                executable, "--input-format", "stream-json",
-                "--output-format", "stream-json",
-                "--json-schema", json.dumps(_response_schema(output_key)),
-            ], input_path)
+            completed = _run_command(
+                _antigravity_command(executable, output_key), input_path
+            )
         raw_response = completed.stdout
     elif provider == "claude":
         completed = _run_command(_claude_command(executable), prompt_path)
