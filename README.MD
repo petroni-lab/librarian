@@ -34,11 +34,7 @@
 [![Antigravity](https://img.shields.io/badge/Antigravity-install-4285F4?style=for-the-badge&logo=google&logoColor=white)](#a-install-as-an-agent-skill-plugin)
 [![opencode](https://img.shields.io/badge/opencode-install-1A1A1A?style=for-the-badge&logo=opencode&logoColor=white)](#a-install-as-an-agent-skill-plugin)
 
-```console
-/plugin marketplace add petroni-lab/librarian   &&   /plugin install librarian@librarian
-```
-
-<sub>Two commands in Claude Code. No API key — the skill uses your agent's own model access.</sub>
+<sub>Click your agent above for its install command. No API key — the skill uses your agent's own model access.</sub>
 
 <br>
 
