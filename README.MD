@@ -80,9 +80,18 @@ codex plugin add librarian@librarian
 **Antigravity and opencode** have no marketplace command — they discover skills from
 a directory, so installing means putting the skill where they scan. One clone and one
 symlink covers both:
+
+macOS/Linux:
 ```bash
 git clone https://github.com/petroni-lab/librarian.git
 mkdir -p ~/.agents/skills && ln -s "$PWD/librarian/skills/librarian" ~/.agents/skills/librarian
+```
+
+Windows (PowerShell, run as Administrator or with [Developer Mode](https://learn.microsoft.com/windows/apps/get-started/enable-your-device-for-development) on — both let `New-Item -ItemType SymbolicLink` create a symlink without elevation):
+```powershell
+git clone https://github.com/petroni-lab/librarian.git
+New-Item -ItemType Directory -Force "$HOME\.agents\skills" | Out-Null
+New-Item -ItemType SymbolicLink -Path "$HOME\.agents\skills\librarian" -Target "$PWD\librarian\skills\librarian"
 ```
 
 | Agent | Scans | Note |
