@@ -1,6 +1,6 @@
 {
   "name": "librarian",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Retrieve ranked Europe PMC evidence passages for biomedical research questions.",
   "author": {
     "name": "Petroni Lab, EMBL",

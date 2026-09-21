@@ -4,7 +4,7 @@ description: Retrieve Europe PMC evidence for a biomedical research question. Us
 license: MIT
 compatibility: Requires Python 3.10+, uv, and network access to Europe PMC. Runs in any Agent Skills-compatible harness, but the two LLM steps shell out to a child session, so the `claude`, `codex`, or Antigravity `agy` CLI must be installed and authenticated on PATH.
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
 ---
 
 # Librarian
