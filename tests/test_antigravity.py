@@ -1,4 +1,4 @@
-"""Run with: uv run python tests/test_antigravity.py."""
+"""Direct-session smoke checks. Run with: uv run python tests/test_antigravity.py."""
 import json
 import subprocess
 import sys
@@ -8,6 +8,23 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'skills/librarian/scripts'))
 import _direct_session as sessions
+
+with patch.dict('os.environ', {}, clear=True):
+    command = sessions._codex_command(
+        '/bin/codex', Path('/tmp/prompt.md'), Path('/tmp/schema.json'), Path('/tmp/output.json')
+    )
+    assert command[command.index('-m') + 1] == 'gpt-5.6-luna'
+    assert command[command.index('-c') + 1] == 'model_reasoning_effort="low"'
+
+with patch.dict('os.environ', {
+    'LIBRARIAN_CODEX_MODEL': '',
+    'LIBRARIAN_CODEX_EFFORT': '',
+}, clear=True):
+    command = sessions._codex_command(
+        '/bin/codex', Path('/tmp/prompt.md'), Path('/tmp/schema.json'), Path('/tmp/output.json')
+    )
+    assert '-m' not in command
+    assert '-c' not in command
 
 with tempfile.TemporaryDirectory() as directory:
     prompt = Path(directory) / 'prompt.md'
@@ -51,4 +68,4 @@ with tempfile.TemporaryDirectory() as directory:
         else:
             raise AssertionError('Missing CLI accepted')
 
-print('Antigravity prompt transport, response validation, and missing CLI checks passed.')
+print('Codex defaults and Antigravity session checks passed.')
