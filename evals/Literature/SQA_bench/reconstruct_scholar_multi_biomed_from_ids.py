@@ -6,9 +6,12 @@ full Scholar-Multi gold-reference file (data/scholarqa_multi/human_answers.json,
 the ScholarQABench Multi domain gold-reference file) down to just those ids
 and writes them out in the same shape as scholar_multi_biomed_eval.json.
 
-Requires https://github.com/AkariAsai/ScholarQABench/blob/main/data/scholarqa_multi/human_answers.json to already be present locally (obtained from the
-original ScholarQABench release) -- the id list alone does not carry its
-question/context/answer content.
+Requires human_answers.json to already be present locally -- the id list alone
+does not carry its question/context/answer content. ``../setup.sh --bench sqa``
+puts it there, out of the ScholarQABench clone; upstream it is
+
+    https://github.com/AkariAsai/ScholarQABench
+    data/scholarqa_multi/human_answers.json
 """
 
 from __future__ import annotations
@@ -36,7 +39,9 @@ def main() -> None:
 
     missing = ids - {record["id"] for record in matched}
     if missing:
-        print(f"warning: {len(missing)} id(s) not found in {args.source}: {sorted(missing)}")
+        print(
+            f"warning: {len(missing)} id(s) not found in {args.source}: {sorted(missing)}"
+        )
 
     args.output.write_text(json.dumps(matched, ensure_ascii=True, indent=2) + "\n")
     print(f"wrote {len(matched)} records to {args.output}")
