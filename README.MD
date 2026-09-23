@@ -50,24 +50,6 @@ The easiest way to use Librarian is as a **skill inside your AI assistant** — 
 coding, no API key: it uses your assistant's own model access. Pick your app below.
 
 <details open>
-<summary><b>Claude (desktop app)</b> — no terminal needed</summary>
-
-<br>
-
-**Settings → Plugins → Add → Add marketplace**, type `petroni-lab/librarian`, then
-install **EMBL AI Librarian**. Type `/librarian` followed by your question in a new chat.
-
-<img src="assets/install-claude-code.gif" alt="Installing Librarian from the Claude desktop app: Settings, Plugins, Add marketplace, petroni-lab/librarian, install" width="90%">
-
-Prefer the Claude Code CLI?
-```
-/plugin marketplace add petroni-lab/librarian
-/plugin install librarian@librarian
-```
-
-</details>
-
-<details>
 <summary><b>Codex / ChatGPT (desktop app)</b> — no terminal needed</summary>
 
 <br>
@@ -85,6 +67,25 @@ codex plugin add librarian@librarian
 ```
 
 </details>
+
+<details>
+<summary><b>Claude (desktop app)</b> — no terminal needed</summary>
+
+<br>
+
+**Settings → Plugins → Add → Add marketplace**, type `petroni-lab/librarian`, then
+install **EMBL AI Librarian**. Type `/librarian` followed by your question in a new chat.
+
+<img src="assets/install-claude-code.gif" alt="Installing Librarian from the Claude desktop app: Settings, Plugins, Add marketplace, petroni-lab/librarian, install" width="90%">
+
+Prefer the Claude Code CLI?
+```
+/plugin marketplace add petroni-lab/librarian
+/plugin install librarian@librarian
+```
+
+</details>
+
 
 <details>
 <summary><b>Antigravity / opencode</b></summary>
