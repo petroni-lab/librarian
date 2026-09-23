@@ -2,7 +2,7 @@
 name: librarian
 description: Retrieve Europe PMC evidence for a biomedical research question. Use when the user needs papers, citations, or literature-backed scientific evidence.
 license: MIT
-compatibility: Requires Python 3.10+, uv, and network access to Europe PMC. Runs in any Agent Skills-compatible harness, but the two LLM steps shell out to a child session, so the `claude`, `codex`, or Antigravity `agy` CLI must be installed and authenticated on PATH.
+compatibility: Requires network access to Europe PMC; installs uv on first run if missing. Runs in any Agent Skills-compatible harness, but the two LLM steps shell out to a child session, so the `claude`, `codex`, or Antigravity `agy` CLI must be installed and signed in once (the skill installs it if missing).
 metadata:
   version: "0.3.0"
 ---
@@ -53,6 +53,34 @@ read `01_query_prompt.md`, `02_paragraphs.json`, files under `03_judge/`, or
 
 Use the direct CLI launcher rather than native subagent tools in any harness;
 this keeps prompt and result file handling in the local scripts.
+
+## First run: install what is missing
+
+The user may have installed this skill from a desktop app and never opened a
+terminal, so set up the two prerequisites yourself instead of asking them to.
+Check once per session, before step 1:
+
+```bash
+command -v uv || ls ~/.local/bin/uv
+```
+
+If `uv` is missing, install it with the official installer through the host's
+normal approval flow, then continue. `run.sh` finds it in `~/.local/bin`
+without a new shell, and installs the Python dependencies itself on first call.
+
+- macOS/Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- Windows: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+
+The provider CLI is found on PATH, in `~/.local/bin`, or — for Codex — inside
+the ChatGPT/Codex desktop app, so it is usually already there. Only if step 1
+reports `CLI (...) is not installed or not on PATH`, install it and retry once:
+
+- claude: `curl -fsSL https://claude.ai/install.sh | bash`
+- codex: `npm install -g @openai/codex` (or `brew install codex`)
+
+A freshly installed CLI still needs a one-time sign-in that you cannot do for
+the user. If a step then fails on authentication, tell them to open a terminal,
+run `claude` (or `codex`) once, sign in, and ask again.
 
 ## Setup
 

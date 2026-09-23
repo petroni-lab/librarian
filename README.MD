@@ -119,11 +119,12 @@ Then ask a biomedical question — the skill activates on its own:
 
 > *Find me evidence on whether metformin extends lifespan in mammals.*
 
-**Requirements:** [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-and an authenticated `claude`, `codex`, or `agy` CLI on `PATH`. Python dependencies
-install themselves on first use via `skills/librarian/scripts/run.sh` (set
-`LIBRARIAN_PYTHON` to use your own interpreter instead). Copying only the
-`skills/librarian/` folder will not work — the skill needs the whole repository.
+**First run:** the skill sets itself up — the agent installs [uv](https://docs.astral.sh/uv/)
+if it is missing (you approve once), and uv installs the Python dependencies. The
+Codex app already ships the `codex` CLI the skill uses. If the `claude` or `agy`
+CLI is not installed, the agent installs it; you then sign in once by running it in
+a terminal. Copying only the `skills/librarian/` folder will not work — the skill
+needs the whole repository.
 
 <details>
 <summary><b>Child model and effort controls</b></summary>

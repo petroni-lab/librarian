@@ -76,7 +76,8 @@ with tempfile.TemporaryDirectory() as directory:
         else:
             raise AssertionError(f'Accepted invalid stream: {raw}')
 
-    with patch.object(sessions.shutil, 'which', return_value=None):
+    with patch.object(sessions.shutil, 'which', return_value=None), \
+            patch.dict(sessions._FALLBACK_PATHS, {'agy': []}):
         try:
             sessions.run_direct_session('antigravity', prompt, output, 'queries')
         except SystemExit as error:
@@ -85,3 +86,11 @@ with tempfile.TemporaryDirectory() as directory:
             raise AssertionError('Missing CLI accepted')
 
 print('Codex defaults and Antigravity session checks passed.')
+
+with tempfile.TemporaryDirectory() as home:
+    fake = Path(home) / 'codex'
+    fake.write_text('#!/bin/sh\n')
+    fake.chmod(0o755)
+    with patch.dict(sessions._FALLBACK_PATHS, {'codex': [str(fake)]}), \
+            patch.object(sessions.shutil, 'which', return_value=None):
+        assert sessions._require_cli('codex') == str(fake)
