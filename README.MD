@@ -29,12 +29,12 @@
 
 <h4>Install as an agent skill</h4>
 
-[![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?style=for-the-badge&logo=claude&logoColor=white)](#a-install-as-an-agent-skill-plugin)
-[![Codex](https://img.shields.io/badge/Codex-install-412991?style=for-the-badge)](#a-install-as-an-agent-skill-plugin)
-[![Antigravity](https://img.shields.io/badge/Antigravity-install-4285F4?style=for-the-badge&logo=google&logoColor=white)](#a-install-as-an-agent-skill-plugin)
-[![opencode](https://img.shields.io/badge/opencode-install-1A1A1A?style=for-the-badge&logo=opencode&logoColor=white)](#a-install-as-an-agent-skill-plugin)
+[![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?style=for-the-badge&logo=claude&logoColor=white)](#️-installation)
+[![Codex](https://img.shields.io/badge/Codex-install-412991?style=for-the-badge)](#️-installation)
+[![Antigravity](https://img.shields.io/badge/Antigravity-install-4285F4?style=for-the-badge&logo=google&logoColor=white)](#️-installation)
+[![opencode](https://img.shields.io/badge/opencode-install-1A1A1A?style=for-the-badge&logo=opencode&logoColor=white)](#️-installation)
 
-<sub>Click your agent above for its install command. No API key — the skill uses your agent's own model access.</sub>
+<sub>Click your agent for a one-minute, no-terminal install. No API key needed.</sub>
 
 <br>
 
@@ -46,40 +46,54 @@
 
 ## 🛠️ Installation
 
-Librarian has three entry points. Pick the one that matches how you want to use it —
-they share the same retrieval pipeline.
+The easiest way to use Librarian is as a **skill inside your AI assistant** — no
+coding, no API key: it uses your assistant's own model access. Pick your app below.
 
-| | What you get | Requires | LLM endpoint? |
-|---|---|---|---|
-| **[Agent skill](#a-install-as-an-agent-skill-plugin)** | literature evidence inside your coding agent | `uv`, plus an authenticated `claude`, `codex`, or `agy` CLI | **No** — borrows your CLI's auth |
-| **[Python class](#b-install-as-a-python-library)** | `LibrarianAgent` in your own code | `uv` | Yes |
-| **[HTTP API](#serving-it-over-http)** | a JSON/streaming service | `uv` | Yes |
+<details open>
+<summary><b>Codex / ChatGPT (desktop app)</b> — no terminal needed</summary>
 
-All three need **Python 3.10+** and [uv](https://docs.astral.sh/uv/):
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+<br>
 
-### A. Install as an agent skill (plugin)
+**Settings → Plugins → Add → Add plugin marketplace**, source `petroni-lab/librarian`,
+then search **librarian** in Plugins and click **+**. Type `/librarian` followed by
+your question in a new chat.
 
-This repository is its own plugin marketplace, so installation is two commands and
-no file copying.
+<img src="assets/install-codex.gif" alt="Installing Librarian from the Codex desktop app: Settings, Plugins, Add plugin marketplace, petroni-lab/librarian, then add librarian" width="90%">
 
-**Claude Code:**
-```
-/plugin marketplace add petroni-lab/librarian
-/plugin install librarian@librarian
-```
-
-**Codex:**
+Prefer the Codex CLI?
 ```bash
 codex plugin marketplace add petroni-lab/librarian
 codex plugin add librarian@librarian
 ```
 
-**Antigravity and opencode** have no marketplace command — they discover skills from
-a directory, so installing means putting the skill where they scan. One clone and one
-symlink covers both:
+</details>
+
+<details>
+<summary><b>Claude (desktop app)</b> — no terminal needed</summary>
+
+<br>
+
+**Settings → Plugins → Add → Add marketplace**, type `petroni-lab/librarian`, then
+install **EMBL AI Librarian**. Type `/librarian` followed by your question in a new chat.
+
+<img src="assets/install-claude-code.gif" alt="Installing Librarian from the Claude desktop app: Settings, Plugins, Add marketplace, petroni-lab/librarian, install" width="90%">
+
+Prefer the Claude Code CLI?
+```
+/plugin marketplace add petroni-lab/librarian
+/plugin install librarian@librarian
+```
+
+</details>
+
+
+<details>
+<summary><b>Antigravity / opencode</b></summary>
+
+<br>
+
+These have no marketplace — they discover skills from a directory, so one clone and
+one symlink covers both. Keep the clone: the skill runs the Python package inside it.
 
 macOS/Linux:
 ```bash
@@ -87,52 +101,38 @@ git clone https://github.com/petroni-lab/librarian.git && cd librarian
 mkdir -p ~/.agents/skills && ln -s "$PWD/skills/librarian" ~/.agents/skills/librarian
 ```
 
-Windows (PowerShell, run as Administrator or with [Developer Mode](https://learn.microsoft.com/windows/apps/get-started/enable-your-device-for-development) on — both let `New-Item -ItemType SymbolicLink` create a symlink without elevation):
+Windows (PowerShell, as Administrator or with [Developer Mode](https://learn.microsoft.com/windows/apps/get-started/enable-your-device-for-development) on):
 ```powershell
 git clone https://github.com/petroni-lab/librarian.git; cd librarian
 New-Item -ItemType Directory -Force "$HOME\.agents\skills" | Out-Null
 New-Item -ItemType SymbolicLink -Path "$HOME\.agents\skills\librarian" -Target "$PWD\skills\librarian"
 ```
 
-| Agent | Scans | Note |
-|---|---|---|
-| Antigravity | `.agents/skills/` (workspace), `~/.agents/skills/` | defaults to `.agents/`; older builds also read `.agent/` |
-| opencode | `~/.agents/skills/`, `~/.claude/skills/`, `~/.config/opencode/skills/` | any of the three works |
+Antigravity also scans the workspace `.agents/skills/` (older builds: `.agent/`);
+opencode also reads `~/.claude/skills/` and `~/.config/opencode/skills/`. Inside a
+clone of this repo no setup is needed — `.agents/skills/librarian` is already there.
+Authenticate the `agy` CLI once interactively before first use.
 
-Keep the clone — the skill runs the Python package inside it (see the note below).
+</details>
 
-Working *inside* a clone of this repo needs no setup at all: `.agents/skills/librarian`
-is a symlink to `skills/librarian`, so workspace discovery finds it as-is.
-
-Then start a new session and ask a biomedical question — the skill activates on its
-own:
+Then ask a biomedical question — the skill activates on its own:
 
 > *Find me evidence on whether metformin extends lifespan in mammals.*
 
-Two things to know:
+**Requirements:** [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
+and an authenticated `claude`, `codex`, or `agy` CLI on `PATH`. Python dependencies
+install themselves on first use via `skills/librarian/scripts/run.sh` (set
+`LIBRARIAN_PYTHON` to use your own interpreter instead). Copying only the
+`skills/librarian/` folder will not work — the skill needs the whole repository.
 
-- **No API key or `.env` is needed for this path.** The two LLM stages (query
-  planning and relevance judging) run as one-shot child sessions of the `claude`,
-  `codex`, or Antigravity `agy` CLI, using its existing authentication. That CLI must be installed and
-  authenticated on `PATH`, whichever harness you drive the skill from.
-  Inside Antigravity, the skill selects `--provider antigravity` for both stages;
-  authenticate the official `agy` CLI once interactively before running it.
-- **The skill needs the whole repository, not just `skills/librarian/`.** The step
-  scripts are a thin driver: the retrieval engine (Europe PMC search, chunking, BM25,
-  evidence assembly) lives in the `librarian/` package alongside them. A marketplace
-  install clones the whole repo into the plugin cache, so this is automatic — but
-  copying the skill folder on its own will not work.
-- **Python dependencies install themselves on first use.** Installing a plugin does
-  *not* install Python packages, so the skill's steps run through
-  `skills/librarian/scripts/run.sh`, which provisions the environment with `uv` the
-  first time it is called. `uv` itself must be present; set `LIBRARIAN_PYTHON` to an
-  interpreter that already has the dependencies if you would rather not use it.
+<details>
+<summary><b>Child model and effort controls</b></summary>
 
-#### Child model and effort controls
+<br>
 
-The skill uses the authenticated CLI's subscription or plan, not the `LLM_*`
-settings used by `main.py`. Its short-lived query-planner and relevance-judge
-sessions default to:
+The skill's two LLM stages (query planning, relevance judging) run as short-lived
+child sessions of the authenticated CLI, not through the `LLM_*` settings used by
+`main.py`. Defaults:
 
 | Provider | Child model | Effort | Overrides |
 |---|---|---|---|
@@ -140,117 +140,72 @@ sessions default to:
 | Codex | `gpt-5.6-luna` | `low` | `LIBRARIAN_CODEX_MODEL`, `LIBRARIAN_CODEX_EFFORT` |
 | Antigravity | `gemini-3.7-flash-low` | tier is in the model slug | `LIBRARIAN_ANTIGRAVITY_MODEL`, `LIBRARIAN_ANTIGRAVITY_EFFORT` |
 
-Set overrides before starting the parent agent so its child processes inherit
-them. For example:
+Export overrides before starting the parent agent so its children inherit them; an
+empty value restores the CLI's default. Low effort is intentional: both stages return
+one bounded JSON object from material already in their prompts.
 
 ```bash
-export LIBRARIAN_CODEX_MODEL=gpt-5.6-terra
-export LIBRARIAN_CODEX_EFFORT=medium
+export LIBRARIAN_CODEX_MODEL=gpt-5.6-terra LIBRARIAN_CODEX_EFFORT=medium
 codex
-
-# Or raise only Claude's effort; its configured model remains unchanged.
-export LIBRARIAN_CLAUDE_EFFORT=medium
-claude
 ```
 
-Set any override to an empty value to restore that CLI's default for the child
-session. The low-effort defaults are intentional: both stages return one bounded
-JSON object from material already supplied in their prompts.
+</details>
 
-### B. Install as a Python library
+---
+
+## 🐍 Python, CLI & HTTP
+
+For developers: the same pipeline as a library, a command-line tool, and a web
+service. These need an OpenAI-compatible LLM endpoint (self-hosted vLLM or a remote
+provider).
 
 ```bash
-git clone https://github.com/petroni-lab/librarian.git
-cd librarian
+git clone https://github.com/petroni-lab/librarian.git && cd librarian
 uv sync
+cp .env.example .env   # set LLM_BASE_URL, LLM_MODEL, LLM_API_KEY (optional: LLM_REASONING_EFFORT)
 ```
 
-`uv sync` creates the virtual environment (fetching a compatible Python if needed)
-and installs every dependency. Then, with an endpoint configured as in
-[Quickstart](#️-quickstart):
+**CLI** — retrieves evidence and synthesizes a cited answer (`--retrieval-only` prints
+the ranked passages and raw JSON instead). `.env` is loaded automatically.
+
+```bash
+uv run main.py "does metformin extend lifespan in mammals?"
+```
+
+**Python:**
 
 ```python
 from librarian.agent import LibrarianAgent
 from librarian.config import load_runtime_config
 
 agent = LibrarianAgent(runtime_config=load_runtime_config())
-evidence = agent.run("does metformin extend lifespan in mammals?")
-
-for paper in evidence:
+for paper in agent.run("does metformin extend lifespan in mammals?"):
     print(paper["title"], paper["year"], paper["pmid"])
     for snippet in paper["evidence_snippets"]:
         print("  ", snippet)
 ```
 
 `run()` returns one record per paper the relevance judge kept — no fixed top-k. It
-also takes `on_progress=callable` for live stage updates and the constructor takes
+takes `on_progress=callable` for live stage updates, and the constructor takes
 `tracer=` for span tracing (see [`tracing_port.py`](librarian/tracing_port.py)).
 
-## ▶️ Quickstart
-
-> Applies to the library and HTTP entry points. The [agent skill](#a-install-as-an-agent-skill-plugin)
-> needs none of this — it uses your CLI's own model access.
-
-The agent needs an OpenAI-compatible LLM endpoint (a self-hosted vLLM server or a remote
-provider). Configure it in a `.env` file — copy the template and edit:
-
-```bash
-cp .env.example .env
-# then edit .env:
-#   LLM_BASE_URL=http://localhost:8000/v1
-#   LLM_MODEL=your-model-name
-#   LLM_API_KEY=EMPTY   # or your provider key
-#   LLM_REASONING_EFFORT=low   # optional, reasoning models only
-
-uv run main.py "does metformin extend lifespan in mammals?"
-```
-
-That retrieves the evidence and synthesizes a cited answer over it. To stop after
-retrieval and print the ranked passages plus the raw JSON instead:
-
-```bash
-uv run main.py "does metformin extend lifespan in mammals?" --retrieval-only
-```
-
-`main.py` loads `.env` automatically. You can also just export the same variables
-in your shell.
-
-> **Reproducing the paper's numbers.** All reported results use **GLM-5**
-> (`glm-5-fp8`), self-hosted on an NVIDIA DGX B200 and served through
-> [vLLM](https://github.com/vllm-project/vllm), for every LLM stage: subquery planning,
-> relevance filtering, and synthesis. Librarian is model-agnostic and runs with any
-> OpenAI-compatible endpoint, but smaller or weaker models will produce noticeably
-> different evidence quality — the planner in particular has to emit valid Europe PMC
-> fielded syntax. See [⚙️ Configuration](#️-configuration) for the exact retrieval
-> settings used in all experiments.
-
-On a terminal you'll see a live spinner reporting the current stage (`Searching Europe
-PMC`, `Found 210 candidate paragraphs`, `Judging paragraph relevance · 6/8 batches`, ...)
-so you can tell how far along a run is. When the output is piped/redirected the spinner
-is skipped and the agent prints plain `[Librarian]` log lines instead.
-`LibrarianAgent.run()` accepts an `on_progress=callable` hook if you want to drive your
-own UI, and a `tracer=` hook (see [`tracing_port.py`](librarian/tracing_port.py)) if you
-want to wire span tracing into your own backend.
-
-### Serving it over HTTP
-
-`orchestrator.py` is a minimal FastAPI wrapper around the same agent:
+**HTTP** — [`orchestrator.py`](orchestrator.py) is a minimal FastAPI wrapper:
 
 ```bash
 uv run uvicorn orchestrator:app --port 8080
-
-# blocking JSON
 curl localhost:8080/run-agent -H 'content-type: application/json' \
-    -d '{"query": "does metformin extend lifespan in mammals?"}'
-
-# same run, streamed: one `progress` event per pipeline stage, then `result`
-curl -N localhost:8080/run-agent/stream -H 'content-type: application/json' \
     -d '{"query": "does metformin extend lifespan in mammals?"}'
 ```
 
-Both endpoints take `{"query": ..., "full_text_enrichment": true}` and return the query,
-the planner's sub-queries, and the ranked evidence passages. `GET /health` is the
-liveness probe; interactive docs are at `/docs`.
+`/run-agent/stream` streams one `progress` event per stage, then `result`. Both take
+`{"query": ..., "full_text_enrichment": true}`. `GET /health` is the liveness probe;
+interactive docs are at `/docs`.
+
+> **Reproducing the paper's numbers.** All reported results use **GLM-5**
+> (`glm-5-fp8`) served through [vLLM](https://github.com/vllm-project/vllm) for every
+> LLM stage, with the shipped [`config.toml`](librarian/config.toml). Librarian runs
+> with any OpenAI-compatible endpoint, but weaker models give noticeably different
+> evidence quality — the planner has to emit valid Europe PMC fielded syntax.
 
 ---
 
@@ -263,8 +218,10 @@ liveness probe; interactive docs are at `/docs`.
 * **[2026.09.11]** Librarian is now installable as an **agent skill** — two commands
   in Claude Code or Codex, and a directory symlink for Antigravity and opencode.
   See [🛠️ Installation](#️-installation). The same run is also served over HTTP by
-  [`orchestrator.py`](orchestrator.py), with blocking and streaming endpoints —
-  see [Serving it over HTTP](#serving-it-over-http).
+  [`orchestrator.py`](orchestrator.py) — see [🐍 Python, CLI & HTTP](#-python-cli--http).
+<details>
+<summary>Older news</summary>
+
 * **[2026.09.xx]** *(upcoming)* Evaluation harness: the benchmark suites and scripts
   behind the reported numbers.
 * **[2026.09.03]** Retrieval pipeline rework: paragraph-level pooling across
@@ -274,6 +231,8 @@ liveness probe; interactive docs are at `/docs`.
   See [⚙️ Configuration](#️-configuration) — several knobs changed with it.
 * **[2026.07.31]** Preprint available on arXiv.
 * **[2026.07.30]** Initial release of the EMBL AI Librarian agent and retrieval pipeline.
+
+</details>
 
 ---
 
@@ -309,6 +268,8 @@ suites we evaluate:
 | Open-form LitQA2 | Accuracy | 70.3 (GPT-5.4 + web search) | **78.9** |
 | LAB-Bench | Macro accuracy (GPT-5.4) | 50.5 | **54.6** (+11.3 on SeqQA) |
 
+<div align="center"><img src="assets/benchmark_summary.png" alt="Benchmark results: Librarian vs. baselines on ScholarQA-Bench, ProClaim-eval, open-form LitQA2, and LAB-Bench" width="80%"></div>
+
 > **Note:** the numbers above are from the pipeline described in the paper (paper-level
 > pooling, two concurrent relevance judges, capped evidence). The retrieval pipeline has
 > since been reworked (see [📰 News](#-news)) and these numbers are pending
@@ -320,16 +281,6 @@ that gap comes from our synthesis agent's larger backbone (GLM-5, ~700B, vs. ~70
 not from retrieval. The controlled comparison — same agent, same prompt, swapping a BM25
 index over the OpenScholar Data Store for Librarian — isolates the knowledge layer and
 gives **+6.8 Bio / +10.9 Neu**. See the paper for the full evaluation and ablations.
-
----
-
-## 🚀 Main Results
-
-<!--
-  TODO: drop in a real benchmark chart, e.g. assets/results.png —
-  bar chart of Citation F1 / LitQA2 accuracy vs. baselines.
--->
-<div align="center"><img src="assets/benchmark_summary.png" alt="Benchmark results: Librarian vs. baselines on ScholarQA-Bench, ProClaim-eval, open-form LitQA2, and LAB-Bench" width="80%"></div>
 
 ---
 
@@ -421,6 +372,9 @@ The result is a list of passage dicts:
 
 ## ⚙️ Configuration
 
+<details>
+<summary>Show</summary>
+
 Retrieval knobs live in [`librarian/config.toml`](librarian/config.toml), parsed into
 the frozen `LibrarianRuntimeConfig` dataclass in `librarian/config.py`. The shipped
 values are identical to the settings used in every experiment reported in the paper.
@@ -473,9 +427,14 @@ to retrieval tuning:
 | `LITERATURE_BM25_STEMMING` | on | Snowball stemming for BM25 (`0` to disable) |
 | `LLM_REASONING_EFFORT` | unset | `reasoning_effort` sent on every chat completion (e.g. `low`, `medium`, `high`); omit for models that don't support it |
 
+</details>
+
 ---
 
 ## 📁 Layout
+
+<details>
+<summary>Show</summary>
 
 ```
 pyproject.toml                 project metadata + dependencies (managed by uv)
@@ -502,6 +461,8 @@ librarian/
   query_validation/            deterministic Europe PMC query validation
 ```
 
+</details>
+
 ---
 
 ## ⚠️ Scope & Limitations
@@ -517,6 +478,7 @@ Worth knowing before you plug Librarian into a pipeline:
 - **Text only.** Figures and supplementary material are ignored, and tables are handled
   as text, so evidence living in those places is currently inaccessible. This is why our
   LAB-Bench evaluation excludes FigQA, TableQA, and SuppQA.
+
 ---
 
 ## 🤝 Contributing
