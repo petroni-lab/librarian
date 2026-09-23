@@ -9,6 +9,7 @@
   "plugins": [
     {
       "name": "librarian",
+      "displayName": "EMBL AI Librarian",
       "description": "Retrieve ranked Europe PMC evidence passages for biomedical research questions.",
       "source": "./",
       "category": "research"

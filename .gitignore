@@ -5,3 +5,7 @@ __pycache__/
 venv/
 *.egg-info/
 .env
+
+# raw screen recordings; README uses the GIFs
+assets/*.mov
+assets/*.mp4

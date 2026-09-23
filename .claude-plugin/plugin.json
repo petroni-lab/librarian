@@ -1,5 +1,6 @@
 {
   "name": "librarian",
+  "displayName": "EMBL AI Librarian",
   "version": "0.3.0",
   "description": "Retrieve ranked Europe PMC evidence passages for biomedical research questions.",
   "author": {
