@@ -32,13 +32,30 @@ def _response_schema(key: str) -> Dict[str, Any]:
     }
 
 
+# Where installers and desktop apps put each CLI when it is not on the host's
+# PATH: the official installers write to ~/.local/bin, and the ChatGPT/Codex
+# desktop apps ship a working codex binary that shares ~/.codex authentication.
+_FALLBACK_PATHS = {
+    "claude": ["~/.local/bin/claude"],
+    "codex": [
+        "/Applications/ChatGPT.app/Contents/Resources/codex",
+        "/Applications/Codex.app/Contents/Resources/codex",
+    ],
+    "agy": ["~/.local/bin/agy"],
+}
+
+
 def _require_cli(provider: str) -> str:
     """Return the installed CLI executable or stop with an actionable error."""
     cli = "agy" if provider == "antigravity" else provider
     executable = shutil.which(cli)
-    if executable is None:
-        raise SystemExit(f"{provider} CLI ({cli}) is not installed or not on PATH.")
-    return executable
+    if executable is not None:
+        return executable
+    for candidate in _FALLBACK_PATHS[cli]:
+        path = Path(candidate).expanduser()
+        if os.access(path, os.X_OK):
+            return str(path)
+    raise SystemExit(f"{provider} CLI ({cli}) is not installed or not on PATH.")
 
 
 def _validate_response(raw_response: str, key: str) -> Dict[str, List[str]]:

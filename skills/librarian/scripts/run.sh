@@ -17,6 +17,9 @@ shift
 if [ -n "${LIBRARIAN_PYTHON:-}" ]; then
     exec "$LIBRARIAN_PYTHON" "$HERE/$step.py" "$@"
 fi
+# The uv installer writes to ~/.local/bin, which a host that was already running
+# (a desktop app, an agent session) may not have on PATH yet.
+PATH="$PATH:$HOME/.local/bin:$HOME/.cargo/bin"
 command -v uv >/dev/null || {
     echo "run.sh: need uv (https://astral.sh/uv) or LIBRARIAN_PYTHON set to a Python with Librarian's dependencies." >&2
     exit 127
