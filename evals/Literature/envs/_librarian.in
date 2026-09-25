@@ -1,15 +1,12 @@
 # Shared base: what the librarian agent itself needs at run time.
 #
 # Every bench runs the agent in-process, so every bench's lock includes this.
-# It mirrors `[project].dependencies` in the root pyproject.toml, minus the two
-# server packages (fastapi, uvicorn) that only orchestrator.py needs — a bench
-# on the --via-api path talks to an orchestrator running in the repository's own
+# It mirrors `[project].dependencies` in the root pyproject.toml, minus fastapi
+# and uvicorn: a --via-api run talks to an orchestrator in the repository's own
 # .venv, not in the bench environment.
 #
-# The repository is not a package (`[tool.uv] package = false`), so the code
-# arrives via PYTHONPATH rather than an install; only its dependencies are here.
-# Keep this in step with pyproject.toml by hand — there is no check that would
-# catch a drift, and a missing one surfaces as an ImportError on first run.
+# Only dependencies are listed; the repository's own code arrives on PYTHONPATH.
+# Keep this in step with pyproject.toml by hand — nothing checks it.
 requests>=2.31
 bm25s>=0.2
 pysbd>=0.3

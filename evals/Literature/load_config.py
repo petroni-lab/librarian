@@ -2,19 +2,16 @@
 
 The runners are shell scripts that read plain environment variables
 (``LIBRARIAN_URL``, ``ANSWER_MODEL``, ...). This is the one place that maps the
-TOML onto those names, so the config file can be grouped and commented for a
-reader while the scripts keep their flat, greppable variables.
+TOML onto those names.
 
 Prints ``export`` lines for a shell to evaluate::
 
     eval "$(python evals/Literature/load_config.py)"
 
 A variable already set and non-empty in the environment is left alone, so a
-real environment variable always beats the file — that is what makes
+real environment variable always beats the file::
 
     LIBRARIAN_URL=http://myhost:8000/v1 ./evals/Literature/literature_eval.sh ...
-
-work without editing anything.
 
 ``LITERATURE_EVAL_CONFIG`` selects a different file, for a personal profile
 kept outside the repository.
@@ -37,9 +34,9 @@ except ModuleNotFoundError:  # 3.10, via mashumaro[toml]
 HERE = Path(__file__).resolve().parent
 DEFAULT_CONFIG = HERE / "literature_eval.toml"
 
-#: ``(toml path, env var, env var to inherit from when blank)``.
-#: The inherit column is why ``sqa.synthesis_model = ""`` means "same model as
-#: the librarian" rather than "empty".
+#: ``(toml path, env var, env var to inherit from when blank)``. A blank value
+#: with an inherit column takes that variable's value, so ``sqa.synthesis_model
+#: = ""`` resolves to the librarian's model rather than to an empty string.
 SPEC: list[tuple[str, str, str | None]] = [
     ("librarian.url", "LIBRARIAN_URL", None),
     ("librarian.model", "LIBRARIAN_MODEL", None),
@@ -70,10 +67,9 @@ SPEC: list[tuple[str, str, str | None]] = [
 def _expand(text: str, env: dict[str, str]) -> str:
     """Expand ``$VAR`` and a leading ``~`` against *env*.
 
-    TOML has no interpolation, so a path written as ``~/scratch/evals`` or
-    ``/scratch/$USER/out`` would otherwise reach the shell literally. Expanded
-    against the passed environment rather than ``os.environ`` so the result
-    depends only on the inputs.
+    TOML has no interpolation, so ``~/scratch/evals`` and ``/scratch/$USER/out``
+    would otherwise reach the shell literally. Expansion uses *env*, not
+    ``os.environ``.
     """
     text = Template(text).safe_substitute(env)
     if text.startswith("~"):
@@ -99,8 +95,7 @@ def resolve(config_path: Path, env: dict[str, str] | None = None) -> dict[str, s
     :param env: The environment to treat as already-set; defaults to the real one.
     :returns: ``(exports, inherited)`` -- the variables that need exporting, in
         dependency order, and the names of those whose value came from another
-        variable rather than the file. A flag that moves the parent has to move
-        those too, which the caller cannot work out on its own.
+        variable rather than from the file.
     :raises FileNotFoundError: if ``config_path`` does not exist.
     """
     env = dict(os.environ if env is None else env)
@@ -139,12 +134,12 @@ def main() -> int:
         return 1
     try:
         resolved, inherited = resolve(path)
-    except Exception as exc:  # a broken TOML should name itself, not traceback
+    except Exception as exc:  # report the file, not a traceback
         print(f"ERROR: could not read {path}: {exc}", file=sys.stderr)
         return 1
     for var, value in resolved.items():
         print(f"export {var}={shlex.quote(value)}")
-    # The caller re-derives these if a flag moves what they inherited from.
+    # Which variables were inherited; a flag that moves the source moves these.
     print(f"export LITERATURE_INHERITED={shlex.quote(' '.join(inherited))}")
     return 0
 

@@ -1,10 +1,9 @@
 """The LLM-client surface the benchmarks were written against.
 
-These benchmarks predate the librarian being split out into its own package, and
-were written against a much larger internal LLM client. ``librarian.llm_client``
-is the trimmed version that shipped: same name, same ``chat_completion``, but
-without the conveniences the internal one grew. Rather than rewrite nine call
-sites across four benchmarks, this is the one place the difference lives.
+The benchmarks were written against a larger internal LLM client.
+``librarian.llm_client`` is the version that shipped: same name, same
+``chat_completion``, without the conveniences the internal one had. This module
+holds the difference, in one place.
 
 Three things differ:
 
@@ -35,9 +34,9 @@ class EvalLLMClient(LLMClient):
     ) -> str:
         """Answer a single prompt under a system message.
 
-        The benchmarks use this wherever they expect JSON back; parsing is the
-        caller's job, as it always was — the name promises a shape the model is
-        asked for, not one this method enforces.
+        The benchmarks call this wherever they expect JSON back. Parsing is the
+        caller's job: the name describes what the model is asked for, not what
+        this method enforces.
 
         :param prompt: The user prompt.
         :param system_message: Optional system instruction.
@@ -55,7 +54,7 @@ def as_effort(thinking: bool | str | None) -> str | None:
     """Map the benchmarks' ``--thinking`` flag to a ``reasoning_effort`` value.
 
     The internal client took ``thinking=`` as either a bool or an effort string
-    and normalised it the same way; the benchmarks still pass the bool.
+    and normalised it the same way. The benchmarks still pass the bool.
 
     :param thinking: ``True``/``False``, an effort string, or ``None``.
     :returns: The effort string, or ``None`` to leave the client's own alone.
