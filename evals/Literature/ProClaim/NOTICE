@@ -1,0 +1,78 @@
+The librarian retrieval backend for ProClaim,
+
+    https://github.com/saezlab/ProClaim
+    Saez-Rodriguez lab. Licensed under the GNU General Public License v3.0.
+
+    "ProClaim: Sufficiency-Aware Evidence Programming for In-the-Wild
+     Scientific Claim Verification"
+
+LICENSING
+
+`backend/`, `direct_entry.py`, `proclaim_librarian.py` and `configs/` are
+**GPL-3.0**, not MIT. The repository's root LICENSE does not reach them. They
+are written against ProClaim's internals and distributed to be run with it, so
+they carry GPL-3.0 obligations whether or not they sit inside its source tree —
+moving them out of the clone changes where they live, not what licence they are
+under. The full licence text arrives with the clone, at
+`ProClaim_src/LICENSE.txt`.
+
+WHAT WE ADDED
+
+ProClaim retrieves with PubMed and Semantic Scholar. The paper's "ProClaim
+0.80" row retrieves with the librarian instead, and **that backend exists
+nowhere upstream** — the word "librarian" does not appear in any branch of the
+ProClaim repository. It is this repository's contribution.
+
+  - `backend/librarian_search.py`, `backend/librarian_query_generator.py` —
+    the backend itself: it runs an in-process `LibrarianAgent` and adds the
+    papers and evidence snippets it returns to ProClaim's `EvidenceState`.
+  - `backend/one_shot.py` — the single-pass verification path the librarian
+    backend runs: one librarian search, fact extraction, a bounded
+    sparse-evidence recovery loop, and a verdict. Also the librarian-adjusted
+    subprocess environment, which adds the `AGENT_LLM_*` variables and drops
+    the MLP classifier, since sufficiency is decided from extracted facts.
+  - `backend/config.py` — `LibrarianSettings`, ProClaim's `VerificationSettings`
+    plus `retrieval_backend` and the two librarian endpoint fields.
+  - `backend/prompts.py`, `backend/model_registry.py` — the librarian system
+    prompt, and the outer-agent model the verdict is emitted on.
+  - `configs/*.yaml` — the three run configs.
+  - `direct_entry.py` — the entry point that runs all of the above in place of
+    `proclaim.verification.evidence_programming_direct`.
+
+WHAT WE DID NOT MODIFY
+
+**Nothing.** `ProClaim_src/` is a pristine clone at
+
+    6316258ba31386657389fea5bb2db2c97362e06c
+
+and `../setup.sh --check` asserts it is byte-for-byte that commit. Upstream's
+own behaviour is not merely unchanged but unreachable from here: there is no
+`retrieval_backend` switch left at a safe default inside ProClaim, because
+ProClaim never learns the librarian exists.
+
+That is possible because the integration is almost purely additive. Measured
+against the version of this work that did patch the clone, it removed 13 lines
+of upstream logic and added 1,852. The 13 were a dispatch at the top of
+`verify_claim_direct()`; rather than change that dispatch, `direct_entry.py`
+does not call it. The additions became `backend/`.
+
+`backend/one_shot.py` borrows four helpers out of ProClaim's
+`evidence_programming_direct` — `init_jupytext_log`, `append_to_jupytext_log`,
+`generate_notebook` and `build_subprocess_env` — and otherwise stands beside it.
+Those imports are the seam: if upstream renames one, the run fails at import,
+loudly, rather than producing numbers from a pipeline that silently did
+something else.
+
+REPRODUCIBILITY
+
+The "ProClaim 0.80" row was measured against the project's pre-release tree,
+under its old package name `pkevolve`, before this public release existed. The
+integration above is ported onto the release. The authors describe the release
+as the cleaned-up version of that code, and nothing here depends on behaviour
+the port changed — but the row has not yet been re-measured on it.
+
+DATA
+
+The two claim sets are ProClaim's own and are not redistributed here: they
+arrive with the clone, at `ProClaim_src/datasets/{signor,connectomedb}.csv`,
+and the harness reads them from there.

@@ -1,0 +1,20 @@
+# See ../setup.sh for the format.
+#
+# Two environments, one per arm. `proclaim` runs the Verifier Agent, which never
+# imports ProClaim and installs anywhere. `proclaim-pipeline` is ProClaim's own
+# stack, resolved for Linux and CUDA, so it is optional: a laptop can set this
+# bench up and run arm 1 without it.
+#
+# The clone is a pinned, pristine input. Our librarian retrieval backend lives
+# in backend/ and is grafted on at run time by direct_entry.py — nothing is
+# written inside ProClaim_src, and ../setup.sh --check asserts that.
+bench=proclaim
+name=ProClaim
+url=https://github.com/saezlab/ProClaim.git
+commit=6316258ba31386657389fea5bb2db2c97362e06c
+clone=ProClaim_src
+post_fetch=post_fetch.sh
+envs=proclaim,proclaim-pipeline
+envs_optional=proclaim-pipeline
+run=run_proclaim.sh
+order=30
