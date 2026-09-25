@@ -127,7 +127,7 @@ export LIBRARIAN_MODEL="${LIBRARIAN_MODEL:-glm-5-fp8}"
 export ANSWER_MODEL="${ANSWER_MODEL:-gpt-5.4}"
 export ANSWER_URL="${ANSWER_URL:-https://api.openai.com/v1}"
 export LIBRARIAN_URL="${LIBRARIAN_URL:-}"
-export RESULTS_ROOT="${RESULTS_ROOT:-$SCRIPT_DIR/results_paper}"
+export RESULTS_ROOT="${RESULTS_ROOT:-$SCRIPT_DIR/results}"
 export DRY_RUN="${DRY_RUN:-false}"
 export ONLY="${ONLY:-}"
 
