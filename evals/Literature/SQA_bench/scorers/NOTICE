@@ -1,0 +1,55 @@
+These three scorers are modified versions of files from ScholarQABench,
+
+    https://github.com/AkariAsai/ScholarQABench
+
+Copyright (c) 2024 Akari Asai.
+Licensed under the MIT License; see LICENSE beside this file. The License's
+copyright and permission notice must travel with any copy of this code — which
+is why it sits here, next to the files it covers, rather than only at the root
+of this repository.
+
+WHAT IS HERE, AND WHY IT IS HERE AND NOT IN THE CLONE
+
+`../code/` is a pristine clone of ScholarQABench at
+
+    95e6fc52b0a8a0ce0a74956029991e3bb00c38b9
+
+and `../../setup.sh --check` asserts it stays that way. Nothing of ours is
+written inside it. These files are ours: derived from upstream's, changed
+substantially, and maintained here.
+
+Upstream never imports them — they are standalone scripts, invoked by path —
+so moving them out of the clone costs nothing and buys the guarantee that the
+benchmark code we score against is unmodified. `run_utils.py` stays beside them
+because `citation_correctness_eval.py` imports it as a flat module, the way it
+does upstream.
+
+MODIFICATIONS
+
+  - `citation_correctness_eval.py` — roughly twice its upstream length
+    (+935/-200). Added: a configurable AutoAIS input-token cap with an
+    out-of-memory fallback that retries at successively shorter limits, chunked
+    scoring with an optional model reload per chunk (`--autoais_chunk_size`,
+    `--autoais_reload_model_per_chunk`), and a per-question results dump. These
+    make the full 1451- and 1308-question sets scoreable on one GPU; they do not
+    change how a citation is judged.
+  - `prometheus_eval.py` (+719/-163) — points at a judge served over an
+    OpenAI-compatible endpoint (`--judge_model litellm_openai`,
+    `--judge_base_url`) instead of loading it in-process, and splits scoring
+    into the two passes `--judge_pass org_cov` and `--judge_pass relevance`.
+  - `run_utils.py` (+24/-10) — retry with exponential backoff on rate limits,
+    plus logging and formatting.
+
+Upstream's `requirements.txt` became `../../envs/sqa-scoring.in`, reduced to
+what these two scorers actually import and resolved for Linux; see the comments
+there.
+
+WHAT WE DID NOT CHANGE
+
+Everything else in the clone is upstream's, untouched, and asserted to be so.
+`rubrics/prometheus_rubrics_v8.json` is read straight out of it.
+
+Our internal tree also carries changes to the ScholarQA-CS scripts
+(`rubric_eval.py`, `scholarqacs_rubric.py`, `convert_answer_scholar_cs.py`,
+`parse_annotations.py`). They are deliberately not here: this harness never
+invokes them, and the CS split is not one of the paper's rows.
