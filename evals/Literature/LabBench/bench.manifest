@@ -1,6 +1,4 @@
-# See ../setup.sh for the format. LAB-Bench clones nothing: it streams its
-# dataset from the Hugging Face Hub at run time, so it has no url, commit or
-# clone — only an environment, from ../envs/labbench.lock.
+# See ../setup.sh for the format of .manifest files
 bench=labbench
 name=LAB-Bench
 run=run_labbench.sh

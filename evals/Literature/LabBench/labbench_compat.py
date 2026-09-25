@@ -10,20 +10,13 @@ task:
   - **DbQA** (520)        — retrieving information from biological databases
   - **SeqQA** (600)       — manipulating biological sequences
   - **ProtocolQA** (108)  — troubleshooting biological protocols
-  - **CloningScenarios** (33) — molecular cloning workflows (this task used to
-    live in its own ``CloningScenarios/`` folder, now merged here)
+  - **CloningScenarios** (33) — molecular cloning workflows
   - **TableQA** (244)     — reading data tables reported in the literature
 
-TableQA runs through the same retrieval flow as the others: the knowledge layer
-searches the literature and grounds the model in the retrieved passages — which
-now carry table text (rendered from full-text JATS), so a retrieved paper's
-tables are usable evidence. The dataset also ships each table as an image and
-its source DOI; we deliberately use neither — the benchmark is about *finding*
-the right table by retrieval, not being handed it. FigQA is still absent (its
-figures are images the text knowledge layer cannot ground); LitQA2 is absent by
-request.
+TableQA runs through the same retrieval flow as the others; the dataset's table
+image and source DOI are not read.
 
-All four registered tasks share the same row schema (``id, question, ideal,
+All five registered tasks share the same row schema (``id, question, ideal,
 distractors``); ProtocolQA additionally carries a separate ``protocol`` field,
 which upstream prepends to the question (``input.question = protocol +
 question``) — reproduced here in ``build_effective_question``.
@@ -51,8 +44,7 @@ REFUSE_CHOICE = "Insufficient information to answer the question"
 # chembench.constant.COT_PROMPT, used verbatim by labbench.zero_shot.
 COT_PROMPT = "Think step by step."
 
-# labbench.zero_shot.MCQ_INSTRUCT_TEMPLATE — reproduced verbatim so we query the
-# answering model with exactly the prompt the LAB-Bench paper used.
+# labbench.zero_shot.MCQ_INSTRUCT_TEMPLATE, reproduced verbatim.
 MCQ_INSTRUCT_TEMPLATE = """The following is a multiple choice question about biology.
 Please answer by responding with the letter of the correct answer.{cot}
 
@@ -84,12 +76,7 @@ class TaskSpec:
     has_protocol: bool = False
 
 
-# The LAB-Bench MCQ tasks this runner supports. FigQA is excluded (figure images
-# the text knowledge layer cannot ground); LitQA2 is excluded by request; SuppQA
-# is excluded (its answers live in specific papers' supplementary files, not the
-# open literature the knowledge layer searches). TableQA is included: retrieved
-# passages now carry table text, so it runs through the same retrieval flow (its
-# image and source-DOI fields are ignored).
+# The LAB-Bench MCQ tasks this runner supports.
 TASKS: dict[str, TaskSpec] = {
     "DbQA": TaskSpec(
         hf_config="DbQA",
@@ -107,16 +94,13 @@ TASKS: dict[str, TaskSpec] = {
         strip_query_sequences=False,
         has_protocol=True,
     ),
-    # CloningScenarios was merged into this unified runner from its old standalone
-    # folder; historical run outputs live in ``LabBench/results/cloning_*``.
     "CloningScenarios": TaskSpec(
         hf_config="CloningScenarios",
         description="Molecular cloning workflows",
         strip_query_sequences=True,
     ),
-    # Retrieval-only, like the rest: the question is the search query and the
-    # extra dataset fields (table image, source DOI) are ignored — the model must
-    # find the right table in the retrieved passages, not be handed it.
+    # Retrieval-only: the question is the search query, and the row's table
+    # image and source DOI are not read.
     "TableQA": TaskSpec(
         hf_config="TableQA",
         description="Reading data tables reported in the literature",
@@ -139,10 +123,9 @@ class LabBenchQuestion:
     distractors: list[str] = field(default_factory=list)
 
 
-# Runs of >=20 nucleotide letters: the long plasmid/oligo sequences in
-# CloningScenarios / SeqQA questions. Useless (and harmful) as a literature
-# search query. (Protein sequences are not stripped — they share the normal
-# uppercase alphabet, so a safe regex can't isolate them.)
+# Runs of >=20 nucleotide letters: the long plasmid/oligo sequences in the
+# CloningScenarios and SeqQA questions. Protein sequences are not matched, since
+# they share the ordinary uppercase alphabet.
 _SEQUENCE_RUN_RE = re.compile(r"[ACGTUN]{20,}", re.IGNORECASE)
 
 
@@ -164,11 +147,10 @@ def build_effective_question(row: dict[str, Any], spec: TaskSpec) -> str:
 def build_retrieval_query(question: str, strip_sequences: bool = True) -> str:
     """Derive the literature-search query from a question.
 
-    Sequence tasks embed long raw DNA/RNA runs that make poor Europe PMC
-    queries. When ``strip_sequences`` is set, replace those runs with a short
-    placeholder so the retrieval agent searches on the conceptual text (enzymes,
-    method, assay) instead. The answering prompt sent to the model keeps the
-    full sequence — only the search query is cleaned.
+    When ``strip_sequences`` is set, long raw DNA/RNA runs are replaced with a
+    short placeholder, so the retrieval agent searches on the conceptual text
+    (enzymes, method, assay). Only the query is cleaned; the answering prompt
+    keeps the full sequence.
     """
     if not strip_sequences:
         return question
@@ -190,8 +172,8 @@ def randomize_choices(
     """Deterministically shuffle [ideal, refuse, *distractors] into lettered choices.
 
     Mirrors ``labbench.utils.randomize_choices`` exactly, except the shuffle is
-    seeded so the option ordering is reproducible and identical between the
-    baseline and knowledge-layer runs (a fair comparison needs the same letters).
+    seeded, so the option ordering is reproducible and identical between the
+    baseline and knowledge-layer runs.
 
     Returns (lettered_choices, answer_letter, unsure_letter).
     """
@@ -213,10 +195,8 @@ def randomize_choices(
 _ANSWER_BLOCK_RE = re.compile(r"\[ANSWER\](.*?)\[/ANSWER\]", re.DOTALL | re.IGNORECASE)
 _LETTER_RE = re.compile(r"[A-Z]")
 
-# Fallback patterns for thinking models (e.g. GLM-5, DeepSeek-R1) that don't
-# reliably emit the [ANSWER]...[/ANSWER] tags. Tried in order; the first match
-# wins. This keeps LAB-Bench-identical behaviour for well-behaved models while
-# still extracting letters from models that use free-text or Chinese formats.
+# Fallback patterns for thinking models (e.g. GLM-5, DeepSeek-R1) that do not
+# reliably emit the [ANSWER]...[/ANSWER] tags. Tried in order; first match wins.
 _FALLBACK_ANSWER_RES = [
     # "the answer is (C)" / "Answer: C" / "correct answer is C"
     re.compile(
@@ -251,9 +231,8 @@ def parse_answer(text: str, n_choices: int) -> str | None:
         if match and match.group(0) in valid:
             return match.group(0)
 
-    # Fallback: scan the LAST 800 characters for common free-text answer formats.
-    # Limit to the tail so a misleading early mention doesn't override the final
-    # answer (reasoning traces often enumerate wrong options before the conclusion).
+    # Fallback: scan the last 800 characters for common free-text answer
+    # formats, so an earlier mention cannot override the final answer.
     tail = text[-800:]
     for pattern in _FALLBACK_ANSWER_RES:
         for m in pattern.finditer(tail):
@@ -382,8 +361,9 @@ def _read_raw_rows(
     except ImportError as exc:  # pragma: no cover - env dependent
         raise SystemExit(
             "The `datasets` package is required to load LAB-Bench from "
-            "HuggingFace. Install it (`pip install datasets`) or pass --data-file "
-            "with a local <task>-v1-public.jsonl."
+            "HuggingFace. Add it to evals/Literature/envs/labbench.in and re-run "
+            "setup.sh --relock labbench, or pass --data-file with a local "
+            "<task>-v1-public.jsonl."
         ) from exc
 
     dataset = datasets.load_dataset(hf_repo, hf_config)["train"]

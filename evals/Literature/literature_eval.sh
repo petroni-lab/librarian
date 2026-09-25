@@ -7,9 +7,9 @@
 # --bench takes a comma-separated list: --bench litqa2,labbench,proclaim runs
 # those three in order. `all` is the whole suite.
 #
-# Endpoint-first: you pass the base URL of an already-running OpenAI-compatible
-# endpoint serving the librarian model. Nothing here starts a model server for
-# you, and nothing here needs a scheduler — it all runs from a plain shell.
+# You pass the base URL of an already-running OpenAI-compatible endpoint serving
+# the librarian model. Nothing here starts a model server, and nothing here
+# needs a scheduler — it all runs from a plain shell.
 #
 # Expected numbers (paper, +Librarian row):
 #   litqa2    Cov 95.6 / Prec 82.6 / Acc 78.9
@@ -17,11 +17,9 @@
 #   proclaim  Verifier 0.66, ProClaim 0.80
 #   sqa       Citation F1 (Bio, Neu) + Citation F1 & LLM (Multi)
 #
-# CAVEAT — those are GLM-5 numbers, produced with the retrieval knobs now in
-# librarian/config.toml. These scripts pass NO knob overrides, so a rerun
-# measures the agent as currently configured. Expect close, not identical; a
-# different librarian model makes them incomparable rather than wrong. A delta
-# is not automatically a bug — report it rather than tuning the scripts to match.
+# Those are GLM-5 numbers, produced with the retrieval knobs now in
+# librarian/config.toml. These scripts pass no knob overrides, so a rerun
+# measures the agent as currently configured: expect close, not identical.
 #
 # START HERE — a smoke run: three questions, no scoring model to download.
 #
@@ -40,20 +38,18 @@
 #   --limit N           cap the number of questions (smoke runs)
 #   --max-workers N     concurrency (bench-specific default)
 #   --in-process        the DEFAULT; the agents are built in this process.
-#   --via-api           opt into routing every question through a running
-#                       orchestrator.py instead (env: LIBRARIAN_API_URL, default
+#   --via-api           route every question through a running orchestrator.py
+#                       instead (env: LIBRARIAN_API_URL, default
 #                       http://localhost:8080). Start it from the repo root with
-#                       `uv run uvicorn orchestrator:app --port 8080`. The
-#                       baseline and per-run-knob arms have no API equivalent,
-#                       and this stands down on its own when it sees one.
+#                       `uv run uvicorn orchestrator:app --port 8080`. A run that
+#                       passes a baseline or per-run-knob flag falls back to
+#                       in-process, with a note.
 #   --dry-run           print the commands and exit
 #   -h                  this header
 #
 # WHAT EACH BENCH NEEDS
-# Every bench needs the librarian, which is an agent, not a model: it plans
-# Europe PMC sub-queries and judges retrieved paragraphs, so --librarian-url
-# must serve --librarian-model. There is no offline fallback. Everything below
-# is *in addition* to that.
+# Every bench needs the librarian: --librarian-url must serve --librarian-model,
+# and there is no offline fallback. Everything below is *in addition* to that.
 #
 #   bench             local GPU      other endpoints        API keys
 #   litqa2            none           —                      OPENAI_API_KEY
@@ -63,22 +59,20 @@
 #   sqa --only neu    1 x >=8 GB     —                      none
 #   sqa --only multi  4 x H100       2 x Prometheus judge   none
 #
-# Those GPUs are for *scoring*, not retrieval, so pick the tier you need rather
-# than the largest: litqa2 and labbench need no GPU at all and are the two to
-# start with. One >=24 GB card covers both ProClaim's evidence subagent and
-# SQA's AutoAIS scorer, which are separate jobs rather than concurrent ones.
-# Only `--only multi` needs four, for the two Prometheus 8x7B judges at
-# tensor-parallel size 4 — and it is a 29-question subset, so skipping it still
-# leaves Citation F1 on the full 1451- and 1308-question bio and neuro sets.
-# `--bench sqa` does exactly that on its own when the judges cannot run here:
-# it skips multi with a note and keeps the two rows that did.
+# Those GPUs are for *scoring*, not retrieval. ProClaim's evidence subagent and
+# SQA's AutoAIS scorer are separate jobs, so one >=24 GB card covers both. Only
+# `--only multi` needs four, for the two Prometheus 8x7B judges at
+# tensor-parallel size 4; it is a 29-question subset, and `--bench sqa` skips it
+# with a note when the judges cannot run here, keeping the Citation F1 rows on
+# the full 1451- and 1308-question bio and neuro sets.
 #
 # Multi-GPU note: those judges need NVLink. On cards without it NCCL falls back
 # to PCIe peer-to-peer and they die in initialize_model_parallel with
 # "unhandled system error".
 #
-# Cheaper split: generation is pure network, so run `--skip-citation-eval` on a
-# CPU box and re-run on the GPU one for scoring; --resume does the rest.
+# Generation is pure network, so it can be split across machines: run
+# `--skip-citation-eval` on a CPU box and re-run on the GPU one for scoring,
+# where --resume picks up the generated answers.
 #
 # Baselines are not scripted; each bench's script header gives the exact one-flag
 # change that produces its baseline row.
@@ -89,10 +83,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 export LITERATURE_DIR="$SCRIPT_DIR"
 
-# An interpreter has to be resolved before the config can be read, because the
-# config is TOML and load_config.py is what reads it. `uv sync` creates .venv
-# without putting it on PATH, and a bare `python` does not exist on many
-# systems, so prefer the one the install just made.
+# An interpreter to read the TOML config with, resolved before load_config.py
+# runs. `uv sync` creates .venv without putting it on PATH, so prefer that one.
 if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
     BOOT_PYTHON="$REPO_ROOT/.venv/bin/python"
 elif command -v python3 >/dev/null 2>&1; then
@@ -101,24 +93,21 @@ else
     BOOT_PYTHON=python
 fi
 command -v "$BOOT_PYTHON" >/dev/null 2>&1 || [ -x "$BOOT_PYTHON" ] || {
-    echo "ERROR: no Python interpreter found. Run \`uv sync --extra evals\` at the" >&2
+    echo "ERROR: no Python interpreter found. Run \`uv sync\` at the" >&2
     echo "       repository root, or put one on PATH." >&2; exit 1; }
 
-# Every user-specific endpoint, cache and scratch path lives in one TOML file so
-# nobody has to edit the per-bench runners. load_config.py maps it onto the flat
-# environment variables the runners read, leaving any variable that is already
-# set alone -- so a real environment variable, and the flags below, still win.
-# LITERATURE_EVAL_CONFIG points at a personal profile kept outside the repo.
+# load_config.py maps literature_eval.toml onto the flat environment variables
+# the runners read, leaving any variable that is already set alone, so a real
+# environment variable and the flags below still win. LITERATURE_EVAL_CONFIG
+# points at a personal profile kept outside the repository.
 if [ -n "${LITERATURE_EVAL_CONFIG:-}" ]; then
     [ -f "$LITERATURE_EVAL_CONFIG" ] || {
         echo "ERROR: LITERATURE_EVAL_CONFIG not found: $LITERATURE_EVAL_CONFIG" >&2; exit 1; }
     export LITERATURE_EVAL_CONFIG
 fi
 eval "$("$BOOT_PYTHON" "$SCRIPT_DIR/load_config.py")"
-# Each bench runs in its own locked environment (see bench_env.sh), so there is
-# no single interpreter for the runners to share. paths.python names the base
-# interpreter those environments are *created from*; the runners never use it
-# directly.
+# paths.python names the base interpreter each bench's locked environment is
+# created from (see bench_env.sh); the runners never use it directly.
 : "${BENCH_BASE_PYTHON:=$BOOT_PYTHON}"
 export BENCH_BASE_PYTHON
 
@@ -128,9 +117,8 @@ export BENCH_BASE_PYTHON
 BENCH=""
 LIBRARIAN_URL_SET=false
 LIBRARIAN_MODEL_SET=false
-# In-process is the default: the agents are built in the eval process and talk
-# to $LIBRARIAN_URL directly, so a clone needs nothing but that endpoint.
-# --via-api opts into routing through a running orchestrator.py instead.
+# In-process is the default: the agents are built here and talk to
+# $LIBRARIAN_URL directly. --via-api routes through orchestrator.py instead.
 VIA_API="${VIA_API:-false}"
 PASSTHRU=()
 
@@ -157,21 +145,18 @@ while [ $# -gt 0 ]; do
         --via-api) VIA_API=true; shift ;;
         --in-process|--no-via-api) VIA_API=false; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
-        -h|--help) sed -n '1,82p' "$0"; exit 0 ;;
+        -h|--help) sed -n '/^set -euo/q;p' "$0"; exit 0 ;;
         *) PASSTHRU+=("$1"); shift ;;
     esac
 done
 
-# --via-api runs every question inside the orchestrator, which reaches vLLM
-# in-cluster. Such a run never opens LIBRARIAN_URL, so requiring it -- or
-# preflighting it below -- would abort a run that does not need it. Exported
-# rather than passed through: every bench runner reads $VIA_API.
+# A --via-api run never opens LIBRARIAN_URL itself, so the requirement and the
+# preflight below are both skipped for one. Every bench runner reads $VIA_API.
 export VIA_API="${VIA_API:-false}"
 
-# The documented baseline rows (--no-librarian, --bm25-retrieval) and every
-# per-run knob only exist in-process: a server runs the configuration it was
-# started with and cannot honour them. Rather than fail on a combination the
-# header tells people to use, --via-api stands down as soon as one appears.
+# The baseline rows (--no-librarian, --bm25-retrieval) and the per-run knobs
+# only exist in-process, since a server runs the configuration it was started
+# with. --via-api falls back to in-process as soon as one of them appears.
 for arg in ${PASSTHRU[@]+"${PASSTHRU[@]}"}; do
     case "$arg" in
         --no-librarian|--bm25-retrieval|--no-librarian-full-text|--librarian-*|--agent-model|--agent-base-url)
@@ -183,11 +168,8 @@ for arg in ${PASSTHRU[@]+"${PASSTHRU[@]}"}; do
     esac
 done
 
-# --bench takes a comma-separated list so a subset of the suite is one command
-# rather than a shell loop around this script: --bench litqa2,labbench,proclaim.
-# The set of benches is whatever has contributed a bench.manifest, listed in
-# each one's `order`. Nothing here names them, so adding or removing a bench is
-# a change to that directory alone.
+# The set of benches is whatever has contributed a bench.manifest, ordered by
+# each one's `order`; nothing here names them.
 known_benches() {
     local m
     for m in "$SCRIPT_DIR"/*/bench.manifest; do
@@ -216,16 +198,13 @@ fi
 export LIBRARIAN_URL LIBRARIAN_MODEL ANSWER_MODEL ANSWER_URL RESULTS_ROOT ONLY DRY_RUN
 
 # ── Preflight: assert the endpoint actually serves $LIBRARIAN_MODEL ───────────
-# The commonest failure mode is a wrong or stale model on the port. Catching it
-# here turns a silent 40-minute wrong-numbers run into an instant error.
 list_served_models() {
     curl -sf --max-time 10 "${1%/}/models" \
         | python3 -c 'import json,sys; [print(r["id"]) for r in (json.load(sys.stdin).get("data") or []) if r.get("id")]'
 }
 
-# A one-token completion. The orchestrator is a valid OpenAI-compatible endpoint
-# but mounts no /models route (404), so listing is not a usable liveness test for
-# it — this asks the thing we actually care about: does `$want` answer here.
+# A one-token completion, for an endpoint that mounts no /models route: the
+# orchestrator is OpenAI-compatible but answers 404 there.
 probe_chat_model() {
     local url="$1" want="$2"
     curl -sf --max-time 60 "${1%/}/chat/completions" \
@@ -256,11 +235,9 @@ preflight_endpoint() {
 }
 export -f list_served_models probe_chat_model preflight_endpoint
 
-# --librarian-url/--librarian-model arrive after the config has been read, so a
-# value that INHERITED from the librarian is still pointing at the file's. Left
-# alone, `--librarian-model X` silently synthesises with the config's model
-# instead -- which fails at the synthesis step, not at startup. Only values the
-# config did not set explicitly are moved; LITERATURE_INHERITED names them.
+# --librarian-url/--librarian-model arrive after the config has been read, so
+# any value that inherited from the librarian still holds the file's. Re-point
+# those, and only those; LITERATURE_INHERITED names them.
 inherited() { case " ${LITERATURE_INHERITED:-} " in *" $1 "*) return 0 ;; esac; return 1; }
 if [ "$LIBRARIAN_MODEL_SET" = true ]; then
     inherited SYNTHESIS_MODEL          && SYNTHESIS_MODEL="$LIBRARIAN_MODEL"
@@ -280,11 +257,8 @@ if [ "$DRY_RUN" != true ] && [ "$VIA_API" != true ]; then
 fi
 
 
-# A bench with an upstream repository needs it cloned first. The environment
-# does not need the same treatment — it builds itself on first use — but a clone
-# is a network fetch of someone else's code, so it stays an explicit step.
-# Without this check the failure lands deep inside an import, a long way from
-# the thing that is actually missing.
+# A bench with an upstream repository needs it cloned first; setup.sh does that.
+# Environments are not checked here, because a run builds its own on first use.
 require_setup() {
     local bench="$1" manifest bench_dir clone
     manifest="$(bench_manifest "$bench")" || return 0
@@ -296,8 +270,7 @@ require_setup() {
     echo "       ${bench_dir#"$SCRIPT_DIR/"}/$clone, which is not there." >&2
     echo "       Fetch just what this bench needs:" >&2
     echo "         ./evals/Literature/setup.sh --bench $bench" >&2
-    echo "       It clones the upstream benchmark at its pinned commit, and" >&2
-    echo "       leaves it pristine — nothing of ours is written inside it." >&2
+    echo "       It clones the upstream benchmark at its pinned commit." >&2
     exit 1
 }
 
