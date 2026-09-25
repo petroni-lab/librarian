@@ -16,5 +16,12 @@ dependencies = [
     "uvicorn>=0.27",    # ASGI server for the orchestrator
 ]
 
+# The benchmark harness under evals/Literature deliberately adds nothing here.
+# Each bench builds its own locked virtualenv on first use, from
+# evals/Literature/envs/<bench>.lock — see evals/Literature/bench_env.sh for
+# why. A contributor who never runs an eval therefore installs no benchmark
+# dependency, and the benches cannot be forced into one resolution that suits
+# none of them.
+
 [tool.uv]
 package = false

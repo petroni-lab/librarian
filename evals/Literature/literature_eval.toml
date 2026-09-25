@@ -1,0 +1,122 @@
+# literature_eval.toml — every endpoint, model and path the benchmarks use.
+#
+# A real environment variable always wins over this file, so you can override
+# any single value for one run without editing anything:
+#
+#   LIBRARIAN_URL=http://myhost:8000/v1 ./evals/Literature/literature_eval.sh --bench litqa2
+#
+# To keep a personal profile outside the repository, copy this file and point
+# LITERATURE_EVAL_CONFIG at your copy:
+#
+#   LITERATURE_EVAL_CONFIG=~/my_eval.toml ./evals/Literature/literature_eval.sh --bench sqa
+#
+# An empty string means "inherit", and each one says what it inherits from.
+
+
+# ── The librarian ────────────────────────────────────────────────────────────
+# The one endpoint EVERY bench needs. The librarian is an agent, not a model:
+# it plans Europe PMC sub-queries and judges retrieved paragraphs through an
+# LLM, and has no offline fallback.
+#
+# There is no default url, and there cannot be a useful one — you serve it, or
+# point at a provider. The paper's numbers are GLM-5 (`zai-org/GLM-5-FP8`,
+# served as `glm-5-fp8`); any OpenAI-compatible endpoint works, but a different
+# model makes a result incomparable rather than wrong, so say which you used.
+[librarian]
+url   = ""                                    # required; or pass --librarian-url
+model = "glm-5-fp8"
+
+
+# ── LitQA2 ───────────────────────────────────────────────────────────────────
+# The answering model and the open judge are part of the benchmark's design,
+# not substitutions — changing them changes what the number means.
+# Needs OPENAI_API_KEY.
+[litqa2]
+answer_model = "gpt-5.4"
+answer_url   = "https://api.openai.com/v1"
+judge_model  = "openai/gpt-4o-2024-11-20"
+
+
+# ── ScholarQA-Bench ──────────────────────────────────────────────────────────
+# Needs no API key. `--only bio` / `--only neu` want one >=8 GB GPU for the
+# AutoAIS scorer; `--only multi` wants four for the two Prometheus judges.
+[sqa]
+synthesis_model = ""                          # inherits librarian.model
+judge_gpus      = 4                           # tensor-parallel size, --only multi
+# The container the two Prometheus judges' vLLM runs in — only `--only multi`
+# uses it. Either form works in this one field:
+#
+#   docker://vllm/vllm-openai:v0.29.0        apptainer pulls and converts it
+#                                            on first use (several GB, cached
+#                                            in $APPTAINER_CACHEDIR)
+#   /path/to/vllm-openai.sif                 a local image you already have
+#
+# Leave it empty and `--only multi` is SKIPPED with a note rather than failing:
+# `--bench sqa` still produces the bio and neuro Citation F1 rows, which need
+# no container at all.
+apptainer_image = "docker://vllm/vllm-openai:v0.29.0"
+# Scratch the judge container binds for its pip cache and TMPDIR. Empty means
+# $TMPDIR/sqa-multi-$USER. The HF cache it binds is [paths] hf_home.
+scratch_dir = ""
+
+
+# ── ProClaim ─────────────────────────────────────────────────────────────────
+# Needs ANTHROPIC_API_KEY. Two arms:
+#   --only verifier   one prompt, librarian retrieval, Sonnet verdict
+#   --only proclaim   the full pipeline; also needs the evidence subagent below
+[proclaim]
+verdict_model   = "claude-sonnet-4-6"
+verdict_url     = "https://api.anthropic.com/v1"
+librarian_url   = ""                          # inherits librarian.url
+librarian_model = ""                          # inherits librarian.model
+# The evidence subagent is a THIRD endpoint, used only by `--only proclaim`.
+# run_proclaim.sh does not start it: if nothing answers here it prints the
+# `vllm serve` line and stops.
+subagent_url   = "http://localhost:9900/v1"
+subagent_model = "qwen3.5-9b"
+# The container the evidence subagent runs in. With this set, run_proclaim.sh
+# starts the subagent itself and stops it on exit — `--only proclaim` needs no
+# manual step. One already answering at subagent_url is reused and left alone.
+# Same two forms as [sqa] apptainer_image: a docker:// URI, or a local .sif.
+# Empty means "I will start it myself", and the script says how.
+apptainer_image = "docker://vllm/vllm-openai:v0.29.0"
+
+
+# ── The --via-api transport (optional) ───────────────────────────────────────
+# Only for runs started with --via-api, which route every question through a
+# running orchestrator.py instead of building the agent in-process:
+#
+#   uv run uvicorn orchestrator:app --port 8080
+#
+# The default path is in-process and needs none of this.
+[api]
+url   = "http://localhost:8080"
+model = ""                                    # inherits librarian.model; labels results only
+
+
+# ── Paths ────────────────────────────────────────────────────────────────────
+[paths]
+results_root = ""                             # inherits evals/Literature/results
+hf_home      = ""                             # inherits $HOME/.cache/huggingface
+# The interpreter each bench's environment is BUILT FROM, not one the runners
+# use: every bench runs in its own locked virtualenv under .envs/ (see
+# bench_env.sh). Changing this rebuilds every environment, because wheels are
+# not portable across a Python minor version.
+python       = ""                             # inherits the repo's .venv, else python3
+
+
+# ── Concurrency ──────────────────────────────────────────────────────────────
+# These change wall-clock, never scores. max_samples is Inspect's concurrency,
+# not a question count — use --limit N to shrink a run.
+#
+# 16 was MEASURED on the deployment the paper ran on (SQA, 32 questions of
+# scholarqa_bio: 8 -> 11.1 s/q, 16 -> 9.1 s/q, 32 -> 17.9 s/q). 32 was SLOWER
+# than 8, because each agent run fans out to 8 concurrent judge calls, so N runs
+# put up to 8N requests on one endpoint. The ceiling is that fan-out, not the
+# bench — treat 16 as a starting point and re-measure against your own endpoint.
+[concurrency]
+max_samples     = 16
+max_connections = 16
+# max_workers is deliberately absent: a value here would override every bench's
+# own, and they are not interchangeable (sqa --via-api wants 16, sqa in-process
+# ~4, labbench 8). Set MAX_WORKERS in the environment to force one number.
