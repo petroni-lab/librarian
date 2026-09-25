@@ -16,5 +16,8 @@ dependencies = [
     "uvicorn>=0.27",    # ASGI server for the orchestrator
 ]
 
+# The benchmark harness under evals/Literature deliberately adds nothing here.
+# Each bench builds its own locked virtualenv on first use.
+
 [tool.uv]
 package = false

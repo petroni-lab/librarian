@@ -1,0 +1,5 @@
+# See ../setup.sh for the format of .manifest files
+bench=labbench
+name=LAB-Bench
+run=run_labbench.sh
+order=20

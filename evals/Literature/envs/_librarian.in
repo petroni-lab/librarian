@@ -1,0 +1,15 @@
+# Shared base: what the librarian agent itself needs at run time.
+#
+# Every bench runs the agent in-process, so every bench's lock includes this.
+# It mirrors `[project].dependencies` in the root pyproject.toml, minus fastapi
+# and uvicorn: a --via-api run talks to an orchestrator in the repository's own
+# .venv, not in the bench environment.
+#
+# Only dependencies are listed; the repository's own code arrives on PYTHONPATH.
+# Keep this in step with pyproject.toml by hand — nothing checks it.
+requests>=2.31
+bm25s>=0.2
+pysbd>=0.3
+python-dotenv>=1.0
+PyStemmer>=2.2
+mashumaro[toml]>=3.22
