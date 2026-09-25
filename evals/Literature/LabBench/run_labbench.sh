@@ -32,7 +32,7 @@ LIBRARIAN_MODEL="${LIBRARIAN_MODEL:-glm-5-fp8}"
 ANSWER_MODEL="${ANSWER_MODEL:-gpt-5.4}"
 # The plain alias, not the -2024-05-13 snapshot the runner itself defaults to.
 LABBENCH_GPT4O_MODEL="${LABBENCH_GPT4O_MODEL:-gpt-4o}"
-RESULTS_ROOT="${RESULTS_ROOT:-$SCRIPT_DIR/../results_paper}"
+RESULTS_ROOT="${RESULTS_ROOT:-$SCRIPT_DIR/../results}"
 # 16 on the API path; 8 in-process, where each worker also runs Stage-2 BM25
 # on this box.
 if [ "${VIA_API:-false}" = true ]; then
