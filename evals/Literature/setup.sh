@@ -159,6 +159,16 @@ fetch_repo() {
     git -C "$dest" clean -qfd
 }
 
+# Anything in the clone that git does not know about, ignoring bytecode: a run
+# that imports from a clone leaves __pycache__ behind, which is not a change to
+# the benchmark.
+clone_untracked() {
+    # -uall lists files rather than collapsing an untracked directory to its
+    # name, so the filter cannot be evaded by a directory holding only bytecode.
+    git -C "$1" status --porcelain -uall 2>/dev/null \
+        | grep -v -E '(^|/)__pycache__/|\.pyc$' || true
+}
+
 # A clone passes only at its pinned commit with no local modifications.
 check_repo() {
     local name="$1" sha="$2" dest="$3"
@@ -172,7 +182,7 @@ check_repo() {
         echo "DRIFTED $name at ${have:0:12}, pinned ${sha:0:12}"
         return 1
     fi
-    if ! git -C "$dest" diff --quiet 2>/dev/null || [ -n "$(git -C "$dest" status --porcelain 2>/dev/null)" ]; then
+    if ! git -C "$dest" diff --quiet 2>/dev/null || [ -n "$(clone_untracked "$dest")" ]; then
         echo "DRIFTED $name @ ${sha:0:12} has local modifications"
         return 1
     fi
