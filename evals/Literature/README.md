@@ -5,8 +5,8 @@ row of each. Every bench runs from a plain shell against an OpenAI-compatible
 endpoint you are already serving; nothing here starts a model server, and
 nothing needs a scheduler.
 
-This layer is the machinery plus **LAB-Bench**, the one bench that needs no
-upstream repository. The other three arrive in their own layers.
+Four benches: **LitQA2** and **LAB-Bench**, **ProClaim-eval**, and
+**ScholarQA-Bench**.
 
 ## Start here
 
@@ -106,6 +106,21 @@ LITERATURE_EVAL_CONFIG=~/my_eval.toml ./evals/Literature/literature_eval.sh --be
 `paths.python` names the interpreter the per-bench environments are *built
 from*, not one the runners share. Changing it rebuilds all of them.
 
+## The four benches
+
+| bench | paper row | local GPU | other endpoints | API keys |
+|---|---|---|---|---|
+| `litqa2` | Cov 95.6 / Prec 82.6 / Acc 78.9 | none | — | `OPENAI_API_KEY` |
+| `labbench` | SeqQA 63.8, ProtocolQA 73.1, DbQA 36.2, Cloning 48.5 | none | — | `OPENAI_API_KEY` |
+| `proclaim` | Verifier 0.66, ProClaim 0.80 | 1 × ≥24 GB | evidence subagent | `ANTHROPIC_API_KEY` |
+| `sqa` | Citation F1 (Bio, Neu) + Citation F1 & LLM (Multi) | 1 × ≥8 GB, or 4 × H100 for `--only multi` | 2 × Prometheus judge for `multi` | none |
+
+Every bench needs the librarian endpoint on top of that. The GPUs are for
+*scoring*, not retrieval, so `litqa2` and `labbench` are the two to start with.
+`--only verifier` (ProClaim) and `--skip-citation-eval` (SQA) are the two flags
+that drop the heavy half of a bench, and neither builds the environment it
+would have needed.
+
 ## LAB-Bench
 
 Paper row: SeqQA 63.8, ProtocolQA 73.1, DbQA 36.2, CloningScenarios 48.5.
@@ -142,5 +157,12 @@ evals/Literature/
   orchestrator_client.py  the --via-api transport
   envs/                 _librarian.in + one .in/.lock pair per bench
   .envs/                built virtualenvs (git-ignored, disposable)
-  LabBench/             the bench itself, plus its bench.manifest
+  AstaBench/            LitQA2, over a pristine AstaBench clone
+  LabBench/             LAB-Bench; no clone at all
+  ProClaim/             both ProClaim arms, and the librarian backend (GPL-3.0)
+  SQA_bench/            ScholarQA-Bench, and the scorers derived from it
 ```
+
+Each bench directory holds its own `bench.manifest`, `README.md`, and — where
+anything is derived from upstream — the `NOTICE` that says what and under which
+licence. `ProClaim/backend/` is **GPL-3.0**; the root LICENSE does not reach it.
