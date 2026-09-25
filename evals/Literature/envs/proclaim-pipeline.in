@@ -1,0 +1,58 @@
+# ProClaim-eval, arm 2: the full ProClaim pipeline on the librarian backend
+# (paper row 0.80).
+#
+# This is ProClaim's own dependency set plus the librarian's. The list is
+# transcribed from ProClaim's pyproject.toml at the pinned commit
+#
+#     6316258ba31386657389fea5bb2db2c97362e06c
+#
+# which cannot move, so the transcription cannot drift: bump the pin in
+# ../ProClaim/bench.manifest and this list is what has to be revisited with it.
+# Transcribed rather than resolved from the clone so that relocking does not
+# require having cloned anything.
+#
+# Resolved for Linux: ProClaim pulls the nvidia CUDA wheels there, and the whole
+# arm wants a GPU box for its evidence subagent anyway. Marked optional in the
+# manifest, so a laptop can still set the bench up and run arm 1.
+# uv-compile-args: --python-platform x86_64-unknown-linux-gnu
+-r _librarian.in
+
+# ── ProClaim's own, from its pyproject at the pin ────────────────────────────
+pandas
+torch==2.6.0
+nvidia-cudnn-cu12; platform_system == 'Linux' and platform_machine == 'x86_64'
+nvidia-nccl-cu12; platform_system == 'Linux' and platform_machine == 'x86_64'
+torch_geometric
+scikit-learn
+matplotlib
+numpy
+requests
+openai>=1.0.0
+paper-search-mcp>=0.1.3
+python-dotenv
+langchain-core>=1.1.1
+langchain-openai>=1.1.0
+langgraph>=1.0.4
+pymupdf>=1.23.0
+pydantic>=2.0
+pydantic-settings>=2.0
+pyyaml>=6.0
+mcp>=1.0.0
+nbformat>=5.9
+nbclient>=0.10
+jupyter_client>=8.6
+ipykernel>=6.0
+spacy>=3.0
+claude-agent-sdk
+sentence-transformers
+en-core-sci-sm @ https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz
+seaborn>=0.13.2
+litellm[google]
+jupytext>=1.16
+langchain-community>=0.4.1
+langchain-litellm>=0.6.1
+ddgs>=9.14.2
+
+# ── Ours, on top ─────────────────────────────────────────────────────────────
+anthropic>=0.87.0      # the outer-agent verdict model
+tqdm>=4.66

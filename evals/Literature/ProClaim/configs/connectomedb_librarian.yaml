@@ -1,0 +1,75 @@
+# ──────────────────────────────────────────────────────────────────────
+# ConnectomeDB Evaluation Config — Direct mode, librarian retrieval backend
+#
+# Retrieval is performed by an in-process LibrarianAgent
+# (the "librarian") instead of PubMed + Semantic Scholar. The librarian's
+# internal LLM connects to the vLLM model service via an OpenAI-compatible
+# base URL — independent of the evidence-programmer model. ProClaim still runs
+# its own fact extraction over the librarian's enriched evidence text.
+#
+# The librarian runs glm-5-fp8 on the self-hosted vLLM endpoint. The ProClaim
+# evidence-programmer agent runs gpt-5.4, while the evidence subagent matches
+# the direct ProClaim config and uses the local vLLM endpoint from LLM_BASE_URL.
+# The `librarian` package must be importable (`uv sync` at the repo root).
+#
+# Usage:
+#   uv run python -m proclaim.verification.evidence_programming_direct \
+#     --config configs/connectomedb_librarian.yaml \
+#     --claim "CXCL12 directly binds CXCR4." --output-dir results/librarian_smoke_1
+# ──────────────────────────────────────────────────────────────────────
+
+mode: direct
+
+# Retrieval backend: "librarian" routes all retrieval through the in-process
+# LibrarianAgent.
+retrieval_backend: librarian
+
+# Librarian agent LLM — points at the vLLM model service. Independent of the
+# evidence-programmer model below.
+# Overridden by run_proclaim.sh via --librarian-base-url (which passes
+# PROCLAIM_LIBRARIAN_URL, defaulting to LIBRARIAN_URL). Set it here only to
+# pin an endpoint for a standalone run.
+librarian_llm_base_url: http://localhost:8000/v1
+librarian_llm_model: glm-5-fp8   # set to the model id served by the vLLM endpoint
+
+# Verification workflow parameters
+max_iterations: 2   # ProClaim librarian sparse-evidence recovery budget
+max_turns: 10
+# The librarian direct path uses max_iterations as the refinement budget for
+# finding at least one SUPPORT or REFUTE fact before final verdicting.
+
+# LLM configuration — the ProClaim evidence programmer (NOT the librarian).
+llm:
+  # Outer agent: routed by LiteLLM through the official OpenAI API.
+  model: openai/gpt-5.4
+
+  # Subagent: used inside bash for evidence_api calls, including fact extraction
+  # and gap analysis. Points at the local Qwen vLLM endpoint (not the GLM
+  # librarian endpoint and not https://api.openai.com/v1).
+  subagent_model: qwen3.5-9b
+  subagent_base_url: http://localhost:9900/v1
+
+  temperature: 0.0
+  disable_thinking: true   # matches standard ProClaim: Qwen subagent runs without thinking
+  stream: true
+
+# Sufficiency backend.
+#
+# Do not use the SciFact-trained MLP for librarian retrieval runs: librarian
+# evidence pools are larger and more mechanism-focused than the classifier's
+# training pools, which makes its probabilities poorly calibrated here.
+sufficiency_backend: llm
+
+# Output paths (overridden per-claim by run_connectomedb_eval.py)
+output_dir: results/connectomedb_librarian_glm5_retrieval_gpt54_verify
+mlp_model_dir: models/sufficiency_classifier
+
+# Prompt options
+include_subclaim_examples: false
+claim_only: true
+
+# Logging
+verbose: false
+
+# Web-search
+disable_web_search: true
