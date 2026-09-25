@@ -37,6 +37,11 @@ LIT_ROOT="${LIT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 REPO_ROOT="${REPO_ROOT:-$(cd "$LIT_ROOT/../.." && pwd)}"
 BENCH_ENV_ROOT="${BENCH_ENV_ROOT:-$LIT_ROOT/.envs}"
 
+# Benches import from clones that must stay byte-for-byte their pinned commit,
+# and bytecode would be written beside the source. Set for everything a runner
+# starts, since every runner sources this file.
+export PYTHONDONTWRITEBYTECODE=1
+
 # ── Small helpers ────────────────────────────────────────────────────────────
 
 _bench_die() { echo "ERROR: $*" >&2; return 1; }
