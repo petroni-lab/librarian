@@ -3,29 +3,26 @@
 Two solvers, both queried with the verbatim LAB-Bench MCQ prompt:
 
   - ``BaselineSolver`` — the LAB-Bench setup: send the MCQ to the model and let
-    it answer from its own (parametric) knowledge. Reproduces the paper's
-    baselines.
+    it answer from its own (parametric) knowledge, which is the paper's
+    baseline row.
 
-  - ``KnowledgeLayerSolver`` — wraps the same model with one of our retrieval
-    agents (the ``LiteratureSearchAgent`` by default, or the ``LibrarianAgent``)
-    as a *knowledge layer*. Single-shot RAG: the agent is run **once** on the
-    question, its retrieved passages are injected into the prompt, and the model
-    answers in **one** API call. The model is told to use the provided evidence
-    and answer in the required format. This shows whether grounding a general LLM
-    (e.g. GPT-4o) in our retrieval layer improves its answers.
+  - ``KnowledgeLayerSolver`` — single-shot RAG. The retrieval agent is run
+    **once** on the question, its passages are injected into the prompt, and the
+    model answers in **one** API call, told to use the evidence and to answer in
+    the required format.
 
 The agent is injected as a ``search_fn(query) -> result_dict`` callable, so the
-solver is decoupled from which agent produces the evidence. Both
+solver does not depend on which agent produces the evidence. Both
 ``LiteratureSearchAgent.run(..., include_summary=False)`` and
-``LibrarianAgent.run(...)`` return the same ``{evidence, papers_raw, ...}`` shape
-that ``format_evidence`` consumes — raw retrieved passages, never a summary.
+``LibrarianAgent.run(...)`` return the ``{evidence, papers_raw, ...}`` shape
+``format_evidence`` consumes — raw retrieved passages, never a summary.
 
-Both use the OpenAI-compatible chat-completions API (the LAB-Bench baselines used
-the OpenAI SDK and GPT-4o), so ``--model`` defaults to ``gpt-4o-2024-05-13`` —
-the snapshot the paper's floating ``gpt-4o`` alias resolved to in mid-2024.
+Both solvers use the OpenAI-compatible chat-completions API, and ``--model``
+defaults to ``gpt-4o-2024-05-13``, the snapshot the paper's floating ``gpt-4o``
+alias resolved to in mid-2024.
 
 The knowledge-layer system prompts are phrased for biology research generally
-(not cloning specifically) so they fit DbQA / SeqQA / ProtocolQA as well.
+rather than for one task, so they fit DbQA, SeqQA and ProtocolQA alike.
 """
 
 from __future__ import annotations
@@ -43,8 +40,7 @@ class _ChatClient:
     Older models (e.g. gpt-4o) use ``max_tokens``; newer ones (gpt-5.x / o-series)
     require ``max_completion_tokens`` and may reject a non-default ``temperature``.
     The first call that hits a 400 about either parameter switches the request
-    shape and remembers it for the rest of the run, so a single eval can target
-    any of these models without a flag.
+    shape and remembers it for the rest of the run.
     """
 
     def __init__(
@@ -92,17 +88,14 @@ class _ChatClient:
                     return reasoning
                 # Some vLLM deployments split thinking from the final response:
                 # `content` = text after </think>, `reasoning_content` = the
-                # thinking trace. If the model put the [ANSWER] tag inside the
-                # thinking trace but not in the short final-answer text, we'd
-                # miss it. Return both so the parser can search either part.
+                # thinking trace. Return both, so the parser can find the
+                # [ANSWER] tag in whichever part carries it.
                 if reasoning.strip() and "[ANSWER]" not in content.upper():
                     return content + "\n" + reasoning
                 return content
             except RateLimitError:
-                # Sleep a full TPM window so competing workers drain before we
-                # retry. The SDK's own max_retries exhausts quickly when many
-                # threads hit the limit simultaneously; a longer back-off here
-                # breaks the thundering-herd cycle.
+                # Sleep a full TPM window, so competing workers drain before
+                # this one retries.
                 if attempt >= 9:
                     raise
                 time.sleep(60)
@@ -294,10 +287,9 @@ class KnowledgeLayerSolver:
             retrieval_error = str(exc)
             evidence_block = f"Literature search failed: {exc}"
 
-        # When retrieval found nothing, an empty-evidence block primes the model
-        # toward "Insufficient information" and underperforms a plain answer. If
-        # parametric_fallback is on, answer from the bare MCQ instead (baseline
-        # behaviour) so a failed search never costs more than not searching.
+        # With nothing retrieved, and parametric_fallback on, answer from the
+        # bare MCQ exactly as the baseline does rather than from an empty
+        # evidence block.
         used_fallback = self.parametric_fallback and evidence_papers == 0
         if used_fallback:
             messages = [{"role": "user", "content": prompt}]

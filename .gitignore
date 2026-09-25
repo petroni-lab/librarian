@@ -10,10 +10,6 @@ venv/
 assets/*.mov
 assets/*.mp4
 
-# ── Eval harness (evals/Literature) ──────────────────────────────────────────
-# Run outputs. RESULTS_ROOT defaults here; nothing under it is committed.
 evals/Literature/results/
 evals/Literature/results_paper/
-# One built virtualenv per bench, from the committed locks in envs/. Disposable:
-# delete any of them and the next run rebuilds it.
 evals/Literature/.envs/

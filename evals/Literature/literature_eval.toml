@@ -1,7 +1,7 @@
 # literature_eval.toml — every endpoint, model and path the benchmarks use.
 #
-# A real environment variable always wins over this file, so you can override
-# any single value for one run without editing anything:
+# A real environment variable always wins over this file, so a single value can
+# be overridden for one run without editing anything:
 #
 #   LIBRARIAN_URL=http://myhost:8000/v1 ./evals/Literature/literature_eval.sh --bench litqa2
 #
@@ -14,23 +14,17 @@
 
 
 # ── The librarian ────────────────────────────────────────────────────────────
-# The one endpoint EVERY bench needs. The librarian is an agent, not a model:
-# it plans Europe PMC sub-queries and judges retrieved paragraphs through an
-# LLM, and has no offline fallback.
-#
-# There is no default url, and there cannot be a useful one — you serve it, or
-# point at a provider. The paper's numbers are GLM-5 (`zai-org/GLM-5-FP8`,
-# served as `glm-5-fp8`); any OpenAI-compatible endpoint works, but a different
-# model makes a result incomparable rather than wrong, so say which you used.
+# The one endpoint every bench needs. There is no default: serve it yourself or
+# point at a provider. Any OpenAI-compatible endpoint works; the paper's numbers
+# are GLM-5 (`zai-org/GLM-5-FP8`, served as `glm-5-fp8`).
 [librarian]
 url   = ""                                    # required; or pass --librarian-url
 model = "glm-5-fp8"
 
 
 # ── LitQA2 ───────────────────────────────────────────────────────────────────
-# The answering model and the open judge are part of the benchmark's design,
-# not substitutions — changing them changes what the number means.
-# Needs OPENAI_API_KEY.
+# The answering model and open judge the benchmark specifies. Needs
+# OPENAI_API_KEY.
 [litqa2]
 answer_model = "gpt-5.4"
 answer_url   = "https://api.openai.com/v1"
@@ -43,17 +37,16 @@ judge_model  = "openai/gpt-4o-2024-11-20"
 [sqa]
 synthesis_model = ""                          # inherits librarian.model
 judge_gpus      = 4                           # tensor-parallel size, --only multi
-# The container the two Prometheus judges' vLLM runs in — only `--only multi`
-# uses it. Either form works in this one field:
+# The vLLM container the two Prometheus judges run in, used only by
+# `--only multi`. Either form works:
 #
-#   docker://vllm/vllm-openai:v0.29.0        apptainer pulls and converts it
-#                                            on first use (several GB, cached
-#                                            in $APPTAINER_CACHEDIR)
-#   /path/to/vllm-openai.sif                 a local image you already have
+#   docker://vllm/vllm-openai:v0.29.0        pulled and converted on first use
+#                                            (several GB, cached in
+#                                            $APPTAINER_CACHEDIR)
+#   /path/to/vllm-openai.sif                 a local image
 #
-# Leave it empty and `--only multi` is SKIPPED with a note rather than failing:
-# `--bench sqa` still produces the bio and neuro Citation F1 rows, which need
-# no container at all.
+# Empty SKIPs `--only multi` with a note; the bio and neuro Citation F1 rows
+# need no container.
 apptainer_image = "docker://vllm/vllm-openai:v0.29.0"
 # Scratch the judge container binds for its pip cache and TMPDIR. Empty means
 # $TMPDIR/sqa-multi-$USER. The HF cache it binds is [paths] hf_home.
@@ -69,16 +62,13 @@ verdict_model   = "claude-sonnet-4-6"
 verdict_url     = "https://api.anthropic.com/v1"
 librarian_url   = ""                          # inherits librarian.url
 librarian_model = ""                          # inherits librarian.model
-# The evidence subagent is a THIRD endpoint, used only by `--only proclaim`.
-# run_proclaim.sh does not start it: if nothing answers here it prints the
-# `vllm serve` line and stops.
+# A third endpoint, used only by `--only proclaim`.
 subagent_url   = "http://localhost:9900/v1"
 subagent_model = "qwen3.5-9b"
-# The container the evidence subagent runs in. With this set, run_proclaim.sh
-# starts the subagent itself and stops it on exit — `--only proclaim` needs no
-# manual step. One already answering at subagent_url is reused and left alone.
-# Same two forms as [sqa] apptainer_image: a docker:// URI, or a local .sif.
-# Empty means "I will start it myself", and the script says how.
+# The container the evidence subagent runs in, in the same two forms as [sqa]
+# apptainer_image. With this set, run_proclaim.sh starts the subagent and stops
+# it on exit; one already answering at subagent_url is reused and left alone.
+# Empty means run_proclaim.sh prints the `vllm serve` line and stops.
 apptainer_image = "docker://vllm/vllm-openai:v0.29.0"
 
 
@@ -87,8 +77,6 @@ apptainer_image = "docker://vllm/vllm-openai:v0.29.0"
 # running orchestrator.py instead of building the agent in-process:
 #
 #   uv run uvicorn orchestrator:app --port 8080
-#
-# The default path is in-process and needs none of this.
 [api]
 url   = "http://localhost:8080"
 model = ""                                    # inherits librarian.model; labels results only
@@ -100,8 +88,7 @@ results_root = ""                             # inherits evals/Literature/result
 hf_home      = ""                             # inherits $HOME/.cache/huggingface
 # The interpreter each bench's environment is BUILT FROM, not one the runners
 # use: every bench runs in its own locked virtualenv under .envs/ (see
-# bench_env.sh). Changing this rebuilds every environment, because wheels are
-# not portable across a Python minor version.
+# bench_env.sh). Changing this rebuilds every environment.
 python       = ""                             # inherits the repo's .venv, else python3
 
 
@@ -109,14 +96,12 @@ python       = ""                             # inherits the repo's .venv, else 
 # These change wall-clock, never scores. max_samples is Inspect's concurrency,
 # not a question count — use --limit N to shrink a run.
 #
-# 16 was MEASURED on the deployment the paper ran on (SQA, 32 questions of
-# scholarqa_bio: 8 -> 11.1 s/q, 16 -> 9.1 s/q, 32 -> 17.9 s/q). 32 was SLOWER
-# than 8, because each agent run fans out to 8 concurrent judge calls, so N runs
-# put up to 8N requests on one endpoint. The ceiling is that fan-out, not the
-# bench — treat 16 as a starting point and re-measure against your own endpoint.
+# 16 is a measured starting point, not a ceiling (SQA, 32 questions of
+# scholarqa_bio: 8 -> 11.1 s/q, 16 -> 9.1 s/q, 32 -> 17.9 s/q). Each agent run
+# fans out to 8 concurrent judge calls, so N samples put up to 8N requests on
+# one endpoint; re-measure against your own.
 [concurrency]
 max_samples     = 16
 max_connections = 16
-# max_workers is deliberately absent: a value here would override every bench's
-# own, and they are not interchangeable (sqa --via-api wants 16, sqa in-process
+# max_workers is per-bench and not set here (sqa --via-api 16, sqa in-process
 # ~4, labbench 8). Set MAX_WORKERS in the environment to force one number.

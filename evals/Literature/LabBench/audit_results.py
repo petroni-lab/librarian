@@ -1,23 +1,20 @@
 """Recompute LAB-Bench accuracy/precision/coverage from the raw prediction logs.
 
-Trusts only ``predictions.jsonl``. Every other file in a result directory
-(``metrics.json``, ``summary.md``, ``run_config.json``) is *derived* and has been
-observed to disagree with the rows it claims to summarise, so this script ignores
-them except to report the disagreement.
+Trusts only ``predictions.jsonl``. The derived files in a result directory
+(``metrics.json``, ``summary.md``, ``run_config.json``) are read only to check
+them against those rows.
 
 Checks performed per result directory:
 
 - the three rates, recomputed, with the ``total / attempted / correct`` counts
-  printed next to them so the arithmetic is auditable by hand;
-- the identity ``accuracy == precision * coverage`` (exact by construction, so a
-  violation means numbers were mixed across runs, not a scoring bug);
-- ``run_config.json``'s ``model`` vs. the model actually recorded on every row —
-  these have diverged when a run was resumed with a different ``--model``;
-- rows lost to ``error`` and whether ``metrics.json`` quietly shrank its
-  denominator to hide them;
-- retrieval health: ``retrieval_error`` and zero-evidence questions, which is how
-  a "with librarian" arm turns out to have had no literature at all;
-- files that ``--resume`` cannot read back (raw U+2028 & friends vs. splitlines).
+  beside them;
+- the identity ``accuracy == precision * coverage``, exact by construction;
+- ``run_config.json``'s ``model`` against the model recorded on every row;
+- rows lost to ``error``, and whether ``metrics.json``'s denominator matches the
+  number of rows in the log;
+- retrieval health: ``retrieval_error`` and zero-evidence questions;
+- raw U+2028-class separators, which a ``splitlines()``-based reader cannot read
+  back.
 
 Usage:
     python -m evals.Literature.LabBench.audit_results [results_dir] [--json out.json]
@@ -34,8 +31,8 @@ from typing import Any
 
 DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent / "results"
 IDENTITY_TOLERANCE = 0.01
-# str.splitlines() breaks on these; json.dumps(ensure_ascii=False) does not escape
-# them. Any occurrence inside predictions.jsonl breaks a splitlines()-based reader.
+# str.splitlines() breaks on these, and json.dumps(ensure_ascii=False) does not
+# escape them, so any occurrence in predictions.jsonl breaks such a reader.
 SPLITLINES_ONLY = ("\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "", "")
 
 
@@ -99,7 +96,7 @@ def audit_run(run_dir: Path) -> dict[str, Any] | None:
         "retrieval_errors": sum(1 for m in metadata if m.get("retrieval_error")),
         "zero_evidence": sum(1 for m in metadata if m.get("n_evidence_papers") == 0),
         "cached": cached,
-        # Rows a splitlines()-based reader would shred (pre-fix --resume crash).
+        # Rows a splitlines()-based reader would shred.
         "splitlines_fragments": len([x for x in raw_text.splitlines() if x.strip()])
         - len([x for x in raw_text.split("\n") if x.strip()]),
     }
@@ -141,7 +138,7 @@ def report(results_dir: Path) -> list[dict[str, Any]]:
         notes: list[str] = []
         if a["total"] == 0:
             notes.append(
-                "EMPTY predictions.jsonl — any metrics.json here is unauditable"
+                "EMPTY predictions.jsonl, so there is nothing to audit here"
             )
         if a["unparseable_lines"]:
             notes.append(f"{a['unparseable_lines']} unparseable line(s)")
@@ -150,7 +147,7 @@ def report(results_dir: Path) -> list[dict[str, Any]]:
         if a["splitlines_fragments"]:
             notes.append(
                 f"contains raw U+2028-class separators ({a['splitlines_fragments']} "
-                "extra fragments under splitlines()) — needs the split('\\n') reader"
+                "extra fragments under splitlines())"
             )
         if (
             a["config_model"]
@@ -185,8 +182,8 @@ def report(results_dir: Path) -> list[dict[str, Any]]:
             silent = a["zero_evidence"] - a["retrieval_errors"]
             if silent > 0.1 * max(a["total"], 1):
                 notes.append(
-                    f"{silent} question(s) got zero evidence with no error raised "
-                    "(silent empty retrieval -> answered parametrically)"
+                    f"{silent} question(s) got zero evidence with no error "
+                    "raised, and were answered parametrically"
                 )
         if notes:
             clean = False

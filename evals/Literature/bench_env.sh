@@ -1,66 +1,47 @@
 #!/usr/bin/env bash
 # bench_env.sh — one locked virtualenv per bench, built the first time it is needed.
 #
-# Source this; do not execute it. It gives the run scripts three functions:
+# Source this; do not execute it. It gives the run scripts:
 #
-#     bench_python <bench>            print that bench's interpreter, building
-#                                     the environment first if it is missing or
-#                                     stale
-#     bench_run    <bench> <cmd...>   run a command under that interpreter, with
-#                                     PYTHONPATH pointing at the repository root
-#     bench_env_check <bench>         report the environment's state and return
-#                                     non-zero if it would need building
+#     bench_python <bench>              print that bench's interpreter, building
+#                                       the environment first if it is missing
+#                                       or stale
+#     bench_python_maybe <bench> <dry>  the same, except that a dry run prints
+#                                       the path without building anything
+#     bench_run <bench> <cmd...>        run a command under that interpreter,
+#                                       with PYTHONPATH at the repository root
+#     bench_env_check <bench>           report the environment's state and
+#                                       return non-zero if it needs building
 #
-# WHY A SEPARATE ENVIRONMENT PER BENCH
+# and the manifest readers setup.sh shares: bench_manifest, bench_manifest_get,
+# bench_envs, bench_optional_envs, bench_env_is_optional.
 #
-# The benches do not agree with each other. ScholarQA-Bench's scorers want a
-# CUDA torch and a pinned transformers; AstaBench wants a particular inspect_ai;
-# ProClaim wants its own pydantic-settings stack. Resolving all of that into one
-# lock either fails or silently degrades whichever bench loses the tie-break.
-# Resolving each separately costs disk and nothing else.
+# Each bench gets its own environment, installed with `uv pip sync` from the
+# committed, fully pinned envs/<bench>.lock and never resolved at build time.
+# `setup.sh --relock` regenerates a lock. The repository's own .venv is not
+# involved, so `uv sync` at the root pulls no benchmark dependency.
 #
-# The repository's own .venv stays out of it entirely, so `uv sync` at the root
-# never pulls a benchmark dependency and a contributor who never runs an eval
-# never pays for one.
+# Builds are lazy: the first run of a bench builds its environment and says so.
+# `setup.sh --bench <name>` builds the same thing eagerly.
 #
-# WHY IT IS LOCKED
+# .envs/<bench>/.stamp holds a hash of everything the environment is derived
+# from — the lock, the pinned upstream commit, the base Python version and the
+# compile arguments. A mismatch rebuilds.
 #
-# An environment that resolves fresh on each machine is not an eval environment:
-# two people get different transitive versions and their numbers stop being
-# comparable, silently. Each bench therefore commits `envs/<bench>.lock`, a
-# fully pinned `uv pip compile` output, and the environment is built by
-# `uv pip sync` against exactly that. `setup.sh --relock` regenerates it, which
-# is a deliberate act with a reviewable diff.
-#
-# WHY IT IS BUILT ON DEMAND
-#
-# Cloning and installing every bench up front costs several GB and many minutes
-# for someone who wants one row of one table. So the build is lazy: the first
-# run of a bench builds its environment, prints what it is doing, and stamps it.
-# `setup.sh --bench <name>` does the same thing eagerly, for anyone who would
-# rather pay the cost at a moment they chose.
-#
-# THE STAMP
-#
-# `.envs/<bench>/.stamp` holds a hash of everything the environment is derived
-# from: the lock file, the pinned upstream commit if the bench has a clone, and
-# the Python version. A mismatch rebuilds. This is what stops a stale
-# environment surviving a lock bump, which is the failure that would quietly
-# change results.
+# Two environment variables change the behaviour: BENCH_ENV_ROOT relocates the
+# built environments, and BENCH_ENV_NO_BUILD=true turns a missing or stale
+# environment into an error instead of a build.
 
 # Resolved relative to this file, so a run script can live anywhere below it.
 LIT_ROOT="${LIT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 REPO_ROOT="${REPO_ROOT:-$(cd "$LIT_ROOT/../.." && pwd)}"
-# Overridable so a cluster can put the environments on fast local disk rather
-# than the shared filesystem the checkout lives on.
 BENCH_ENV_ROOT="${BENCH_ENV_ROOT:-$LIT_ROOT/.envs}"
 
 # ── Small helpers ────────────────────────────────────────────────────────────
 
 _bench_die() { echo "ERROR: $*" >&2; return 1; }
 
-# sha256 of stdin. macOS ships shasum, most Linux images ship sha256sum, and a
-# container with neither still has Python.
+# sha256 of stdin, from whichever of sha256sum, shasum or Python is present.
 _bench_sha256() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum | cut -d' ' -f1
@@ -72,13 +53,11 @@ _bench_sha256() {
 }
 
 bench_env_dir()  { printf '%s/%s' "$BENCH_ENV_ROOT" "$1"; }
-# Extra `uv pip compile` arguments an environment needs, taken from a magic
-# comment in its .in file:
+# Extra `uv pip compile` arguments an environment needs, read from a comment in
+# its .in file, which is how a lock is resolved for a machine other than the one
+# relocking it:
 #
 #     # uv-compile-args: --python-platform x86_64-unknown-linux-gnu
-#
-# A lock for a CUDA scoring stack has to be resolved for the machine that will
-# run it, which is not the machine someone is likely to relock on.
 bench_compile_args() {
     sed -n 's/^# *uv-compile-args: *//p' "$(bench_spec_file "$1")" 2>/dev/null | head -1
 }
@@ -106,11 +85,8 @@ bench_manifest_get() {
     sed -n "s/^${key}=//p" "$manifest" | head -1
 }
 
-# Every environment a bench owns, in build order; the bench's own name when it
-# declares none. A bench needs more than one when parts of it run on different
-# machines: ScholarQA-Bench generates answers anywhere and scores them on a GPU
-# box, and forcing a CUDA scoring stack into the generation environment would
-# stop the generation half installing at all on a laptop.
+# Every environment a bench owns, in build order; the bench's own name when its
+# manifest declares none.
 bench_envs() {
     local manifest declared
     if manifest="$(bench_manifest "$1")"; then
@@ -123,12 +99,9 @@ bench_envs() {
     fi
 }
 
-# Environments a bench can do without on this machine. ScholarQA-Bench's scoring
-# stack is CUDA-only, so a laptop must still be able to set the bench up and
-# generate answers; the environment it cannot build is built later, on the box
-# that will actually score. Optional applies to *eager* setup only — a run that
-# reaches a scoring step and cannot build it still fails, loudly, which is the
-# right moment to find out.
+# Environments eager setup may skip when they will not build on this machine —
+# a CUDA-only scoring stack on a laptop, say. This applies to setup only: a run
+# that needs one still tries to build it, and fails there if it cannot.
 bench_optional_envs() {
     local manifest declared
     if manifest="$(bench_manifest "$1")"; then
@@ -144,8 +117,8 @@ bench_env_is_optional() {
 
 # ── The stamp ────────────────────────────────────────────────────────────────
 
-# Everything the built environment is a function of. Any change here means the
-# environment on disk no longer matches what the lock describes.
+# Everything the built environment is a function of; a change to any of it
+# means the environment on disk no longer matches the lock.
 _bench_stamp_value() {
     local bench="$1" lock manifest commit=""
     lock="$(bench_lock_file "$bench")"
@@ -163,8 +136,7 @@ _bench_stamp_value() {
 }
 
 # The interpreter the virtualenv is created from, as opposed to the one inside
-# it. A minor-version bump upstream must invalidate the stamp, because wheels
-# are not portable across it.
+# it. Its minor version is part of the stamp, since wheels do not cross one.
 _bench_base_python() {
     if [ -n "${BENCH_BASE_PYTHON:-}" ]; then printf '%s' "$BENCH_BASE_PYTHON"; return; fi
     if command -v python3 >/dev/null 2>&1; then printf 'python3'; return; fi
@@ -177,10 +149,9 @@ _bench_base_python_version() {
 
 # ── Building ─────────────────────────────────────────────────────────────────
 
-# Two runs of the same bench started together would otherwise build the same
-# environment on top of each other. Serialise on a lock directory: mkdir is
-# atomic everywhere, including the NFS mounts these often live on, which
-# flock(1) is not.
+# Serialise concurrent builds of one bench on a lock directory, so two runs
+# started together do not build on top of each other. mkdir is atomic on the
+# NFS mounts these often live on, where flock(1) is not.
 _bench_with_lock() {
     local bench="$1"; shift
     local lockdir="$BENCH_ENV_ROOT/.$bench.building" waited=0
@@ -221,7 +192,7 @@ _bench_build() {
         VIRTUAL_ENV="$env_dir" uv pip sync --python "$env_dir/bin/python" "$lock" >&2 \
             || { _bench_die "installing $lock into $env_dir failed"; return 1; }
     else
-        echo "        (uv not found; falling back to venv + pip, which is slower)" >&2
+        echo "        (uv not found; falling back to venv + pip)" >&2
         "$(_bench_base_python)" -m venv "$env_dir" >&2 \
             || { _bench_die "could not create $env_dir"; return 1; }
         "$env_dir/bin/python" -m pip install --quiet --upgrade pip >&2
@@ -229,9 +200,9 @@ _bench_build() {
             || { _bench_die "installing $lock into $env_dir failed"; return 1; }
     fi
 
-    # A bench may need something the lock cannot express — an editable install
-    # of a pristine upstream clone, most often. The hook runs inside the built
-    # environment, with BENCH_ENV_PYTHON and BENCH_CLONE_DIR set.
+    # The manifest's post_install hook, for anything the lock cannot express,
+    # such as an editable install of the upstream clone. It runs against the
+    # built environment, with BENCH_ENV_PYTHON and BENCH_CLONE_DIR set.
     local manifest hook
     if manifest="$(bench_manifest "$bench")"; then
         hook="$(bench_manifest_get "$manifest" post_install)"
@@ -254,10 +225,8 @@ _bench_build() {
     echo "OK      $bench environment ready" >&2
 }
 
-# A build that fails part-way leaves a virtualenv with no stamp, which then
-# reports as "no stamp" rather than "not built" — needlessly cryptic for an
-# optional environment that simply cannot be built on this machine. Only the
-# stamped state is meaningful, so an unstamped directory is swept away.
+# Build, and remove what a failed build left behind: only a stamped environment
+# is meaningful, and an unstamped one would report as "no stamp" ever after.
 _bench_build_or_clean() {
     local bench="$1" env_dir
     env_dir="$(bench_env_dir "$bench")"
@@ -299,10 +268,8 @@ bench_python() {
     printf '%s/bin/python' "$env_dir"
 }
 
-# Like bench_python, but a dry run prints where the interpreter WOULD be without
-# building anything. A dry run exists to show the commands that would run;
-# spending several GB and several minutes to print a line nobody will execute
-# defeats the point, and makes `--dry-run` useless as a cheap wiring check.
+# Like bench_python, except that a dry run prints where the interpreter would
+# be and builds nothing.
 bench_python_maybe() {
     local bench="$1" dry="${2:-false}"
     if [ "$dry" = true ]; then
@@ -313,8 +280,8 @@ bench_python_maybe() {
 }
 
 # Run a command in the bench's environment. PYTHONPATH carries the repository
-# itself, which is not a package (`[tool.uv] package = false`) and so cannot be
-# installed into the environment the ordinary way.
+# itself, which is not a package (`[tool.uv] package = false`) and so is not
+# installed into the environment.
 bench_run() {
     local bench="$1"; shift
     local py
