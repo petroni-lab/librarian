@@ -13,3 +13,9 @@ assets/*.mp4
 evals/Literature/results/
 evals/Literature/results_paper/
 evals/Literature/.envs/
+evals/Literature/SQA_bench/code/
+evals/Literature/SQA_bench/output/
+evals/Literature/SQA_bench/data/*
+!evals/Literature/SQA_bench/data/*/
+evals/Literature/SQA_bench/data/*/*
+!evals/Literature/SQA_bench/data/*/*_ids.txt
