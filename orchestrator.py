@@ -76,9 +76,8 @@ def _run(
     )
     papers = agent.run(request.query, on_progress=on_progress)
 
-    # The librarian never writes prose, so its summary is empty rather than
-    # absent: one response shape means a client can swap agents without
-    # reshaping anything.
+    # The librarian writes no prose, so its summary is empty rather than
+    # absent; both agents return the same shape.
     summary = ""
     if request.agent == "literature_synthesis":
         if on_progress is not None:

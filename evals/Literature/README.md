@@ -29,39 +29,25 @@ at a moment you chose instead:
 
 ## How a bench is put together
 
-Three rules, and everything else follows from them.
+**No upstream repository is modified.** A bench that needs one clones it at a
+pinned commit and leaves it unchanged; what we add lives beside the clone and is
+applied at run time. `setup.sh --check` asserts a clone is byte-for-byte its
+pinned commit and reports it as *drifted* otherwise.
 
-**Nothing upstream is modified.** This repository contains no copy of, and no
-patch to, any benchmark repository. A bench that needs one clones it at a pinned
-commit and leaves it exactly as it found it; the changes we need are applied at
-run time, from our own tree. `setup.sh --check` asserts that a clone is
-byte-for-byte its pinned commit, and reports it as *drifted* if not — a modified
-clone means the numbers came from something other than the benchmark it claims
-to be.
-
-**Every bench has its own locked environment.** The benches do not agree with
-each other about torch, transformers, pydantic or inspect_ai, and resolving them
-together either fails or silently degrades whichever one loses the tie-break.
-Each therefore gets a virtualenv of its own under `.envs/`, built from a
-committed, fully-hashed lock in [`envs/`](envs/). The repository's own `.venv`
-stays out of it: `uv sync` at the root pulls no benchmark dependency, and a
-contributor who never runs an eval never pays for one.
-
-An environment that resolves fresh on each machine is not an eval environment —
-two people get different transitive versions and their numbers quietly stop
-being comparable. Changing what an environment resolves to is therefore a
-deliberate act with a reviewable diff:
+**Every bench has its own locked environment**, under `.envs/`, installed from a
+committed, fully-hashed lock in [`envs/`](envs/) and never resolved at build
+time. The repository's own `.venv` is not involved: `uv sync` at the root pulls
+no benchmark dependency. One command changes what an environment resolves to,
+and it produces a reviewable diff:
 
 ```bash
 ./evals/Literature/setup.sh --relock labbench   # envs/labbench.in -> .lock
 ```
 
-**Environments build on demand.** Installing every bench up front costs several
-GB for someone who wants one row of one table, so the first run of a bench
-builds its environment and stamps it with a hash of the lock, the pinned commit
-and the Python version. A mismatch rebuilds — which is what stops a stale
-environment surviving a lock bump. `setup.sh --bench <name>` does the same thing
-eagerly. `--dry-run` deliberately builds nothing.
+**Environments build on demand.** The first run of a bench builds its
+environment and stamps it with a hash of the lock, the pinned commit and the
+Python version; a mismatch rebuilds. `setup.sh --bench <name>` does the same
+eagerly, and `--dry-run` builds nothing.
 
 ### What a bench declares
 
@@ -81,28 +67,25 @@ envs_optional=sqa-scoring   # of those, ones eager setup may skip here
 ```
 
 Each environment is `envs/<name>.lock`, compiled from `envs/<name>.in`. A bench
-declares more than one when its parts run on different machines — generating
-answers on a laptop and scoring them on a GPU box — because forcing a CUDA
-scoring stack into the generation environment would stop the generation half
-installing at all. An `.in` file can say how it must be resolved:
+declares more than one when its parts run on different machines, such as
+generating answers on a laptop and scoring them on a GPU box. An `.in` file can
+say how it must be resolved:
 
 ```
 # uv-compile-args: --python-platform x86_64-unknown-linux-gnu
 ```
 
-which is how a lock for a GPU box stays correct when it is regenerated on a
-laptop. An environment listed in `envs_optional` may fail to build during eager
-setup without failing the setup — a laptop can still prepare a bench whose
-scoring half is CUDA-only. A *run* that reaches that half and cannot build it
-still fails, which is the right moment to find out.
+which is how a lock for a GPU box is regenerated on a laptop. An environment
+listed in `envs_optional` may fail to build during eager setup without failing
+the setup; a run that needs it tries again and fails there.
 
 `envs/_librarian.in` is the shared base every bench includes — the librarian's
 own runtime dependencies, since every bench runs the agent in-process.
 
 The repository is not a package (`[tool.uv] package = false`), so its code
 reaches a bench environment on `PYTHONPATH` rather than through an install. Only
-its dependencies are in the lock, and `envs/_librarian.in` has to be kept in
-step with `pyproject.toml` by hand.
+its dependencies are in the lock; keep `envs/_librarian.in` in step with
+`pyproject.toml` by hand.
 
 ## Configuration
 
@@ -121,8 +104,7 @@ LITERATURE_EVAL_CONFIG=~/my_eval.toml ./evals/Literature/literature_eval.sh --be
 ```
 
 `paths.python` names the interpreter the per-bench environments are *built
-from*, not one the runners share — changing it rebuilds all of them, because
-wheels are not portable across a Python minor version.
+from*, not one the runners share. Changing it rebuilds all of them.
 
 ## LAB-Bench
 
@@ -139,14 +121,13 @@ a task name or a model name and narrows to either axis. TableQA exists in the
 runner but is not in the paper table, so it is excluded unless asked for. See
 [`LabBench/README.md`](LabBench/README.md) and `run_labbench.sh -h`.
 
-## Reference results, and what a delta means
+## Reference results
 
 The paper's numbers are GLM-5 (`zai-org/GLM-5-FP8`, served as `glm-5-fp8`) with
 the retrieval knobs now in `librarian/config.toml`. These scripts pass no knob
 overrides, so a rerun measures the agent as currently configured: expect close,
-not identical. A different librarian model makes a result **incomparable rather
-than wrong** — say which you used. A delta is not automatically a bug; report it
-rather than tuning the scripts until it goes away.
+not identical. Say which librarian model you used — a different one makes a
+result incomparable rather than wrong.
 
 ## Layout
 
