@@ -1,0 +1,8 @@
+# LAB-Bench. The lightest of the four: no upstream clone, no local scoring
+# stack. The dataset streams from the Hugging Face Hub at run time and the
+# answering models are API-hosted, so this is the librarian plus an HTTP client.
+-r _librarian.in
+
+openai>=1.40.0
+datasets>=2.19.0   # only used when loading from the Hub (no --data-file)
+tqdm>=4.66.0
