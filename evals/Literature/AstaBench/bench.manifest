@@ -1,0 +1,13 @@
+# See ../setup.sh for the format.
+#
+# The clone is a pinned, pristine input, installed into the bench environment by
+# post_install.sh rather than modified. LitQA2 is the only AstaBench task this
+# harness runs; its other benchmarks come from the clone untouched and unused.
+bench=litqa2
+name=AstaBench
+url=https://github.com/allenai/asta-bench.git
+commit=a9e338070ffff195cb4cc5ddcbcf9ca8805f141d
+clone=vendor
+post_install=post_install.sh
+run=run_litqa2.sh
+order=10

@@ -23,3 +23,8 @@ evals/Literature/SQA_bench/data/*/*
 # ProClaim_src/datasets/, and are read straight from there.
 evals/Literature/ProClaim/ProClaim_src/
 evals/Literature/ProClaim/data/
+# AstaBench: a pinned, pristine clone. LitQA2's 91-question split is rebuilt on
+# first use from the Hub; the committed id list beside it is what pins it.
+evals/Literature/AstaBench/vendor/
+evals/Literature/AstaBench/data/*/*
+!evals/Literature/AstaBench/data/*/*_ids.txt
