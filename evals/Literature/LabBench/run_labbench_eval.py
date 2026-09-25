@@ -24,8 +24,8 @@ Evaluates an answering LLM (default ``gpt-4o-2024-05-13``) in one of two modes:
                      question, its passages are injected, the model answers in one
                      call.
 
-Run both with the same --seed to get a fair, apples-to-apples comparison on
-identical shuffled options, and compare accuracy / precision / coverage.
+Run both with the same --seed to compare accuracy / precision / coverage over
+identically shuffled options.
 
 The prompt template, option layout, refusal option, answer parsing, and metrics
 all match the upstream LAB-Bench harness (see labbench_compat.py).
@@ -127,10 +127,8 @@ def _evidence_entries(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     The librarian returns a flat list whose chunks live under
     ``evidence_snippets``; ``format_evidence`` wants entries with those chunks
-    under ``evidence``. Passing the list through raw made every knowledge-mode
-    question die on ``'list' object has no attribute 'get'`` and score as
-    zero-evidence. Shared by the in-process and --via-api paths, which receive
-    the identical record shape.
+    under ``evidence``. The in-process and --via-api paths receive the same
+    record shape and share this.
     """
     return [
         {
@@ -149,8 +147,8 @@ def build_search_fn(args: argparse.Namespace):
     The LibrarianAgent is imported lazily so --mode baseline never needs its deps.
     """
     if args.via_api:
-        # The orchestrator ships LibrarianAgent.run()'s records verbatim, so the
-        # adapter below is the same one the in-process path uses.
+        # The orchestrator ships LibrarianAgent.run()'s records verbatim, so
+        # both paths use the same adapter.
         from evals.Literature import orchestrator_client
 
         def search_via_api(query: str) -> dict[str, Any]:
@@ -179,12 +177,8 @@ def build_search_fn(args: argparse.Namespace):
     def search(query: str) -> dict[str, Any]:
         """Adapt LibrarianAgent's output to the ``search_fn`` result-dict contract.
 
-        ``LibrarianAgent.run`` returns a flat *list* of per-paper passages whose
-        chunks live under ``evidence_snippets`` — one output shape shared by every
-        librarian consumer. ``format_evidence`` wants ``{"evidence": [...]}`` with
-        each entry's chunks under ``evidence``. Adapting here keeps the librarian
-        unchanged; passing its list through raw made every knowledge-mode question
-        die on ``'list' object has no attribute 'get'`` and score as zero-evidence.
+        ``LibrarianAgent.run`` returns a flat list of per-paper passages;
+        ``format_evidence`` wants ``{"evidence": [...]}``.
         """
         return {"evidence": _evidence_entries(agent.run(query))}
 
@@ -272,9 +266,8 @@ def _answer_question(args: argparse.Namespace, question) -> dict[str, Any]:
         "correct": correct,
         "sure": sure,
         "parse_failure": predicted is None,
-        # An infra failure (rate limit, timeout, network) is NOT a model answer —
-        # flag it so it is excluded from metrics and re-run on --resume instead of
-        # counting as a wrong answer.
+        # An infra failure (rate limit, timeout, network) rather than a model
+        # answer: excluded from metrics, and re-run by --resume.
         "error": errored,
         "raw_output": raw_output,
         "metadata": metadata,
@@ -299,8 +292,8 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
         raise SystemExit(f"No {args.task} questions loaded.")
     LOGGER.info("Loaded %d %s question(s).", len(questions), args.task)
 
-    # Resume: keep only successfully-answered rows; drop errored ones so they are
-    # re-run (a transient rate limit / timeout should not be cached as a result).
+    # Resume: keep only successfully-answered rows, and drop errored ones so
+    # they are re-run.
     rows: list[dict[str, Any]] = []
     existing_ids: set[str] = set()
     if args.resume and predictions_path.exists():
@@ -308,9 +301,8 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
         dropped = 0
         # Split on "\n" only, never str.splitlines(): rows are written with
         # ensure_ascii=False, which leaves U+2028/U+2029/U+0085 raw inside JSON
-        # strings (legal JSON), and splitlines() treats those as line breaks — it
-        # shreds one row into several and the JSON parse then dies. ProtocolQA
-        # protocols are full of U+2028, so every ProtocolQA resume hit this.
+        # strings, and splitlines() treats those as line breaks, shredding one
+        # row into several.
         for line in predictions_path.read_text(encoding="utf-8").split("\n"):
             line = line.strip()
             if not line:
@@ -321,16 +313,14 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
                 continue
             kept.append(r)
             existing_ids.add(str(r["id"]))
-        # Resuming with a different --model would leave the kept rows answered by the
-        # old model while metrics.json / summary.md / run_config.json get restamped
-        # with the new one — an arm silently mislabelled as the wrong model. Bail out
-        # before anything on disk is touched.
+        # Refuse a resume into rows answered by a different model, before
+        # anything on disk is rewritten.
         prior_models = {str(r["model"]) for r in kept if r.get("model")}
         if prior_models and str(args.model) not in prior_models:
             raise SystemExit(
                 f"Refusing to resume {out_dir}: its rows were answered by "
-                f"{sorted(prior_models)}, but --model is {args.model!r}. Resuming "
-                "would restamp this run as the wrong model. Use a fresh --out-dir."
+                f"{sorted(prior_models)}, but --model is {args.model!r}. "
+                "Use a fresh --out-dir."
             )
         rows = kept
         # Rewrite the file without the errored rows so they re-run cleanly.
@@ -358,8 +348,7 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
                 futures = {pool.submit(_answer_question, args, q): q for q in pending}
                 for future in as_completed(futures):
                     # solver.answer failures are captured into the row; only an
-                    # agent-construction failure propagates here, which is fatal
-                    # for the whole run anyway.
+                    # agent-construction failure propagates here.
                     row = future.result()
                     with write_lock:
                         rows.append(row)
@@ -386,9 +375,7 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
     n_errors = len(rows) - len(scored_rows)
     metrics = compute_metrics(scored_rows)
     metrics["n_errors"] = n_errors
-    # Full dataset size. The rates below are computed over scored_rows only, so
-    # without this a partially-errored run is indistinguishable from a complete one
-    # (e.g. ProtocolQA reporting accuracy over 81 of its 108 questions).
+    # Full dataset size; every rate above is computed over scored_rows only.
     metrics["n_questions"] = len(questions)
     if n_errors:
         LOGGER.warning(
@@ -454,8 +441,8 @@ def render_summary(args: argparse.Namespace, metrics: dict[str, Any]) -> str:
         + f"- Questions: {metrics['n_total']}"
         + (
             f" of {metrics['n_questions']} — **{metrics['n_errors']} question(s)"
-            " errored and are EXCLUDED from the rates below, so these are not"
-            " comparable to a complete run. Re-run with `--resume`.**"
+            " errored and are EXCLUDED from the rates below. Re-run with"
+            " `--resume`.**"
             if metrics.get("n_errors")
             else ""
         )
@@ -555,8 +542,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Strip long DNA/RNA sequence runs from the literature *search query* "
         "(the answering prompt keeps the full sequence). Default depends on the "
-        "task (on for SeqQA/CloningScenarios, off otherwise) — raw sequences make "
-        "poor Europe PMC queries.",
+        "task: on for SeqQA and CloningScenarios, off otherwise.",
     )
     parser.add_argument(
         "--evidence-char-budget",
@@ -610,9 +596,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--max-workers",
         type=int,
         default=8,
-        help="Questions answered concurrently. Each worker gets its own agent; "
-        "their LLM calls are continuous-batched by vLLM. EPMC bounds this on a "
-        "Europe PMC is queried live on every question, so raise it only as "
+        help="Questions answered concurrently. Each worker gets its own agent, "
+        "and Europe PMC is queried live on every question, so raise this only as "
         "far as that API tolerates.",
     )
     parser.add_argument("--no-progress", action="store_true")
@@ -624,8 +609,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.strip_query_sequences is None:
         # Fall back to the task's default when the flag is not given.
         args.strip_query_sequences = TASKS[args.task].strip_query_sequences
-    # The pods run whatever librarian config they were deployed with, so no
-    # per-run knob applies on that path; fail now rather than ignore one.
+    # --via-api uses the librarian the server was deployed with, so the per-run
+    # knobs below cannot apply to it.
     if args.via_api:
         conflicts = [
             flag

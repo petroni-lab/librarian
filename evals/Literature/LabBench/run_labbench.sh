@@ -9,9 +9,9 @@
 # model name and narrows to it. TableQA exists in the runner but is not in the
 # paper table, so it is excluded by default; reach it with --only TableQA.
 #
-# No --data-file: `data_file` is null in all 34 recovered run configs — the gated
-# HF futurehouse/lab-bench dataset IS the paper's ~80% public subset (n = 520 /
-# 600 / 108 / 33). `huggingface-cli login` is the only data prerequisite.
+# No --data-file: the gated HF futurehouse/lab-bench dataset is the paper's ~80%
+# public subset (n = 520 / 600 / 108 / 33) and is streamed at run time, so
+# `hf auth login` is the only data prerequisite.
 #
 # Baseline row: the same command with --mode baseline (parametric LLM).
 #
@@ -23,21 +23,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 # This bench runs in its own locked environment, built on first use. The
-# repository is not a package, so its code arrives on PYTHONPATH rather than
-# through an install; only its dependencies are in the lock.
+# repository is not a package, so its code arrives on PYTHONPATH.
 # shellcheck source=evals/Literature/bench_env.sh
 . "$SCRIPT_DIR/../bench_env.sh"
 export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 LIBRARIAN_URL="${LIBRARIAN_URL:-}"
 LIBRARIAN_MODEL="${LIBRARIAN_MODEL:-glm-5-fp8}"
 ANSWER_MODEL="${ANSWER_MODEL:-gpt-5.4}"
-# Plain alias, deliberately NOT the -2024-05-13 snapshot that is the runner's own
-# default: the recovered run configs all record the alias.
+# The plain alias, not the -2024-05-13 snapshot the runner itself defaults to.
 LABBENCH_GPT4O_MODEL="${LABBENCH_GPT4O_MODEL:-gpt-4o}"
 RESULTS_ROOT="${RESULTS_ROOT:-$SCRIPT_DIR/../results_paper}"
-# 16 on the API path (measured on SQA: the ceiling is the librarian's 8-way
-# judge fan-out, not the bench). In-process every worker runs Stage-2 BM25 on
-# this box, so that default stays where it was.
+# 16 on the API path; 8 in-process, where each worker also runs Stage-2 BM25
+# on this box.
 if [ "${VIA_API:-false}" = true ]; then
     MAX_WORKERS="${MAX_WORKERS:-16}"
 else
@@ -54,7 +51,7 @@ while [ $# -gt 0 ]; do
         --only) ONLY="${ONLY:+$ONLY,}$2"; shift 2 ;;
         --limit) LIMIT="$2"; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
-        -h|--help) sed -n '1,19p' "$0"; exit 0 ;;
+        -h|--help) sed -n '/^set -euo/q;p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -62,8 +59,8 @@ done
 # Only the in-process path opens this endpoint.
 [ "${VIA_API:-false}" = true ] || [ -n "$LIBRARIAN_URL" ] || { echo "ERROR: set LIBRARIAN_URL (or use the API path)." >&2; exit 1; }
 
-# --only matches either axis, so `--only DbQA` and `--only gpt-4o` both work, and
-# repeating it (or comma-separating) narrows both: --only DbQA --only gpt-4o.
+# --only matches either axis: `--only DbQA` and `--only gpt-4o` both work, and
+# repeating or comma-separating it narrows both.
 if [ -n "$ONLY" ]; then
     only_tasks=() only_models=()
     IFS=',' read -r -a only_tokens <<< "$ONLY"
@@ -77,15 +74,14 @@ if [ -n "$ONLY" ]; then
     [ "${#only_models[@]}" -gt 0 ] && MODELS=("${only_models[@]}")
 fi
 
-# Resolved once: the check is cheap but not free, and a dry run must not build.
+# Resolved once; a dry run prints the path and builds nothing.
 LABBENCH_PYTHON="$(bench_python_maybe labbench "$DRY_RUN")"
 
 ran_any=false
 for task in "${TASKS[@]}"; do
     for model in "${MODELS[@]}"; do
-        # The retriever must be in the path: --resume keys on this directory and
-        # only knows the answering model, so sharing it between the API and
-        # in-process paths let a resumed run mix two retrievers in one result.
+        # The retriever is part of the directory name, which is what --resume
+        # keys on; the two paths must not share one.
         if [ "${VIA_API:-false}" = true ]; then
             out_dir="$RESULTS_ROOT/labbench_${task}_${model}_librarian_api"
         else
@@ -98,9 +94,8 @@ for task in "${TASKS[@]}"; do
             --max-workers "$MAX_WORKERS" --resume
             --out-dir "$out_dir"
         )
-        # Retrieval runs on the pods under --via-api, with their deployed model,
-        # so naming --agent-model/--agent-base-url there would be a claim the
-        # eval rightly refuses. Pass them only on the in-process path.
+        # Under --via-api retrieval runs server-side with the model it was
+        # deployed with, and the runner rejects these two flags there.
         if [ "${VIA_API:-false}" = true ]; then
             cmd+=(--via-api)
         else
@@ -116,7 +111,7 @@ for task in "${TASKS[@]}"; do
     done
 done
 
-# How the paper table was aggregated: one audit pass over every result dir.
+# One audit pass over every result directory, as the paper table was aggregated.
 audit=("$LABBENCH_PYTHON" -m evals.Literature.LabBench.audit_results "$RESULTS_ROOT")
 echo "RUN   (cd $REPO_ROOT && ${audit[*]})"
 if [ "$DRY_RUN" != true ] && [ "$ran_any" = true ]; then

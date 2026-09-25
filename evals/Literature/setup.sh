@@ -3,24 +3,19 @@
 #
 #   ./evals/Literature/setup.sh [--bench <name>[,<name>...]] [--check] [--relock [name]]
 #
-# This repository contains no copy of, and no patch to, any upstream benchmark.
-# Every change we needed lives in our own tree and is applied at run time; the
-# clones this script makes are pinned, read-only inputs. `--check` asserts that:
-# a clone that differs from its pinned commit in any way is reported as drifted,
-# because a modified clone means the numbers came from something other than the
-# benchmark it claims to be.
-#
 #   --bench    act on these benches only (default: all that are present)
 #   --check    report what is present, missing or drifted, and exit non-zero if
 #              anything needs doing. Never builds, fetches or writes.
-#   --relock   regenerate envs/<bench>.lock from envs/<bench>.in and exit. This
-#              is the only thing that changes what an environment resolves to,
-#              and it produces a reviewable diff.
+#   --relock   regenerate envs/<bench>.lock from envs/<bench>.in and exit.
+#
+# The clones are pinned to a commit and left unmodified; everything this
+# repository adds to a bench lives beside the clone and is applied at run time.
+# `--check` reports a clone that differs from its pinned commit as drifted.
 #
 # WHAT A BENCH DECLARES
 #
-# Each bench directory carries a `bench.manifest`, so this script needs no list
-# of its own and a bench can be added or removed without touching it:
+# Each bench directory carries a `bench.manifest`; this script reads them all
+# and holds no list of its own:
 #
 #   bench=sqa                                  the name used by --bench
 #   name=ScholarQABench                        what to call it in output
@@ -34,17 +29,11 @@
 #                                              skip when they will not build here
 #
 # Each environment is envs/<name>.lock, compiled from envs/<name>.in. A bench
-# declares more than one when its parts run on different machines — generating
-# answers on a laptop and scoring them on a GPU box.
-#
-# A repository is pinned by commit rather than by branch because the run-time
-# patches are written against one tree, and a moving `main` would eventually
-# meet code they no longer fit.
+# declares more than one when its parts run on different machines, such as
+# generating answers on a laptop and scoring them on a GPU box.
 #
 # The clone directories are git-ignored and disposable: a re-run resets them to
-# the pinned commit, so edits inside them do not survive. There is deliberately
-# nowhere in this repository to make one — our code sits beside the clone and
-# patches it in memory.
+# the pinned commit, so edits inside them do not survive.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -67,7 +56,7 @@ while [ $# -gt 0 ]; do
             case "${2:-}" in -*|"") ;; *) RELOCK_WHAT="$2"; shift ;; esac
             ;;
         --relock=*) RELOCK=true; RELOCK_WHAT="${1#--relock=}" ;;
-        -h|--help) sed -n '1,45p' "$0"; exit 0 ;;
+        -h|--help) sed -n '/^set -euo/q;p' "$0"; exit 0 ;;
         *) echo "usage: $0 [--bench <name>[,...]] [--check] [--relock [name]]" >&2; exit 2 ;;
     esac
     shift
@@ -102,8 +91,7 @@ if [ "$WANT" != "all" ]; then
 fi
 
 # ── --relock ─────────────────────────────────────────────────────────────────
-# Regenerating a lock is not part of setting up: it changes what everyone
-# resolves to, so it is an explicit request with its own exit.
+# Regenerate locks and exit; --relock sets nothing else up.
 
 relock_one() {
     local bench="$1" spec lock
@@ -112,8 +100,7 @@ relock_one() {
     [ -f "$spec" ] || { echo "ERROR: no spec at $spec" >&2; return 1; }
     command -v uv >/dev/null 2>&1 || { echo "ERROR: --relock needs uv" >&2; return 1; }
     echo "RELOCK  $bench: $(basename "$spec") -> $(basename "$lock")"
-    # --generate-hashes so a lock pins content, not just a version number; a
-    # yanked-and-replaced release should fail the install, not change it.
+    # --generate-hashes pins file content, not just a version number.
     # shellcheck disable=SC2046
     uv pip compile --quiet --generate-hashes \
         --python-version "$(_bench_base_python_version)" \
@@ -150,8 +137,7 @@ fetch_repo() {
         fi
         echo "RESET   $name ${have:0:12} -> ${sha:0:12}"
     else
-        # An empty directory is a leftover (rm -rf on NFS often leaves them);
-        # anything else there is someone's, and not ours to overwrite.
+        # Remove an empty leftover directory; anything else is not ours.
         if [ -e "$dest" ]; then
             rmdir "$dest" 2>/dev/null || {
                 echo "ERROR: $dest exists but is not a git clone" >&2; exit 1; }
@@ -162,8 +148,8 @@ fetch_repo() {
         git -C "$dest" remote add origin "$url"
     fi
 
-    # Ask for the one commit rather than the history; fall back to a full fetch
-    # for a server that will not serve an arbitrary sha.
+    # Fetch the one commit, falling back to a full fetch for a server that
+    # will not serve an arbitrary sha.
     if ! git -C "$dest" fetch --quiet --depth 1 origin "$sha" 2>/dev/null; then
         git -C "$dest" fetch --quiet origin || {
             echo "ERROR: could not fetch $url" >&2; exit 1; }
@@ -173,8 +159,7 @@ fetch_repo() {
     git -C "$dest" clean -qfd
 }
 
-# The invariant this whole layout exists to make checkable: the clone is
-# byte-for-byte the pinned upstream commit. Nothing we ship is inside it.
+# A clone passes only at its pinned commit with no local modifications.
 check_repo() {
     local name="$1" sha="$2" dest="$3"
     if [ ! -d "$dest/.git" ]; then
@@ -188,7 +173,7 @@ check_repo() {
         return 1
     fi
     if ! git -C "$dest" diff --quiet 2>/dev/null || [ -n "$(git -C "$dest" status --porcelain 2>/dev/null)" ]; then
-        echo "DRIFTED $name @ ${sha:0:12} has local modifications; it must be pristine"
+        echo "DRIFTED $name @ ${sha:0:12} has local modifications"
         return 1
     fi
     echo "OK      $name @ ${sha:0:12}, pristine"
@@ -213,9 +198,7 @@ for bench in $(all_benches); do
         fi
     fi
 
-    # Data preparation, if the bench has any: rebuilding a subset from a
-    # committed id list, copying gold files out of the clone, and so on. Never
-    # a download of anything we are not allowed to redistribute.
+    # Data preparation, for a bench that declares a post_fetch hook.
     post_fetch="$(bench_manifest_get "$manifest" post_fetch)"
     if [ -n "$post_fetch" ]; then
         if [ "$CHECK_ONLY" = true ]; then
@@ -227,8 +210,7 @@ for bench in $(all_benches); do
         fi
     fi
 
-    # The environment. Eager here, lazy at run time — same builder either way,
-    # so a warm setup and a cold first run cannot end up with different trees.
+    # The environments. A run builds any that are still missing, the same way.
     for env_name in $(bench_envs "$bench"); do
         optional=false
         bench_env_is_optional "$bench" "$env_name" && optional=true
@@ -236,18 +218,16 @@ for bench in $(all_benches); do
             if bench_env_check "$env_name"; then
                 :
             elif [ "$optional" = true ]; then
-                echo "        (optional here; built on demand by a run that needs it)"
+                echo "        (optional; built on demand by a run that needs it)"
             else
                 missing=$((missing + 1))
             fi
         elif [ "$optional" = true ]; then
-            # An optional environment that will not build on this machine is not
-            # a failed setup: it is a machine that does not run that half.
             bench_python "$env_name" >/dev/null || {
                 echo "SKIP    $env_name environment does not build here."
-                echo "        This machine cannot host it — see envs/$env_name.in for what"
-                echo "        it needs. The rest of $bench is set up, and a run that"
-                echo "        reaches this half will try again and fail there instead."
+                echo "        See envs/$env_name.in for what it requires. The rest of"
+                echo "        $bench is set up; a run that needs this environment will"
+                echo "        try again and fail there."
             }
         else
             bench_python "$env_name" >/dev/null
@@ -265,6 +245,6 @@ if [ "$CHECK_ONLY" = true ]; then
 fi
 
 echo
-echo "Ready ($WANT). The clones are pinned and pristine; the environments are"
-echo "built from committed locks under evals/Literature/envs/."
-echo "Both are git-ignored and rebuilt by re-running this script."
+echo "Ready ($WANT). Clones are at their pinned commits; environments are built"
+echo "from the locks under evals/Literature/envs/. Both are git-ignored, and"
+echo "re-running this script rebuilds them."
