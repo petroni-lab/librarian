@@ -1,0 +1,10 @@
+# ScholarQA-Bench, generation half: answering the questions.
+#
+# Pure network — the librarian plus a synthesis model over an HTTP endpoint — so
+# this installs anywhere, including a laptop, and needs no GPU. The scorers are
+# deliberately NOT here; they are sqa-scoring.in, which resolves against CUDA.
+# That split is what lets `--skip-citation-eval` generate answers on a CPU box
+# and score them somewhere else.
+-r _librarian.in
+
+tqdm>=4.66

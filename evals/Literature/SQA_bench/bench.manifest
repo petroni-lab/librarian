@@ -1,0 +1,19 @@
+# See ../setup.sh for the format.
+#
+# Two environments: `sqa` generates answers and installs anywhere, `sqa-scoring`
+# is the CUDA AutoAIS and Prometheus stack and is built only when a run reaches
+# a scoring step. The clone is a pinned, pristine input — the scorers we changed
+# live in scorers/, not inside it.
+bench=sqa
+name=ScholarQABench
+url=https://github.com/AkariAsai/ScholarQABench.git
+commit=95e6fc52b0a8a0ce0a74956029991e3bb00c38b9
+clone=code
+post_fetch=prepare_data.sh
+envs=sqa,sqa-scoring
+# sqa-scoring only installs on Linux with CUDA. Optional means a laptop can
+# still set this bench up and generate answers; the scoring environment is
+# built on demand, on the machine that will actually score.
+envs_optional=sqa-scoring
+run=run_sqa.sh
+order=40
