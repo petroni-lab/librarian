@@ -19,3 +19,7 @@ evals/Literature/SQA_bench/data/*
 !evals/Literature/SQA_bench/data/*/
 evals/Literature/SQA_bench/data/*/*
 !evals/Literature/SQA_bench/data/*/*_ids.txt
+# ProClaim: a pinned, pristine clone. Its two claim sets arrive with it, at
+# ProClaim_src/datasets/, and are read straight from there.
+evals/Literature/ProClaim/ProClaim_src/
+evals/Literature/ProClaim/data/

@@ -1,0 +1,12 @@
+# ProClaim-eval, arm 1: the Verifier Agent (paper row 0.66).
+#
+# One prompt per claim: librarian retrieval, then a Sonnet verdict. It never
+# imports ProClaim, so it needs none of ProClaim's stack and installs anywhere.
+# `--only verifier` runs on this alone.
+#
+# Arm 2, the full ProClaim pipeline, is proclaim-pipeline.in.
+-r _librarian.in
+
+anthropic>=0.87.0      # the verdict model
+PyYAML>=6.0            # reading the librarian configs
+tqdm>=4.66
