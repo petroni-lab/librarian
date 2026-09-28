@@ -510,9 +510,6 @@ class _LibrarianSynthesisPipeline:
         """The synthesis client, which is the one ``--no-librarian`` answers on."""
         return self.synthesis.llm
 
-    def _summarize(self, question: str, passages: list) -> str:
-        return self.synthesis.run(question, passages)
-
     def run(self, question: str) -> dict:
         passages = self.librarian.run(question)
         return {
