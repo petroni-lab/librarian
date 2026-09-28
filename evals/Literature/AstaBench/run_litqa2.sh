@@ -15,8 +15,13 @@
 #   --solver llm_web_search    Web Search
 #   --solver openscholar_api   OpenScholar-8B
 #
-# Env: LIBRARIAN_URL (required), LIBRARIAN_MODEL, ANSWER_MODEL, ANSWER_URL,
-#      LITQA2_JUDGE_MODEL, RESULTS_ROOT, LIMIT, MAX_CONNECTIONS, DRY_RUN.
+# OPENAI_BASE_URL must be unset or point at api.openai.com: the judge runs on
+# inspect_ai's openai provider, and a local endpoint there would self-judge.
+#
+# Env: LIBRARIAN_URL (required unless VIA_API), LIBRARIAN_MODEL, ANSWER_MODEL,
+#      ANSWER_URL, LITQA2_JUDGE_MODEL, RESULTS_ROOT, LIMIT, MAX_SAMPLES,
+#      MAX_CONNECTIONS, VIA_API, LIBRARIAN_API_URL, LIBRARIAN_API_MODEL,
+#      DRY_RUN.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,7 +53,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) DRY_RUN=true; shift ;;
         --limit) LIMIT="$2"; shift 2 ;;
-        -h|--help) sed -n '1,19p' "$0"; exit 0 ;;
+        -h|--help) sed -n '1,24p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done

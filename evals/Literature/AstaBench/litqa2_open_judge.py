@@ -125,7 +125,7 @@ def _load_litqa2_europepmc_fulltext_subset() -> list[dict[str, Any]]:
     if not DEFAULT_LITQA2_EUROPEPMC_FULLTEXT_SUBSET.exists():
         raise FileNotFoundError(
             "Missing LitQA2 EuropePMC fulltext subset. Generate it with "
-            "`python evals/AstaBench/check_litqa2_europepmc_fulltext.py`."
+            "`python evals/Literature/AstaBench/check_litqa2_europepmc_fulltext.py`."
         )
     with DEFAULT_LITQA2_EUROPEPMC_FULLTEXT_SUBSET.open() as handle:
         payload = json.load(handle)
