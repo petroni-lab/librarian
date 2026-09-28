@@ -28,7 +28,11 @@
 #      (these four default to what the YAML config pins), PROCLAIM_CONFIG_REL,
 #      PROCLAIM_APPTAINER_IMAGE, PROCLAIM_SRC, PROCLAIM_SUBAGENT_HF_MODEL,
 #      PROCLAIM_SUBAGENT_WAIT_SECONDS, RESULTS_ROOT, LIMIT, ONLY, VIA_API,
-#      DRY_RUN. ANTHROPIC_API_KEY must be set.
+#      PROCLAIM_VERDICT_API_KEY_ENV, DRY_RUN.
+#
+# ANTHROPIC_API_KEY is needed only while the verdict endpoint is Anthropic's,
+# which is the default. Point PROCLAIM_VERDICT_URL at a self-hosted
+# OpenAI-compatible endpoint and the bench runs without any key.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -74,7 +78,7 @@ while [ $# -gt 0 ]; do
         --only) ONLY="${ONLY:+$ONLY,}$2"; shift 2 ;;
         --limit) LIMIT="$2"; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
-        -h|--help) sed -n '1,31p' "$0"; exit 0 ;;
+        -h|--help) sed -n '1,35p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -295,10 +299,15 @@ if want verifier; then
         --llm-base-url "$LIBRARIAN_URL" --llm-model "$LIBRARIAN_MODEL"
         --verdict-base-url "$PROCLAIM_VERDICT_URL"
         --verdict-model "$PROCLAIM_VERDICT_MODEL"
-        --verdict-api-key-env ANTHROPIC_API_KEY
         --resume --cache
         --out-dir "$out_dir"
     )
+    # Only a hosted endpoint needs a key; a self-hosted one ignores it and the
+    # verifier supplies a placeholder.
+    [ "$VERDICT_IS_ANTHROPIC" = true ] \
+        && cmd+=(--verdict-api-key-env "${PROCLAIM_VERDICT_API_KEY_ENV:-ANTHROPIC_API_KEY}")
+    [ -n "${PROCLAIM_VERDICT_API_KEY_ENV:-}" ] && [ "$VERDICT_IS_ANTHROPIC" != true ] \
+        && cmd+=(--verdict-api-key-env "$PROCLAIM_VERDICT_API_KEY_ENV")
     [ -n "${LIMIT:-}" ] && cmd+=(--max-examples "$LIMIT")
     echo "RUN   (cd $REPO_ROOT && ${cmd[*]})"
     if [ "$DRY_RUN" != true ]; then

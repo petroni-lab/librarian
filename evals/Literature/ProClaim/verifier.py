@@ -1830,6 +1830,16 @@ def _load_model_config(path: Path | None) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+#: Hosts that authenticate. Anything else is assumed self-hosted, where the
+#: OpenAI-compatible client still wants a non-empty key but the server ignores it.
+API_KEY_HOSTS = ("api.anthropic.com", "api.openai.com")
+
+
+def _endpoint_needs_api_key(base_url: str) -> bool:
+    """True when *base_url* is a hosted API rather than a self-hosted endpoint."""
+    return any(host in (base_url or "") for host in API_KEY_HOSTS)
+
+
 def _config_from_args(args: argparse.Namespace) -> EvalConfig:
     payload = _load_model_config(args.model_config)
 
@@ -1877,8 +1887,18 @@ def _config_from_args(args: argparse.Namespace) -> EvalConfig:
     verdict_key_env = args.verdict_api_key_env or get_config("verdict_api_key_env")
     if verdict_key_env:
         config.verdict_api_key = os.environ.get(verdict_key_env)
-        if not config.verdict_api_key:
-            raise SystemExit(f"Verdict API key env var {verdict_key_env} is empty.")
+    verdict_url = config.verdict_base_url or config.llm_base_url or ""
+    if not config.verdict_api_key:
+        # A self-hosted endpoint ignores the key but the OpenAI client still
+        # requires a non-empty string; a hosted one cannot work without a real
+        # one, so say so here rather than per-claim, as an unparseable verdict.
+        if _endpoint_needs_api_key(verdict_url):
+            raise SystemExit(
+                f"The verdict endpoint {verdict_url} needs an API key. Set "
+                f"{verdict_key_env or 'the key variable'}, or point "
+                "--verdict-base-url at a self-hosted endpoint."
+            )
+        config.verdict_api_key = "EMPTY"
     if args.no_agent:
         config.no_agent = True
     if args.librarian_agent:
