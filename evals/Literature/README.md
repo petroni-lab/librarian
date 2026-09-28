@@ -139,6 +139,7 @@ evals/Literature/
   literature_eval.toml  every endpoint, model and path
   load_config.py        the TOML -> environment-variable mapping
   llm_compat.py         one LLM client surface across the benches
+  evidence_text.py      retrieved evidence, flattened for a prompt
   orchestrator_client.py  the --via-api transport
   envs/                 _librarian.in + one .in/.lock pair per bench
   .envs/                built virtualenvs (git-ignored, disposable)
