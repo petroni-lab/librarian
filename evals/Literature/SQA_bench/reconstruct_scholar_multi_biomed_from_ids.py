@@ -1,17 +1,9 @@
 """Reconstruct scholar_multi_biomed_eval.json from a public id list.
 
-Given a plain-text file of ids (one per line, e.g.
-data/scholarqa_multi/scholar_multi_biomed_public_subset_ids.txt), filters the
-full Scholar-Multi gold-reference file (data/scholarqa_multi/human_answers.json,
-the ScholarQABench Multi domain gold-reference file) down to just those ids
-and writes them out in the same shape as scholar_multi_biomed_eval.json.
-
-Requires human_answers.json to already be present locally -- the id list alone
-does not carry its question/context/answer content. ``../setup.sh --bench sqa``
-puts it there, out of the ScholarQABench clone; upstream it is
-
-    https://github.com/AkariAsai/ScholarQABench
-    data/scholarqa_multi/human_answers.json
+Filters the Scholar-Multi gold-reference file down to the ids in a plain-text
+list, one per line, and writes them in the same shape. Defaults are the
+committed id list and the gold file ``../setup.sh --bench sqa`` copies out of the
+ScholarQABench clone; the id list alone carries no question or answer content.
 """
 
 from __future__ import annotations

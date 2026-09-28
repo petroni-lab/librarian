@@ -1,23 +1,20 @@
-"""SQA bench evaluation using the new two-agent literature stack.
+"""The prediction step for every ScholarQA-Bench arm.
 
-Drives SynthesisAgent (summarisation via GPT-4o or any model) over
-LibrarianAgent (retrieval via a self-hosted vLLM endpoint, or any other model),
-so the two agents can use different models independently. Synthesis runs through
-NumberedCitationSynthesisAgent, because Citation F1 is scored on [n]-style
-citations -- see numbered_citations.py.
+Answers each question with ``LibrarianAgent`` for retrieval and
+``NumberedCitationSynthesisAgent`` over the passages it returns, and writes the
+predictions-file shape the scorers under ``scorers/`` read. Synthesis is
+numbered rather than author-year because Citation F1 is scored on ``[n]``
+citations; see numbered_citations.py.
 
-Output format is the predictions-file shape the AutoAIS/citation-eval scripts
-under ``scorers/`` read.
+The two agents take their model and endpoint separately, so either can be moved
+without the other. Unset, each falls back to LLM_BASE_URL / LLM_MODEL or
+librarian/config.toml.
 
-Example — synthesis on GPT-4o, librarian on the local vLLM GLM-5 model:
+    python evals/Literature/SQA_bench/run_sqa_new_stack.py --bench bio
 
-    python evals/Literature/SQA_bench/run_sqa_new_stack.py \\
-        --bench bio \\
-        --synthesis-open-ai \\
-        --synthesis-model gpt-4o
-
-The librarian then reads LLM_BASE_URL / LLM_MODEL from the environment (or the
-librarian/config.toml) to pick up the local model automatically.
+``--bench bio|neuro`` also runs AutoAIS at the end; ``--bench multi`` is driven
+by run_sqa_multi.sh, which scores separately. Normally you call run_sqa.sh
+rather than this directly.
 """
 
 import argparse
@@ -218,9 +215,9 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-# The orchestrator runs whatever librarian config its pods were deployed with,
-# so no per-run knob can be honoured on that path. Fail now rather than report
-# numbers for an ablation arm that silently never ran.
+# The orchestrator runs the configuration its pods were deployed with, so no
+# per-run knob applies on that path. Refuse rather than report an arm's number
+# for a run that never varied anything.
 if args.via_api:
     _api_conflicts = [
         flag
@@ -260,9 +257,7 @@ else:
 librarian_base_url: str | None = args.librarian_base_url
 librarian_model: str | None = args.librarian_model
 
-# Ablation-sweep overrides for individual librarian knobs (e.g.
-# --librarian-num-subqueries), applied as a dataclasses.replace() on top of
-# librarian/config.toml — no env vars.
+# Per-run librarian knobs, applied over librarian/config.toml.
 _librarian_overrides = {
     k: v
     for k, v in {
@@ -283,12 +278,9 @@ def _sanitize(s: str) -> str:
     return s.replace("/", "_").replace(" ", "_")
 
 
-# --via-api ignores --synthesis-model/--librarian-model entirely: the pods run
-# their own deployed model. Tagging the file with the flags anyway produced
-# predictions named `lib-glm-5-fp8` that were actually glm-5.3-flash, and made
-# --resume reuse in-process answers for an API run (and vice versa), silently
-# mixing two retrievers in one predictions file. "api" is what we can honestly
-# say from here -- the serving model is the pods', not ours to name.
+# The predictions filename, which --resume also matches on. Under --via-api the
+# model flags are inert -- the pods serve their own -- so the tag says "api"
+# rather than naming a model this side did not choose.
 if args.via_api:
     synth_tag = lib_tag = "api"
 else:
@@ -478,9 +470,8 @@ else:
 # ---------------------------------------------------------------------------
 # Agent factory (one per worker thread via thread-local storage)
 # ---------------------------------------------------------------------------
-# Both agents hold an HTTP client and the librarian keeps per-run state, so a
-# pair is built per worker thread rather than shared. With max_workers=1
-# (the default) that is one pair for the whole run.
+# One pair of agents per worker thread: both hold an HTTP client and the
+# librarian keeps per-run state.
 _thread_local = threading.local()
 
 
@@ -506,9 +497,8 @@ class _LibrarianSynthesisPipeline:
             full_text_enrichment=not args.no_librarian_full_text,
             verbose=args.verbose,
         )
-        # Numbered citations, NOT the shipped agent's author-year links: the
-        # AutoAIS scorer only extracts [n] / [n.k] forms, so an author-year
-        # answer scores as having no citations at all. See numbered_citations.py.
+        # Numbered, not the shipped agent's author-year links: the AutoAIS
+        # scorer reads only [n] / [n.k]. See numbered_citations.py.
         self.synthesis = NumberedCitationSynthesisAgent(
             llm_base_url=synthesis_base_url,
             llm_model_name=synthesis_model,
@@ -541,10 +531,10 @@ def _agent_for_thread() -> _LibrarianSynthesisPipeline:
 # ---------------------------------------------------------------------------
 # API transport (--via-api)
 # ---------------------------------------------------------------------------
-# The alternative to the in-process agents above; the rationale and the
-# concurrency measurements live in evals/Literature/orchestrator_client.py.
-# SQA asks for `literature_synthesis` rather than `librarian` because citation
-# F1 is scored on the written summary, which the librarian agent never produces.
+# The alternative to the in-process agents above; see
+# evals/Literature/orchestrator_client.py. SQA asks for `literature_synthesis`
+# rather than `librarian`: Citation F1 is scored on the written summary, which
+# the librarian agent alone never produces.
 def _run_via_api(question: str) -> dict:
     """Answer one question through the orchestrator instead of in-process.
 
@@ -638,9 +628,8 @@ total = len(questions_to_run)
 overall_total = len(all_questions)
 run_start = time.time()
 write_lock = threading.Lock()
-# Seed counters from already-loaded predictions so the postfix shows totals,
-# not just this session's counts. answered_inputs holds the good ones;
-# anything loaded but not in answered_inputs was a soft/hard failure.
+# Seeded from the loaded predictions so the progress bar shows run totals, not
+# this session's. Anything loaded but not in answered_inputs had failed.
 n_success = len(answered_inputs)
 n_errors = len(predictions) - len(answered_inputs)
 
@@ -810,10 +799,8 @@ if not args.skip_citation_eval:
 
     scorers_dir = PROJECT_ROOT / "evals" / "Literature" / "SQA_bench" / "scorers"
     citation_eval_script = str(scorers_dir / "citation_correctness_eval.py")
-    # The AutoAIS scorer is torch + transformers against a local CUDA, so it
-    # lives in its own environment (envs/sqa-scoring.lock) rather than this one.
-    # run_sqa.sh resolves it and passes it down; sys.executable is the fallback
-    # for someone driving this script directly in a single environment.
+    # The AutoAIS scorer runs in envs/sqa-scoring, which run_sqa.sh resolves and
+    # passes down. sys.executable is the fallback for a direct invocation.
     scoring_python = os.environ.get("SQA_SCORING_PYTHON") or sys.executable
     per_q_path = final_path + ".autoais_per_question.json"
     citation_cmd = [
@@ -836,9 +823,8 @@ if not args.skip_citation_eval:
     # run_utils as a flat module, the way it does upstream.
     completed = subprocess.run(citation_cmd, cwd=str(scorers_dir))
     if completed.returncode != 0:
-        # The scoring stack is torch + transformers against your own CUDA, so it
-        # is installed separately from the harness. Predictions are already on
-        # disk; say how to score them rather than losing the run to a traceback.
+        # The predictions are already written; say how to score them rather
+        # than losing the run to a traceback.
         print(
             f"\nERROR: AutoAIS scoring failed (exit {completed.returncode}).\n"
             "       If the cause above is a missing torch/transformers, the local\n"
