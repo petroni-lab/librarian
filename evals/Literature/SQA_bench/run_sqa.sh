@@ -26,7 +26,7 @@
 # and the librarian ablation flags force the in-process path.
 #
 # Env: LIBRARIAN_URL (required unless --via-api), LIBRARIAN_MODEL, SYNTHESIS_MODEL,
-#      RESULTS_ROOT, LIMIT, MAX_WORKERS, JUDGE_GPUS, ONLY,
+#      RESULTS_ROOT, LIMIT, MAX_WORKERS, JUDGE_GPUS, ONLY, APPTAINER_IMAGE,
 #      VIA_API, LIBRARIAN_API_URL, SKIP_CITATION_EVAL, DRY_RUN.
 set -euo pipefail
 

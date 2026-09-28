@@ -154,12 +154,12 @@ done
 # preflight below are both skipped for one. Every bench runner reads $VIA_API.
 export VIA_API="${VIA_API:-false}"
 
-# The baseline rows (--no-librarian, --bm25-retrieval) and the per-run knobs
-# only exist in-process, since a server runs the configuration it was started
-# with. --via-api falls back to in-process as soon as one of them appears.
+# The baseline row (--no-librarian) and the per-run knobs only exist
+# in-process, since a server runs the configuration it was started with.
+# --via-api falls back to in-process as soon as one of them appears.
 for arg in ${PASSTHRU[@]+"${PASSTHRU[@]}"}; do
     case "$arg" in
-        --no-librarian|--bm25-retrieval|--no-librarian-full-text|--librarian-*|--agent-model|--agent-base-url)
+        --no-librarian|--no-librarian-full-text|--librarian-*|--agent-model|--agent-base-url)
             if [ "$VIA_API" = true ]; then
                 echo "NOTE  $arg has no API equivalent — using in-process agents for this run."
                 VIA_API=false
