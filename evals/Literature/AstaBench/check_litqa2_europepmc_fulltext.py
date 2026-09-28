@@ -20,12 +20,15 @@ from urllib.parse import unquote, urlparse
 import requests
 from datasets import Dataset, DatasetDict, IterableDatasetDict, load_dataset
 
-PROJECT_ROOT = next(
-    (p for p in Path(__file__).resolve().parents if (p / "agents").is_dir()),
-    Path(__file__).resolve().parents[3],
-)  # repo root = first ancestor containing agents/ (move-proof)
+# evals/Literature/AstaBench/<this file> -> the repository root.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_OUTPUT_DIR = (
-    PROJECT_ROOT / "evals" / "AstaBench" / "data" / "litqa2_europepmc_fulltext"
+    PROJECT_ROOT
+    / "evals"
+    / "Literature"
+    / "AstaBench"
+    / "data"
+    / "litqa2_europepmc_fulltext"
 )
 EUROPEPMC_SEARCH_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 EUROPEPMC_REST_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest"

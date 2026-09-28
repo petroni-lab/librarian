@@ -17,10 +17,8 @@ from typing import Any, Callable, Literal, Sequence
 
 import httpx
 
-PROJECT_ROOT = next(
-    (p for p in Path(__file__).resolve().parents if (p / "agents").is_dir()),
-    Path(__file__).resolve().parents[3],
-)  # repo root = first ancestor containing agents/ (move-proof)
+# evals/Literature/AstaBench/<this file> -> the repository root.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -29,6 +27,7 @@ from inspect_ai.model import ModelUsage
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import ContentText, Tool, ToolDef
 
+from evals.Literature import evidence_text
 from evals.Literature.AstaBench.compat import (
     build_llm_client,
     extract_json_from_response,
@@ -49,47 +48,13 @@ TaskKind = Literal[
     "litqa2",
     "litqa2_open",
     "litqa2_open_llm_only",
-    "pubmedqa_open",
-    "sqa",
-    "arxivdigestables",
 ]
 ConfigName = Literal["custom_tooling", "standard_tooling", "llm_only"]
 SearchFn = Callable[[str, int], list[dict[str, Any]]]
 
 S2_API_BASE_URL = "https://api.semanticscholar.org/graph/v1"
 DEFAULT_S2_FIELDS = "title,abstract,authors,year,venue,corpusId,externalIds"
-LITERATURE_PROMPTS_DIR = (
-    PROJECT_ROOT / "agents" / "deprecated" / "literature" / "prompts"
-)
-BUILTIN_QUERY_PLANNERS = {
-    "default",
-    "simple_bm25",
-    "raw_question",
-    "epmc_full_interface",
-}
 logger = logging.getLogger(__name__)
-
-
-def _bind_current_otel_context_for_eval(func: Callable[..., Any]) -> Callable[..., Any]:
-    """Attach the current OpenTelemetry context inside eval worker threads."""
-    try:
-        from opentelemetry.context import attach, detach, get_current
-    except Exception:
-        return func
-
-    current_context = get_current()
-    if current_context is None:
-        return func
-
-    @wraps(func)
-    def _wrapped(*args: Any, **kwargs: Any) -> Any:
-        token = attach(current_context)
-        try:
-            return func(*args, **kwargs)
-        finally:
-            detach(token)
-
-    return _wrapped
 
 
 @dataclass(frozen=True)
@@ -99,28 +64,12 @@ class BioAgentExecutionConfig:
     name: ConfigName
     search_mode: Literal["europepmc", "asta_corpus"]
     europepmc_search_fn: SearchFn | None = None
-    europepmc_librarian_prompt: str | None = None
-    query_planner: str = "default"
-    librarian_prompt_label: str = "default"
-    simple_bm25_max_queries: int = 7
-    epmc_full_interface_max_queries: int = 7
-    max_query_count_override: int | None = None
     # LibrarianAgent-path overrides only (_run_librarian_agent) — plain
     # dataclasses.replace() on the loaded LibrarianRuntimeConfig, no env vars.
     # None means "use the librarian/config.toml value unchanged".
     librarian_num_subqueries_override: int | None = None
     librarian_paragraphs_per_subquery_override: int | None = None
     librarian_paragraphs_per_judge_batch_override: int | None = None
-    retrieval_policy: Literal[
-        "synthesis",
-        "localized_evidence",
-        "localized_evidence_bm25",
-        "localized_evidence_bm25_per_paper",
-        "cascade_bm25",
-        "upfront_fulltext",
-        "upfront_fulltext_bm25_filter",
-        "simple_fulltext_bm25",
-    ] = "synthesis"
     max_paper_finder_results: int = 50
     max_report_papers: int = 10
     snippet_limit: int = 3
@@ -171,7 +120,6 @@ class InspectUsageRecorder:
 #: Placeholder a retrieved paper carries where it has no evidence for a
 #: sub-query. Inherited from the retired internal literature agent, whose
 #: records these adapters still parse.
-_EVIDENCE_GAP_SEPARATOR = "|"
 
 class AstaScientificCorpusAdapter:
     """Thin adapter over task-provided Asta tools."""
@@ -525,12 +473,6 @@ class BioAgentAstaWrapper:
             return await self._solve_litqa2_open(state)
         if task_type == "litqa2_open_llm_only":
             return await self._solve_litqa2_open_llm_only(state)
-        if task_type == "pubmedqa_open":
-            return await self._solve_pubmedqa_open(state)
-        if task_type == "sqa":
-            return await self._solve_sqa(state)
-        if task_type == "arxivdigestables":
-            return await self._solve_arxivdigestables(state)
         raise ValueError(f"Unsupported task type '{task_type}'.")
 
     def _infer_task_type(self, state: TaskState) -> TaskKind:
@@ -550,10 +492,6 @@ class BioAgentAstaWrapper:
             return "paper_finder"
         if metadata.get("unsure_letter") or has_choices:
             return "litqa2"
-        if metadata.get("case_id") or metadata.get("initial_prompt"):
-            return "sqa"
-        if metadata.get("corpus_ids"):
-            return "arxivdigestables"
         raise ValueError("Could not infer AstaBench task type from TaskState.")
 
     async def _solve_paper_finder(self, state: TaskState) -> TaskState:
@@ -786,243 +724,6 @@ class BioAgentAstaWrapper:
         state.output.completion = answer.strip() or "No answer generated."
         return state
 
-    async def _solve_pubmedqa_open(self, state: TaskState) -> TaskState:
-        """Run public biomedical retrieval and return an open PubMedQA answer."""
-        question = self._state_input_text(state).strip()
-        retrieval = await self._run_literature_agent(
-            query=question,
-            state=state,
-            force_public_search=True,
-            include_summary=True,
-        )
-        summary = str(retrieval.get("summary") or "").strip()
-        state.output.completion = summary or "No answer generated."
-        return state
-
-    async def _solve_sqa(self, state: TaskState) -> TaskState:
-        metadata = dict(state.metadata or {})
-        question = str(
-            metadata.get("initial_prompt") or self._extract_user_query(state)
-        )
-        retrieval = await self._run_literature_agent(query=question, state=state)
-        deterministic = self._build_deterministic_sqa_response(retrieval)
-        if deterministic is not None:
-            state.output.completion = json.dumps(
-                deterministic, indent=2, ensure_ascii=False
-            )
-            return state
-
-        parsed = await self._format_sqa_with_llm(question=question, retrieval=retrieval)
-        state.output.completion = json.dumps(parsed, indent=2, ensure_ascii=False)
-        return state
-
-    async def _format_sqa_with_llm(
-        self,
-        question: str,
-        retrieval: dict[str, Any],
-    ) -> dict[str, Any]:
-        prompt = (
-            "You are writing a structured ScholarQA-style report.\n"
-            "Use only the provided evidence and do not invent citations.\n\n"
-            f"Question:\n{question}\n\n"
-            "Return valid JSON with a top-level `sections` list. Each section must "
-            "have `title`, `text`, and `citations`. Each citation must have `id`, "
-            "`snippets`, `title`, and optional `metadata`. Every citation id used in "
-            "the text must appear in that section's `citations` list.\n\n"
-            "Evidence:\n"
-            + self._format_sources_for_prompt(
-                retrieval.get("papers_raw", [])[: self.config.max_report_papers]
-            )
-        )
-
-        formatter = self._make_llm_client()
-        raw_output = await asyncio.to_thread(
-            formatter.generate_structured_output,
-            prompt,
-            "You are a precise report formatter. Return valid JSON only.",
-        )
-        parsed = extract_json_from_response(raw_output)
-        if not parsed or "sections" not in parsed:
-            repair_prompt = (
-                "Convert the following text into valid JSON for ScholarQA.\n"
-                "Return JSON only with a top-level `sections` list.\n"
-                "Each section must contain `title`, `text`, and `citations`.\n"
-                "Each citation must contain `id`, `snippets`, `title`, and optional `metadata`.\n\n"
-                "Text to repair:\n"
-                f"{raw_output}"
-            )
-            repaired_output = await asyncio.to_thread(
-                formatter.generate_structured_output,
-                repair_prompt,
-                "You are a strict JSON repair assistant. Return valid JSON only.",
-            )
-            parsed = extract_json_from_response(repaired_output)
-        if not parsed or "sections" not in parsed:
-            return {
-                "sections": [
-                    {
-                        "title": "Answer",
-                        "text": retrieval.get("summary", ""),
-                        "citations": [],
-                    }
-                ]
-            }
-        return parsed
-
-    def _build_deterministic_sqa_response(
-        self,
-        retrieval: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        """Build ScholarQA response without a second formatter LLM call."""
-        summary_text = str(retrieval.get("summary") or "").strip()
-        papers = list(retrieval.get("papers_raw") or [])
-        if not summary_text and not papers:
-            return None
-
-        normalized_text = self._normalize_inline_numeric_citations(summary_text)
-        cited_indices = self._extract_cited_indices(normalized_text)
-
-        # If the summary missed inline markers, add a minimal evidence anchor.
-        if not cited_indices and papers:
-            fallback_count = min(max(self.config.max_report_papers, 1), len(papers))
-            cited_indices = list(range(1, fallback_count + 1))
-            cite_suffix = "".join(f"[{idx}]" for idx in cited_indices)
-            if normalized_text:
-                normalized_text = (
-                    f"{normalized_text}\n\nRepresentative evidence: {cite_suffix}"
-                )
-            else:
-                normalized_text = f"Representative evidence: {cite_suffix}"
-
-        citations = [
-            self._build_sqa_citation(idx, papers[idx - 1])
-            for idx in cited_indices
-            if 1 <= idx <= len(papers)
-        ]
-        if not normalized_text or not citations:
-            return None
-
-        return {
-            "sections": [
-                {
-                    "title": "Answer",
-                    "text": normalized_text,
-                    "citations": citations,
-                }
-            ]
-        }
-
-    @staticmethod
-    def _normalize_inline_numeric_citations(text: str) -> str:
-        """Expand grouped citations like [8, 9] into [8][9] for exact id matching."""
-        if not text:
-            return ""
-
-        def _expand_group(match: re.Match[str]) -> str:
-            body = match.group(1)
-            tokens = [
-                token.strip() for token in re.split(r"[,;]", body) if token.strip()
-            ]
-            expanded: list[int] = []
-            for token in tokens:
-                range_match = re.fullmatch(r"(\d+)\s*[-–]\s*(\d+)", token)
-                if range_match:
-                    start = int(range_match.group(1))
-                    end = int(range_match.group(2))
-                    if end >= start and (end - start) <= 20:
-                        expanded.extend(range(start, end + 1))
-                        continue
-                    return match.group(0)
-                if token.isdigit():
-                    expanded.append(int(token))
-                    continue
-                return match.group(0)
-            if not expanded:
-                return match.group(0)
-            return "".join(f"[{idx}]" for idx in expanded)
-
-        return re.sub(r"\[([0-9,\s;–-]+)\]", _expand_group, text)
-
-    @staticmethod
-    def _extract_cited_indices(text: str) -> list[int]:
-        seen: set[int] = set()
-        ordered: list[int] = []
-        for match in re.finditer(r"\[(\d+)\]", text or ""):
-            idx = int(match.group(1))
-            if idx in seen:
-                continue
-            seen.add(idx)
-            ordered.append(idx)
-        return ordered
-
-    def _build_sqa_citation(self, idx: int, paper: dict[str, Any]) -> dict[str, Any]:
-        metadata: dict[str, Any] = {}
-        year = paper.get("year")
-        journal = paper.get("journal")
-        corpus_id = paper.get("corpus_id") or paper.get("corpusId")
-        doi = paper.get("doi")
-        url = paper.get("url")
-        authors = paper.get("authors")
-        if year:
-            metadata["year"] = year
-        if journal:
-            metadata["venue"] = journal
-        if corpus_id:
-            metadata["corpusId"] = str(corpus_id)
-        if doi:
-            metadata["doi"] = str(doi)
-        if url:
-            metadata["url"] = str(url)
-        if authors:
-            if isinstance(authors, list):
-                metadata["authors"] = [str(author) for author in authors[:8]]
-            else:
-                metadata["authors"] = str(authors)
-
-        return {
-            "id": f"[{idx}]",
-            "snippets": self._citation_snippets_for_paper(paper),
-            "title": str(paper.get("title") or "Untitled"),
-            "metadata": metadata,
-        }
-
-    def _citation_snippets_for_paper(self, paper: dict[str, Any]) -> list[str]:
-        candidates: list[str] = []
-        support_snippets = paper.get("support_snippets")
-        if isinstance(support_snippets, list):
-            candidates.extend(str(snippet) for snippet in support_snippets)
-        elif isinstance(support_snippets, str):
-            candidates.append(support_snippets)
-
-        full_text_excerpt = str(paper.get("full_text_excerpt") or "").strip()
-        if full_text_excerpt:
-            candidates.extend(part for part in full_text_excerpt.split("\n\n") if part)
-
-        abstract = str(paper.get("abstract") or "").strip()
-        if abstract:
-            candidates.append(abstract)
-
-        if not candidates:
-            title = str(paper.get("title") or "").strip()
-            if title:
-                candidates.append(title)
-
-        snippets: list[str] = []
-        seen: set[str] = set()
-        max_snippets = max(1, self.config.snippet_limit)
-        for candidate in candidates:
-            normalized = " ".join(candidate.split())
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            if len(normalized) > 600:
-                normalized = f"{normalized[:597].rstrip()}..."
-            snippets.append(normalized)
-            if len(snippets) >= max_snippets:
-                break
-
-        return snippets or ["No snippet available."]
-
     def _format_litqa2_open_evidence_for_prompt(
         self,
         retrieval: dict[str, Any],
@@ -1039,7 +740,7 @@ class BioAgentAstaWrapper:
 
         paper_by_id: dict[str, dict[str, Any]] = {}
         for paper in papers:
-            for key in self._paper_identifier_keys(paper):
+            for key in evidence_text.identifier_keys(paper):
                 paper_by_id.setdefault(key, paper)
 
         max_items = max(1, self.config.max_report_papers)
@@ -1050,7 +751,7 @@ class BioAgentAstaWrapper:
                 break
             entry = evidence_entries[idx] if idx < len(evidence_entries) else {}
             paper = papers[idx] if idx < len(papers) else None
-            entry_id = self._first_present_identifier(entry)
+            entry_id = evidence_text.first_identifier(entry)
             if entry_id and entry_id in paper_by_id:
                 paper = paper_by_id[entry_id]
             if paper is not None:
@@ -1086,9 +787,9 @@ class BioAgentAstaWrapper:
         paper: dict[str, Any] | None,
         evidence_entry: dict[str, Any],
     ) -> str:
-        snippets = self._dedupe_texts(
+        snippets = evidence_text.dedupe(
             [
-                *self._extract_evidence_entry_texts(evidence_entry),
+                *evidence_text.evidence_texts(evidence_entry),
                 *self._extract_paper_evidence_texts(paper or {}),
             ]
         )
@@ -1098,15 +799,15 @@ class BioAgentAstaWrapper:
         if paper is None:
             title = "Untitled"
             year = "n.d."
-            identifiers = self._identifier_label(evidence_entry)
+            identifiers = evidence_text.identifier_label(evidence_entry)
         else:
             title = str(paper.get("title") or "Untitled")
             year = str(paper.get("year") or "n.d.")
-            identifiers = self._identifier_label(paper)
+            identifiers = evidence_text.identifier_label(paper)
 
         snippet_lines = []
         for snippet in snippets[:6]:
-            compact = self._truncate_prompt_text(snippet, 700)
+            compact = evidence_text.truncate(snippet, 700)
             if compact:
                 snippet_lines.append(f"- {compact}")
 
@@ -1117,14 +818,9 @@ class BioAgentAstaWrapper:
         return f"[{rank}] {title} ({year}){id_suffix}\n" + "\n".join(snippet_lines)
 
     @staticmethod
-    def _extract_evidence_entry_texts(entry: dict[str, Any]) -> list[str]:
-        texts: list[str] = []
-        for key in ("evidence", "evidence_abstract", "evidence_fulltext"):
-            BioAgentAstaWrapper._extend_texts(texts, entry.get(key))
-        return texts
-
-    @staticmethod
     def _extract_paper_evidence_texts(paper: dict[str, Any]) -> list[str]:
+        """Flatten a paper record's snippets, splitting a full-text excerpt on
+        blank lines so each passage is its own bullet."""
         texts: list[str] = []
         for key in (
             "support_snippets",
@@ -1136,147 +832,9 @@ class BioAgentAstaWrapper:
             value = paper.get(key)
             if key == "full_text_excerpt" and isinstance(value, str):
                 parts = [part.strip() for part in value.split("\n\n") if part.strip()]
-                BioAgentAstaWrapper._extend_texts(texts, parts or value)
-                continue
-            BioAgentAstaWrapper._extend_texts(texts, value)
+                value = parts or value
+            texts.extend(evidence_text.collect_texts(value))
         return texts
-
-    @staticmethod
-    def _extend_texts(target: list[str], value: Any) -> None:
-        if value is None:
-            return
-        if isinstance(value, str):
-            text = " ".join(value.split())
-            if text and text != _EVIDENCE_GAP_SEPARATOR:
-                target.append(text)
-            return
-        if isinstance(value, list):
-            for item in value:
-                BioAgentAstaWrapper._extend_texts(target, item)
-            return
-        if isinstance(value, dict):
-            for item in value.values():
-                BioAgentAstaWrapper._extend_texts(target, item)
-
-    @staticmethod
-    def _dedupe_texts(texts: Sequence[str]) -> list[str]:
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for text in texts:
-            normalized = " ".join(str(text).split())
-            if not normalized:
-                continue
-            fingerprint = normalized.lower()
-            if fingerprint in seen:
-                continue
-            seen.add(fingerprint)
-            deduped.append(normalized)
-        return deduped
-
-    @staticmethod
-    def _paper_identifier_keys(paper: dict[str, Any]) -> list[str]:
-        keys: list[str] = []
-        for raw_key in (
-            "_evidence_id",
-            "pmid",
-            "pmcid",
-            "doi",
-            "corpus_id",
-            "corpusId",
-        ):
-            value = str(paper.get(raw_key) or "").strip()
-            if value:
-                keys.append(value)
-        return keys
-
-    @staticmethod
-    def _first_present_identifier(obj: dict[str, Any]) -> str:
-        for raw_key in (
-            "_evidence_id",
-            "pmid",
-            "pmcid",
-            "doi",
-            "corpus_id",
-            "corpusId",
-        ):
-            value = str(obj.get(raw_key) or "").strip()
-            if value:
-                return value
-        return ""
-
-    @staticmethod
-    def _identifier_label(obj: dict[str, Any]) -> str:
-        labels: list[str] = []
-        for label, raw_key in (
-            ("PMID", "pmid"),
-            ("PMCID", "pmcid"),
-            ("DOI", "doi"),
-            ("CorpusId", "corpus_id"),
-            ("CorpusId", "corpusId"),
-        ):
-            value = str(obj.get(raw_key) or "").strip()
-            if value and f"{label}: {value}" not in labels:
-                labels.append(f"{label}: {value}")
-        return "; ".join(labels)
-
-    @staticmethod
-    def _truncate_prompt_text(text: str, limit: int) -> str:
-        compact = " ".join(str(text).split())
-        if len(compact) <= limit:
-            return compact
-        return f"{compact[: limit - 3].rstrip()}..."
-
-    async def _solve_arxivdigestables(self, state: TaskState) -> TaskState:
-        metadata = dict(state.metadata or {})
-        sample_input = self._state_input_text(state)
-        corpus_adapter = self._make_asta_adapter_if_available(state)
-        extra_snippets = ""
-        if corpus_adapter is not None and metadata.get("corpus_ids"):
-            caption_query = self._extract_arxiv_caption(sample_input)
-            snippets = []
-            for corpus_id in metadata["corpus_ids"]:
-                snippet_hits = await corpus_adapter.snippet_search(
-                    query=caption_query,
-                    limit=self.config.snippet_limit,
-                    paper_ids=[f"CorpusId:{corpus_id}"],
-                )
-                snippet_texts = [
-                    hit.get("text", "").strip()
-                    for hit in snippet_hits
-                    if hit.get("text")
-                ]
-                if snippet_texts:
-                    snippets.append(
-                        {
-                            "paper_id": str(corpus_id),
-                            "snippets": snippet_texts,
-                        }
-                    )
-            if snippets:
-                extra_snippets = "\n\nAdditional snippet evidence:\n" + json.dumps(
-                    snippets, indent=2, ensure_ascii=False
-                )
-
-        prompt = (
-            "You are building an ArxivDIGESTables-style comparison table.\n"
-            "Use the provided task input and any optional snippet evidence.\n"
-            'Return JSON only with the schema {"cell_values": [{"paper_id": ..., '
-            '"column_name": ..., "cell_value": ...}, ...]}.\n\n'
-            f"Task input:\n{sample_input}"
-            f"{extra_snippets}"
-        )
-
-        formatter = self._make_llm_client()
-        raw_output = await asyncio.to_thread(
-            formatter.generate_structured_output,
-            prompt,
-            "You are a careful table formatter. Return valid JSON only.",
-        )
-        parsed = extract_json_from_response(raw_output)
-        if not parsed or "cell_values" not in parsed:
-            parsed = {"cell_values": []}
-        state.output.completion = json.dumps(parsed, indent=2, ensure_ascii=False)
-        return state
 
     async def _run_librarian_agent(self, query: str) -> dict[str, Any]:
         """Retrieve evidence via the standalone two-filter LibrarianAgent and adapt
@@ -1598,13 +1156,6 @@ class BioAgentAstaWrapper:
             choices.append((match.group(1), match.group(2).strip()))
         return choices
 
-    def _make_asta_adapter(self, state: TaskState) -> AstaScientificCorpusAdapter:
-        if not state.tools:
-            raise ValueError(
-                "Config B requires task-provided Asta tools in state.tools, but none were provided."
-            )
-        return AstaScientificCorpusAdapter(state.tools)
-
     def _make_asta_adapter_if_available(
         self,
         state: TaskState,
@@ -1618,17 +1169,6 @@ class BioAgentAstaWrapper:
         ):
             return None
         return AstaScientificCorpusAdapter(state.tools)
-
-    @staticmethod
-    def _extract_arxiv_caption(sample_input: str) -> str:
-        match = re.search(
-            r"caption:\s*(?P<caption>.*?)\.\s*Return the table",
-            sample_input,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        if match:
-            return " ".join(match.group("caption").split())
-        return "paper comparison details"
 
     @staticmethod
     def _format_sources_for_prompt(papers: Sequence[dict[str, Any]]) -> str:
@@ -1681,106 +1221,28 @@ def _build_markdown_evidence(paper: dict[str, Any]) -> str:
     return f"**{title}** ({year})\n\n{evidence_body}"
 
 
-def _resolve_librarian_prompt_selection(
-    query_planner: str,
-    librarian_prompt_override: str | None,
-) -> tuple[str, str | None, str]:
-    """Map built-in planners or prompt-file names to agent constructor inputs."""
-    selected = (query_planner or "default").strip()
-    if not selected:
-        selected = "default"
-    if selected in BUILTIN_QUERY_PLANNERS:
-        return selected, librarian_prompt_override, selected
-    if librarian_prompt_override is not None:
-        return "default", librarian_prompt_override, selected
-
-    prompt_ref = Path(selected)
-    if prompt_ref.is_absolute():
-        prompt_path = prompt_ref
-    elif prompt_ref.parent != Path("."):
-        prompt_path = PROJECT_ROOT / prompt_ref
-    else:
-        prompt_name = selected if prompt_ref.suffix == ".md" else f"{selected}.md"
-        prompt_path = LITERATURE_PROMPTS_DIR / prompt_name
-
-    resolved_prompt_path = prompt_path.resolve()
-    resolved_prompts_dir = LITERATURE_PROMPTS_DIR.resolve()
-    try:
-        resolved_prompt_path.relative_to(resolved_prompts_dir)
-    except ValueError as exc:
-        raise ValueError(
-            f"Custom librarian prompts must live under {LITERATURE_PROMPTS_DIR}."
-        ) from exc
-    if not resolved_prompt_path.is_file():
-        available = ", ".join(
-            sorted(path.stem for path in LITERATURE_PROMPTS_DIR.glob("*.md"))
-        )
-        raise FileNotFoundError(
-            f"Unknown librarian prompt '{selected}'. "
-            f"Available prompt names: {available}"
-        )
-    return "default", resolved_prompt_path.read_text(), resolved_prompt_path.stem
-
-
-# Assemble the BioAgentExecutionConfig for config_name, resolving the librarian
-# prompt selection once and threading every knob straight through.
 def _build_execution_config(
     config_name: ConfigName,
-    europepmc_librarian_prompt: str | None = None,
-    query_planner: str = "default",
-    simple_bm25_max_queries: int = 7,
-    epmc_full_interface_max_queries: int = 7,
-    max_query_count_override: int | None = None,
     librarian_num_subqueries_override: int | None = None,
     librarian_paragraphs_per_subquery_override: int | None = None,
     librarian_paragraphs_per_judge_batch_override: int | None = None,
-    retrieval_policy: Literal[
-        "synthesis",
-        "localized_evidence",
-        "localized_evidence_bm25",
-        "localized_evidence_bm25_per_paper",
-        "cascade_bm25",
-        "upfront_fulltext",
-        "upfront_fulltext_bm25_filter",
-        "simple_fulltext_bm25",
-    ] = "synthesis",
 ) -> BioAgentExecutionConfig:
-    agent_query_planner, prompt_override, prompt_label = (
-        _resolve_librarian_prompt_selection(
-            query_planner=query_planner,
-            librarian_prompt_override=europepmc_librarian_prompt,
-        )
-    )
     if config_name == "custom_tooling":
         return BioAgentExecutionConfig(
             name=config_name,
             search_mode="europepmc",
             europepmc_search_fn=search_scientific_literature_structured,
-            europepmc_librarian_prompt=prompt_override,
-            query_planner=agent_query_planner,
-            librarian_prompt_label=prompt_label,
-            simple_bm25_max_queries=simple_bm25_max_queries,
-            epmc_full_interface_max_queries=epmc_full_interface_max_queries,
-            max_query_count_override=max_query_count_override,
             librarian_num_subqueries_override=librarian_num_subqueries_override,
             librarian_paragraphs_per_subquery_override=librarian_paragraphs_per_subquery_override,
             librarian_paragraphs_per_judge_batch_override=librarian_paragraphs_per_judge_batch_override,
-            retrieval_policy=retrieval_policy,
         )
     if config_name == "standard_tooling":
         return BioAgentExecutionConfig(
             name=config_name,
             search_mode="asta_corpus",
-            europepmc_librarian_prompt=prompt_override,
-            query_planner=agent_query_planner,
-            librarian_prompt_label=prompt_label,
-            simple_bm25_max_queries=simple_bm25_max_queries,
-            epmc_full_interface_max_queries=epmc_full_interface_max_queries,
-            max_query_count_override=max_query_count_override,
             librarian_num_subqueries_override=librarian_num_subqueries_override,
             librarian_paragraphs_per_subquery_override=librarian_paragraphs_per_subquery_override,
             librarian_paragraphs_per_judge_batch_override=librarian_paragraphs_per_judge_batch_override,
-            retrieval_policy=retrieval_policy,
         )
     # llm_only: retrieval is skipped at the task-type level; config just needs
     # a valid search_mode so the dataclass doesn't raise.
@@ -1788,16 +1250,9 @@ def _build_execution_config(
         return BioAgentExecutionConfig(
             name=config_name,
             search_mode="europepmc",
-            europepmc_librarian_prompt=prompt_override,
-            query_planner=agent_query_planner,
-            librarian_prompt_label=prompt_label,
-            simple_bm25_max_queries=simple_bm25_max_queries,
-            epmc_full_interface_max_queries=epmc_full_interface_max_queries,
-            max_query_count_override=max_query_count_override,
             librarian_num_subqueries_override=librarian_num_subqueries_override,
             librarian_paragraphs_per_subquery_override=librarian_paragraphs_per_subquery_override,
             librarian_paragraphs_per_judge_batch_override=librarian_paragraphs_per_judge_batch_override,
-            retrieval_policy=retrieval_policy,
         )
     raise ValueError(f"Unknown config_name '{config_name}'.")
 
@@ -1826,24 +1281,9 @@ def bio_agent_solver(
     llm_base_url: str | None = None,
     llm_model_name: str | None = None,
     full_text_enrichment: bool = True,
-    europepmc_librarian_prompt: str | None = None,
-    query_planner: str = "default",
-    simple_bm25_max_queries: int = 7,
-    epmc_full_interface_max_queries: int = 7,
-    max_query_count_override: int | None = None,
     librarian_num_subqueries_override: int | None = None,
     librarian_paragraphs_per_subquery_override: int | None = None,
     librarian_paragraphs_per_judge_batch_override: int | None = None,
-    retrieval_policy: Literal[
-        "synthesis",
-        "localized_evidence",
-        "localized_evidence_bm25",
-        "localized_evidence_bm25_per_paper",
-        "cascade_bm25",
-        "upfront_fulltext",
-        "upfront_fulltext_bm25_filter",
-        "simple_fulltext_bm25",
-    ] = "synthesis",
     **tool_options: Any,
 ) -> Solver:
     """Generic librarian solver for AstaBench literature tasks.
@@ -1873,15 +1313,9 @@ def bio_agent_solver(
     merge_solver = merge_tools_with_state(solver_tools)
     execution_config = _build_execution_config(
         config_name=config_name,
-        europepmc_librarian_prompt=europepmc_librarian_prompt,
-        query_planner=query_planner,
-        simple_bm25_max_queries=simple_bm25_max_queries,
-        epmc_full_interface_max_queries=epmc_full_interface_max_queries,
-        max_query_count_override=max_query_count_override,
         librarian_num_subqueries_override=librarian_num_subqueries_override,
         librarian_paragraphs_per_subquery_override=librarian_paragraphs_per_subquery_override,
         librarian_paragraphs_per_judge_batch_override=librarian_paragraphs_per_judge_batch_override,
-        retrieval_policy=retrieval_policy,
     )
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
@@ -1948,37 +1382,3 @@ def bio_agent_litqa2_open_llm_only(
     )
 
 
-@solver
-def bio_agent_sqa(
-    config_name: ConfigName = "custom_tooling",
-    **kwargs: Any,
-) -> Solver:
-    return bio_agent_solver(
-        config_name=config_name,
-        task_type="sqa",
-        **kwargs,
-    )
-
-
-@solver
-def bio_agent_arxivdigestables(
-    config_name: ConfigName = "custom_tooling",
-    **kwargs: Any,
-) -> Solver:
-    return bio_agent_solver(
-        config_name=config_name,
-        task_type="arxivdigestables",
-        **kwargs,
-    )
-
-
-__all__ = [
-    "ASTA_LIBRARIAN_SYSTEM_PROMPT",
-    "BioAgentAstaWrapper",
-    "bio_agent_solver",
-    "bio_agent_paper_finder",
-    "bio_agent_litqa2",
-    "bio_agent_litqa2_open",
-    "bio_agent_sqa",
-    "bio_agent_arxivdigestables",
-]
