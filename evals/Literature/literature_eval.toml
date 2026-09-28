@@ -85,6 +85,8 @@ model = ""                                    # inherits librarian.model; labels
 # ── Paths ────────────────────────────────────────────────────────────────────
 [paths]
 results_root = ""                             # inherits evals/Literature/results
+# Point this at scratch or node-local storage when $HOME has a quota: the SQA
+# scorer alone downloads 11.4 GB, and the Prometheus judges far more.
 hf_home      = ""                             # inherits $HOME/.cache/huggingface
 # The interpreter each bench's environment is BUILT FROM, not one the runners
 # use: every bench runs in its own locked virtualenv under .envs/ (see
