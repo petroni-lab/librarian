@@ -23,12 +23,10 @@ passages it returns, and writes one predictions file per run.
 - **bio / neu** call it directly. It then runs AutoAIS citation scoring itself
   at the end, so no container is involved. `--skip-citation-eval` stops after
   the predictions; a later run with `--resume` picks up the scoring.
-- **multi** goes through
-  [`run_local_multieval_new_stack_apptainer.sh`](run_local_multieval_new_stack_apptainer.sh),
-  which runs predictions, then citation scoring, then starts each Prometheus
-  judge in turn and scores against it. The judge passes are driven through
-  [`run_multi_evals_k8s.sh`](run_multi_evals_k8s.sh), which is given a
-  `--pred_file` and so skips straight to scoring.
+- **multi** goes through [`run_sqa_multi.sh`](run_sqa_multi.sh), which runs
+  predictions, then citation scoring, then starts each Prometheus judge under
+  Apptainer in turn and scores against it. Both judge passes merge into one
+  `judge_eval/results.json`.
 
 ### Citation format
 
@@ -103,11 +101,9 @@ is the script that applies it.
 
 ## Baselines
 
-`run_sqa_new_stack.py` keeps the flags for the rows the librarian is compared
-against, but only the parametric one runs here:
+`--no-librarian` answers from the model alone, with no retrieval — the
+parametric row the librarian is compared against.
 
-- `--no-librarian` — answer from the model alone, no retrieval. Works.
-- `--bm25-retrieval` — the OpenScholar-style BM25 baseline. It read chunks from
-  an OpenScholar datastore Elasticsearch index, which is not part of this
-  repository, so the flag fails with a message saying so rather than silently
-  retrieving something else.
+The paper's other comparison row, the OpenScholar-style BM25 baseline, is not
+reproducible here: it read chunks from an OpenScholar datastore Elasticsearch
+index that is not part of this repository, so no flag for it is offered.
