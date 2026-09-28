@@ -15,8 +15,9 @@
 #
 # Baseline row: the same command with --mode baseline (parametric LLM).
 #
-# Env: LIBRARIAN_URL (required), LIBRARIAN_MODEL, ANSWER_MODEL,
-#      LABBENCH_GPT4O_MODEL, RESULTS_ROOT, LIMIT, MAX_WORKERS, ONLY, DRY_RUN.
+# Env: LIBRARIAN_URL (required unless VIA_API), LIBRARIAN_MODEL, ANSWER_MODEL,
+#      LABBENCH_GPT4O_MODEL, RESULTS_ROOT, LIMIT, MAX_WORKERS, ONLY, VIA_API,
+#      DRY_RUN.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
