@@ -50,7 +50,7 @@ reach them. See [NOTICE](NOTICE).
 ## Run
 
 For the paper's two rows use `./run_proclaim.sh` — see
-[../README.md](../README.md#what-each-bench-needs). The commands below are for
+[../README.md](../README.md). The commands below are for
 ad-hoc runs and baselines, and all take exactly one retrieval mode:
 `--librarian-agent`, `--pubmed-s2`, `--web-search` or `--no-agent`.
 
