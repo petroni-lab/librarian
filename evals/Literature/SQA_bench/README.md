@@ -20,39 +20,33 @@ Normally you do not call anything here directly:
 arm. It runs `LibrarianAgent` for retrieval and `SynthesisAgent` over the
 passages it returns, and writes one predictions file per run.
 
-- **bio / neu** call it directly. It then runs AutoAIS citation scoring itself
-  at the end, so no container is involved. `--skip-citation-eval` stops after
-  the predictions; a later run with `--resume` picks up the scoring.
-- **multi** goes through [`run_sqa_multi.sh`](run_sqa_multi.sh), which runs
-  predictions, then citation scoring, then starts each Prometheus judge under
-  Apptainer in turn and scores against it. Both judge passes merge into one
-  `judge_eval/results.json`.
+- **bio / neu** call it directly. It runs AutoAIS citation scoring itself at the
+  end, so no container is involved. `--skip-citation-eval` stops after the
+  predictions; a later run with `--resume` picks up the scoring.
+- **multi** goes through [`run_sqa_multi.sh`](run_sqa_multi.sh): predictions,
+  citation scoring, then each Prometheus judge started under Apptainer around
+  its own pass. Both passes merge into one `judge_eval/results.json`.
 
 ### Citation format
 
 Citation F1 is scored on the citations in the written answer, and the AutoAIS
 scorer only extracts **numeric** ones — `[2]`, `[2, 7]`, `[REF_2]`, `[2.3]`. The
 shipped `SynthesisAgent` cites author-year markdown links instead
-(`[Chen 2023](https://europepmc.org/article/MED/…)`), which is the better output
-for a reader but parses here as *no citations at all*: every sentence scores
-unsupported and Citation F1 collapses to roughly zero, with the run completing
-normally and reporting the number.
+(`[Chen 2023](https://europepmc.org/article/MED/…)`), which parses here as *no
+citations at all*: every sentence scores unsupported and Citation F1 collapses
+to roughly zero, with the run completing normally and reporting the number.
 
-So this benchmark keeps the citation contract its metric is defined on.
-[`numbered_citations.py`](numbered_citations.py) is that contract — papers
-rendered as `[REF_n]` blocks with a lookup table, plus the matching summarizer
-prompt — and `run_sqa_new_stack.py` synthesises through it. Retrieval, ranking
-and the evidence are untouched; only how the answer names a paper changes.
+[`numbered_citations.py`](numbered_citations.py) is what this benchmark
+synthesises through instead — papers rendered as `[REF_n]` blocks with a lookup
+table, plus the matching summarizer prompt. Retrieval, ranking and the evidence
+are untouched; only how the answer names a paper changes.
 
 The scorers are derived from ScholarQABench (MIT) but live in
 [`scorers/`](scorers/NOTICE), not in the clone: `citation_correctness_eval.py`
 for AutoAIS, `prometheus_eval.py` for the two judge passes, and `run_utils.py`.
 `../setup.sh` clones ScholarQABench at a pinned commit into `code/` and leaves
-it **pristine** — `../setup.sh --check` asserts that, so the benchmark code the
-answers are scored against is provably unmodified. Upstream never imports these
-three (they are standalone scripts, invoked by path), so keeping our versions
-outside the clone costs nothing. The rubric file is read straight out of the
-clone, unchanged.
+it **pristine**, which `../setup.sh --check` asserts. The rubric file is read
+straight out of the clone.
 
 ## What it needs
 
@@ -67,22 +61,20 @@ peer-to-peer and they die in `initialize_model_parallel`.
 `[sqa] apptainer_image` in `literature_eval.toml` is the container their vLLM
 runs in. Apptainer takes either form in that one field — a `docker://` URI,
 which it pulls and converts to a SIF on first use (several GB, cached in
-`$APPTAINER_CACHEDIR`), or the path of a `.sif` you already have. It defaults
-to `docker://vllm/vllm-openai:v0.29.0`, so it works without a prepared image. **Leave it empty and `multi` is skipped rather than failing** — `--bench
-sqa` still produces the bio and neuro Citation F1 rows, which need no container.
-Asking for `--only multi` without one is an error, since that is the thing you
-asked for.
+`$APPTAINER_CACHEDIR`), or the path of a `.sif` you already have. It defaults to
+`docker://vllm/vllm-openai:v0.29.0`, so it works without a prepared image.
+**Leave it empty and `multi` is skipped rather than failing** — `--bench sqa`
+still produces the bio and neuro rows, which need no container. Asking for
+`--only multi` without one is an error.
 
 AutoAIS also runs on CPU with identical scores, but roughly **40× slower**
-(measured: 1046 s vs 25 s for 3 questions) — fine for a smoke run, not for the
-full sets. The generation step is pure network, so the cheap split is to answer
-on a CPU box with `--skip-citation-eval` and score on the GPU one afterwards.
+(measured: 1046 s vs 25 s for 3 questions). The generation step is pure network,
+so the cheap split is to answer on a CPU box with `--skip-citation-eval` and
+score on the GPU one afterwards.
 
-The scoring stack is CUDA-specific, so it is a second environment of its own
-(`../envs/sqa-scoring.lock`, resolved for Linux) rather than part of the
-generation one. It is built only when a run actually reaches a scoring step —
-`--skip-citation-eval` never builds it, which is what makes answering on a
-laptop possible. To build it ahead of time:
+The scoring stack is CUDA-specific and is a second environment of its own
+(`../envs/sqa-scoring.lock`, resolved for Linux), built only when a run reaches
+a scoring step. To build it ahead of time:
 
 ```bash
 ../setup.sh --bench sqa      # clone, data, and both environments
@@ -90,14 +82,14 @@ laptop possible. To build it ahead of time:
 
 ## Data
 
-Not redistributed here — run `../setup.sh`, which takes the bio, neuro and multi
-files out of the [ScholarQABench](https://github.com/AkariAsai/ScholarQABench)
-clone it makes under `code/` and rebuilds the biomedical subset by filtering the
+Not redistributed here. `../setup.sh` takes the bio, neuro and multi files out
+of the [ScholarQABench](https://github.com/AkariAsai/ScholarQABench) clone it
+makes under `code/`, and rebuilds the biomedical subset by filtering the
 gold-reference file through the committed
 `data/scholarqa_multi/scholar_multi_biomed_public_subset_ids.txt`. That id list
-is what pins which 29 questions the paper's `multi` row was measured on;
+pins which 29 questions the paper's `multi` row was measured on;
 [`reconstruct_scholar_multi_biomed_from_ids.py`](reconstruct_scholar_multi_biomed_from_ids.py)
-is the script that applies it.
+applies it.
 
 ## Baselines
 

@@ -1,29 +1,23 @@
 """Numbered-citation synthesis, which is what ScholarQA-Bench scores.
 
-``librarian.synthesis.SynthesisAgent`` cites papers the way a reader wants them:
-author-year markdown links copied from each paper's ``Cite as:`` line, e.g.
-``[Chen 2023](https://europepmc.org/article/MED/12345678)``.
-
-ScholarQA-Bench's scorer cannot read those. ``scorers/citation_correctness_eval.py``
-extracts citations with
+``scorers/citation_correctness_eval.py`` extracts citations with
 
     CITATION_PATTERN = r"\\[((?:REF_)?\\d+(?:\\.\\d+)?(?:\\s*,\\s*(?:REF_)?\\d+(?:\\.\\d+)?)*)\\]"
 
-which matches ``[2]``, ``[2, 7]``, ``[REF_2]`` and ``[2.3]`` — numbers only. An
-answer written in author-year form parses as having NO citations, every sentence
-scores unsupported, and Citation F1 collapses to roughly zero. It is a silent
-failure: the run completes and reports a number.
+— ``[2]``, ``[2, 7]``, ``[REF_2]``, ``[2.3]``, numbers only. The shipped
+``SynthesisAgent`` writes author-year links instead
+(``[Chen 2023](https://europepmc.org/article/MED/12345678)``), which parse as no
+citations at all: every sentence scores unsupported and Citation F1 collapses to
+roughly zero, with the run completing and reporting the number.
 
-So the benchmark keeps the citation contract its metric is defined on. This
-module is that contract and nothing else: papers rendered as ``[REF_n]`` blocks
-with a lookup table, and the matching summarizer prompt in
-``prompts/summarizer_numbered.md``. Both are ports of what produced the paper's
-row. Retrieval, ranking and the evidence itself are untouched — only how the
-answer names the paper it is leaning on.
+This module is the numbered form: papers rendered as ``[REF_n]`` blocks with a
+lookup table, and the matching summarizer prompt in
+``prompts/summarizer_numbered.md``. Retrieval, ranking and the evidence are
+untouched; only how the answer names a paper changes.
 
-Nothing outside this benchmark should use it: the shipped agent's author-year
-links are the better output for a human, and the reason for them is that a bare
-``[12]`` means nothing once the answer is copied out of its result set.
+Used by this benchmark only. Elsewhere the author-year links are the better
+output, since a bare ``[12]`` means nothing once an answer is copied out of its
+result set.
 """
 
 from __future__ import annotations
@@ -35,8 +29,8 @@ from librarian.synthesis import SynthesisAgent, _fill
 
 _PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "summarizer_numbered.md"
 
-# The shipped agent's guidance tells the model to copy each paper's ``Cite as:``
-# markdown link, which is exactly what has to change here.
+# Replaces the shipped agent's guidance, which tells the model to copy each
+# paper's ``Cite as:`` markdown link.
 _FORMATTING_GUIDANCE = (
     "Format the answer in clear Markdown with concise sections and bullets when "
     "helpful. Keep the structure easy to read in plain text. Keep citation "

@@ -4,11 +4,8 @@
 # Run by ../setup.sh as this bench's post_fetch hook, after the clone and before
 # the environments. `--check` reports without writing.
 #
-# Nothing here downloads anything. The three gold files arrive with the clone
-# and are copied out of it — copied rather than symlinked, so re-cloning cannot
-# leave dangling links behind. The 29-question biomedical subset is derived, not
-# distributed: the id list is committed beside it and the content comes from the
-# gold file copied here.
+# Nothing is downloaded: the three gold files are copied out of the clone, and
+# the 29-question biomedical subset is rebuilt from the committed id list.
 set -euo pipefail
 
 BENCH_DIR="${BENCH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
@@ -19,7 +16,7 @@ CHECK_ONLY=false
 [ "${1:-}" = "--check" ] && CHECK_ONLY=true
 
 # Any Python will do: the reconstruction script is standard library only, and
-# this runs before the bench environments are built.
+# runs before the bench environments exist.
 PY="${BENCH_BASE_PYTHON:-python3}"
 
 missing=0
