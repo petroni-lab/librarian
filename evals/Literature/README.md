@@ -10,17 +10,51 @@ Four benches: **LitQA2** and **LAB-Bench**, **ProClaim-eval**, and
 
 ## Start here
 
-```bash
-# Nothing is called: checks wiring and paths, builds no environment.
-./evals/Literature/literature_eval.sh --bench labbench --dry-run \
-    --librarian-url http://localhost:8000/v1
+The benches need Python 3.11: every lock under `envs/` is compiled for it, and
+`setup.sh` refuses to build from anything else. `uv` finds or installs one;
+`[paths] python` in `literature_eval.toml` points at a specific interpreter.
 
-# Three questions of one task. Needs OPENAI_API_KEY.
-./evals/Literature/literature_eval.sh --bench labbench --only DbQA --limit 3 \
-    --librarian-url http://localhost:8000/v1 --librarian-model my-model
+```bash
+uv python install 3.11          # if you have no 3.11
+./evals/Literature/setup.sh     # clones each upstream, prepares data, builds envs
 ```
 
-The first real run builds LAB-Bench's environment and says so. To pay that cost
+`--fetch-only` clones and prepares data without building any environment, which
+is enough for a dry run; `--check` reports what is present, missing or drifted
+without writing anything.
+
+## Smoke-test it
+
+Each rung adds one requirement. Stop at the last one your machine can do.
+
+| rung | command | needs |
+|---|---|---|
+| 0 | `--bench all --dry-run` | `setup.sh --fetch-only`; no endpoint |
+| 1 | `--bench litqa2,labbench --limit 3` | the librarian endpoint, `OPENAI_API_KEY` |
+| 2 | `--bench sqa --only bio --limit 3` | 1 GPU and ~12 GB of disk for AutoAIS |
+| 3 | `--bench proclaim --only verifier --limit 3` | no GPU of its own; keyless against a local verdict endpoint |
+| 4 | `--bench proclaim --only proclaim --limit 3` | a free ≥24 GB GPU for the evidence subagent |
+| 5 | `--bench sqa --only multi` | 4 NVLink GPUs and apptainer |
+
+```bash
+L="--librarian-url http://localhost:8000/v1 --librarian-model my-model"
+
+# 0 — prints what each bench would run, calls nothing.
+./evals/Literature/literature_eval.sh --bench all --dry-run $L
+
+# 2 — generation is pure network; AutoAIS then scores on the GPU.
+./evals/Literature/literature_eval.sh --bench sqa --only bio --limit 3 $L
+
+# 3 — no Anthropic key needed when the verdict model is served locally.
+PROCLAIM_VERDICT_URL=http://localhost:8000/v1 PROCLAIM_VERDICT_MODEL=my-model \
+    ./evals/Literature/literature_eval.sh --bench proclaim --only verifier --limit 3 $L
+```
+
+Rung 2 downloads 11.4 GB into the Hugging Face cache; see `[paths] hf_home` if
+`$HOME` has a quota. Rung 4's `[proclaim] apptainer_image` and rung 5's
+`[sqa] apptainer_image` are the containers their vLLMs run in.
+
+The first run of a bench builds its environment and says so. To pay that cost
 at a moment you chose instead:
 
 ```bash
@@ -112,7 +146,7 @@ from*, not one the runners share. Changing it rebuilds all of them.
 |---|---|---|---|---|
 | `litqa2` | Cov 95.6 / Prec 82.6 / Acc 78.9 | none | — | `OPENAI_API_KEY` |
 | `labbench` | SeqQA 63.8, ProtocolQA 73.1, DbQA 36.2, Cloning 48.5 | none | — | `OPENAI_API_KEY` |
-| `proclaim` | Verifier 0.66, ProClaim 0.80 | 1 × ≥24 GB | evidence subagent | `ANTHROPIC_API_KEY` |
+| `proclaim` | Verifier 0.66, ProClaim 0.80 | none for `--only verifier`; 1 × ≥24 GB for `--only proclaim` | evidence subagent (arm 2 only) | `ANTHROPIC_API_KEY`, unless the verdict model is served locally |
 | `sqa` | Citation F1 (Bio, Neu) + Citation F1 & LLM (Multi) | 1 × ≥8 GB, or 4 × H100 for `--only multi` | 2 × Prometheus judge for `multi` | none |
 
 Every bench needs the librarian endpoint on top of that. The GPUs are for
@@ -143,6 +177,38 @@ the retrieval knobs now in `librarian/config.toml`. These scripts pass no knob
 overrides, so a rerun measures the agent as currently configured: expect close,
 not identical. Say which librarian model you used — a different one makes a
 result incomparable rather than wrong.
+
+## Troubleshooting
+
+Things that cost time on a shared cluster, none of them defects in the harness.
+
+**`vllm serve` dies in `ssl.create_default_context`.** RHEL-family hosts export
+`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE` and `CURL_CA_BUNDLE` pointing at
+`/etc/pki/tls/certs/ca-bundle.crt`, which does not exist inside the
+Ubuntu-based vLLM image. The launchers here pass `apptainer exec --cleanenv`
+and are unaffected; starting the librarian model by hand needs the same, or
+`env -u SSL_CERT_FILE -u REQUESTS_CA_BUNDLE -u CURL_CA_BUNDLE`.
+
+**A `docker://` image is converted on every start.** `[sqa]` and `[proclaim]
+apptainer_image` default to `docker://vllm/vllm-openai:v0.29.0`, which pulls
+about 8 GB and builds a SIF each time. Build it once and point the setting at
+the file:
+
+```bash
+APPTAINER_TMPDIR=/tmp/$USER/apptmp \
+    apptainer build ~/containers/vllm-openai_v0.29.0.sif docker://vllm/vllm-openai:v0.29.0
+```
+
+Set `APPTAINER_CACHEDIR` and `APPTAINER_TMPDIR` away from a quota-limited home
+while doing it.
+
+**Job-scoped scratch disappears with the job**, and takes anything running in
+the background with it. Keep the SIF and the Hugging Face cache outside
+`/scratch/jobs/<id>`.
+
+**Disk.** The SQA scorer downloads 11.4 GB and the Prometheus judges far more.
+`[paths] hf_home` moves the Hugging Face cache; `[sqa] scratch_dir` moves the
+judge container's pip cache and `TMPDIR`.
 
 ## Layout
 

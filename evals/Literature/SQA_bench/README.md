@@ -52,7 +52,7 @@ straight out of the clone.
 
 | | GPU | Notes |
 |---|---|---|
-| `--only bio` / `neu` | 1 × ≥8 GB | AutoAIS (`attrscore-flan-t5-xl`, ~6.5 GB) |
+| `--only bio` / `neu` | 1 × ≥8 GB | AutoAIS (`attrscore-flan-t5-xl`, ~5.7 GB in bf16) |
 | `--only multi` | 4 × H100 | two Prometheus 8x7B judges at tensor-parallel size 4 |
 
 No API keys. The judge models need NVLink — without it NCCL falls back to PCIe
@@ -66,6 +66,17 @@ which it pulls and converts to a SIF on first use (several GB, cached in
 **Leave it empty and `multi` is skipped rather than failing** — `--bench sqa`
 still produces the bio and neuro rows, which need no container. Asking for
 `--only multi` without one is an error.
+
+### Disk
+
+The AutoAIS weights are **11.4 GB** to download — the published checkpoint is
+fp32, even though the scorer loads it in bf16 — and they land in the Hugging
+Face cache, which defaults to `$HOME/.cache/huggingface`. On a home directory
+with a quota that fails partway through, after the answers have been generated,
+either as `Disk quota exceeded` or as a `Background writer channel closed` from
+the Xet downloader. Point `[paths] hf_home` in `literature_eval.toml` (or
+`HF_HOME`) at scratch or node-local storage first. `--only multi` additionally
+pulls the two Prometheus judges, which are far larger.
 
 AutoAIS also runs on CPU with identical scores, but roughly **40× slower**
 (measured: 1046 s vs 25 s for 3 questions). The generation step is pure network,
