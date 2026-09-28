@@ -123,13 +123,6 @@ parser.add_argument(
     help="Override the librarian's paragraphs_per_subquery. Default: the librarian/config.toml value.",
 )
 parser.add_argument(
-    "--top-k",
-    type=int,
-    default=None,
-    help="Passages per question for the --bm25_retrieval path only (default 20). "
-    "The librarian returns a variable-size Stage-3 set and ignores this.",
-)
-parser.add_argument(
     "--resume",
     action="store_true",
     help="Skip questions that already have an output in a previous predictions file.",
@@ -223,24 +216,6 @@ parser.add_argument(
         "abstract-vs-full-text ablation arm."
     ),
 )
-parser.add_argument(
-    "--bm25-retrieval",
-    action="store_true",
-    help=(
-        "Pure BM25 baseline: retrieve passages from OSDS Elasticsearch "
-        "(no LLM query generation, no relevance filter), then synthesize."
-    ),
-)
-parser.add_argument(
-    "--es-fulltext-url",
-    default="http://localhost:9202",
-    help="Elasticsearch URL for the fulltext chunks index (default: http://localhost:9202).",
-)
-parser.add_argument(
-    "--es-url",
-    default="http://localhost:9201",
-    help="Elasticsearch URL for the abstracts index (default: http://localhost:9201).",
-)
 args = parser.parse_args()
 
 # The orchestrator runs whatever librarian config its pods were deployed with,
@@ -251,7 +226,6 @@ if args.via_api:
         flag
         for flag, is_set in (
             ("--no-librarian", args.no_librarian),
-            ("--bm25-retrieval", args.bm25_retrieval),
             ("--no-librarian-full-text", args.no_librarian_full_text),
             ("--librarian-num-subqueries", args.librarian_num_subqueries is not None),
             (
@@ -321,8 +295,6 @@ else:
     synth_tag = _sanitize(synthesis_model or "default")
     if args.no_librarian:
         lib_tag = "none"
-    elif args.bm25_retrieval:
-        lib_tag = "bm25-osds"
     else:
         lib_tag = _sanitize(librarian_model or "default")
 model_file_tag = f"synth-{synth_tag}_lib-{lib_tag}"
@@ -501,24 +473,6 @@ else:
     predictions = []
     pred_by_input = {}
     answered_inputs = set()
-
-
-# ---------------------------------------------------------------------------
-# BM25-only retrieval (no LLM in the retrieval loop)
-# ---------------------------------------------------------------------------
-def _run_bm25(question: str) -> dict:
-    """The OpenScholar-style BM25 baseline, which this repository does not ship.
-
-    It read ~250-word chunks straight out of an OpenScholar datastore (OSDS)
-    Elasticsearch index, with no paper-level aggregation and no LLM filter. That
-    index and its retriever are internal infrastructure, not part of the
-    librarian, so only the +Librarian row is reproducible here.
-    """
-    raise RuntimeError(
-        "--bm25-retrieval needs an OpenScholar datastore Elasticsearch index, "
-        "which is not part of this repository. Drop the flag to run the "
-        "librarian (what SQA_bench/run_sqa.sh does)."
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -717,8 +671,6 @@ def _run_one(q: dict) -> None:
                 max_tokens=8192,
             )
             result = {"action": "reply", "summary": answer, "passages": []}
-        elif args.bm25_retrieval:
-            result = _run_bm25(q["input"])
         elif args.via_api:
             result = _run_via_api(q["input"])
         else:
@@ -799,8 +751,6 @@ for retry_round in range(1, args.max_retries + 1):
                     max_tokens=8192,
                 )
                 result = {"action": "reply", "summary": answer, "passages": []}
-            elif args.bm25_retrieval:
-                result = _run_bm25(q_input)
             elif args.via_api:
                 result = _run_via_api(q_input)
             else:
