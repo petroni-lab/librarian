@@ -83,18 +83,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 export LITERATURE_DIR="$SCRIPT_DIR"
 
-# An interpreter to read the TOML config with, resolved before load_config.py
-# runs. `uv sync` creates .venv without putting it on PATH, so prefer that one.
-if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
-    BOOT_PYTHON="$REPO_ROOT/.venv/bin/python"
-elif command -v python3 >/dev/null 2>&1; then
-    BOOT_PYTHON=python3
-else
-    BOOT_PYTHON=python
-fi
-command -v "$BOOT_PYTHON" >/dev/null 2>&1 || [ -x "$BOOT_PYTHON" ] || {
-    echo "ERROR: no Python interpreter found. Run \`uv sync\` at the" >&2
-    echo "       repository root, or put one on PATH." >&2; exit 1; }
+# shellcheck source=evals/Literature/bench_env.sh
+. "$SCRIPT_DIR/bench_env.sh"
 
 # load_config.py maps literature_eval.toml onto the flat environment variables
 # the runners read, leaving any variable that is already set alone, so a real
@@ -105,14 +95,11 @@ if [ -n "${LITERATURE_EVAL_CONFIG:-}" ]; then
         echo "ERROR: LITERATURE_EVAL_CONFIG not found: $LITERATURE_EVAL_CONFIG" >&2; exit 1; }
     export LITERATURE_EVAL_CONFIG
 fi
-eval "$("$BOOT_PYTHON" "$SCRIPT_DIR/load_config.py")"
-# paths.python names the base interpreter each bench's locked environment is
-# created from (see bench_env.sh); the runners never use it directly.
-: "${BENCH_BASE_PYTHON:=$BOOT_PYTHON}"
-export BENCH_BASE_PYTHON
-
-# shellcheck source=evals/Literature/bench_env.sh
-. "$SCRIPT_DIR/bench_env.sh"
+bench_load_config
+# `[paths] python` names the base interpreter each locked environment is created
+# from; bench_env.sh resolves it and checks it against the locks.
+export BENCH_BASE_PYTHON="$(_bench_base_python)"
+bench_require_base_python
 
 BENCH=""
 LIBRARIAN_URL_SET=false
