@@ -24,11 +24,14 @@ under runs/<subset>/<id>/. Each claim workspace also stores
 by librarian search iteration.
 
 Usage:
-    python -m evals.ProClaim.proclaim_librarian \
-        --proclaim-path evals/ProClaim \
+    python evals/Literature/ProClaim/proclaim_librarian.py \
+        --proclaim-path evals/Literature/ProClaim \
+        --config configs/librarian_sonnet.yaml \
         --subset all \
         --max-examples 3 \
         --out-dir results/proclaim_librarian_smoke
+
+Normally run through ../run_proclaim.sh --only proclaim.
 """
 
 from __future__ import annotations
@@ -78,14 +81,13 @@ from evals.Literature.ProClaim.verifier import (  # noqa: E402
     _write_jsonl,
 )
 
-LOGGER = logging.getLogger("bioagents.eval.proclaim_librarian")
+LOGGER = logging.getLogger("librarian.eval.proclaim_librarian")
 
 DEFAULT_PROCLAIM_SRC = (
     PROJECT_ROOT / "evals" / "Literature" / "ProClaim" / "ProClaim_src"
 )
-# Ours, in this repository — they select the librarian backend, which exists
-# nowhere upstream, so they were never ProClaim's to carry. Relative to this
-# file's directory, not to the clone.
+# Ours, in this repository, and relative to this file's directory rather than
+# to the clone: they select a backend upstream knows nothing about.
 DEFAULT_SUBSET_CONFIGS = {
     "signor": "configs/signor_librarian.yaml",
     "connectomedb": "configs/connectomedb_librarian.yaml",
@@ -123,45 +125,46 @@ def _read_config_summary(path: Path) -> dict[str, Any]:
     }
 
 
-def _patch_config_endpoint(
+def _patch_config_endpoints(
     config_path: Path,
     out_dir: Path,
-    base_url: str | None,
-    model: str | None,
+    overrides: dict[tuple[str, ...], str | None],
 ) -> Path:
-    """Copy *config_path* with its librarian endpoint overridden.
+    """Copy *config_path* with the given endpoints overridden.
 
-    The full-pipeline arm retrieves in-process and takes its librarian endpoint
-    from the YAML, which pins one host. That made the arm unrunnable whenever
-    that host was not serving — there was no way to point it elsewhere without
-    editing a checked-in file, unlike ``subagent_base_url`` which has always
-    been overridable. The patched copy is written into the run directory rather
-    than a temp path, so the config a run actually used stays with its results.
+    The YAML is the default for every endpoint this arm uses; the environment
+    overrides it, through the flags run_proclaim.sh passes. Without this the
+    overrides would move only what the shell starts and preflights, while the
+    pipeline went on reading the committed file.
+
+    The copy is written into the run directory, so the config a run actually
+    used stays with its results.
 
     :param config_path: The YAML the run would otherwise use.
     :param out_dir: Run directory; the copy lands in ``configs/`` beneath it.
-    :param base_url: Replacement ``librarian_llm_base_url``, or None to keep.
-    :param model: Replacement ``librarian_llm_model``, or None to keep.
-    :returns: The patched copy, or *config_path* unchanged when no override.
+    :param overrides: Key path within the document -> replacement value. A
+        ``None`` or empty value leaves that key alone.
+    :returns: The patched copy, or *config_path* unchanged when nothing is set.
     """
-    if not base_url and not model:
+    overrides = {keys: value for keys, value in overrides.items() if value}
+    if not overrides:
         return config_path
     import yaml
 
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    if base_url:
-        raw["librarian_llm_base_url"] = base_url
-    if model:
-        raw["librarian_llm_model"] = model
+    for keys, value in overrides.items():
+        target = raw
+        for key in keys[:-1]:
+            target = target.setdefault(key, {})
+        target[keys[-1]] = value
     patched_dir = out_dir / "configs"
     patched_dir.mkdir(parents=True, exist_ok=True)
     patched = patched_dir / config_path.name
     patched.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     LOGGER.info(
-        "Librarian endpoint overridden for %s: %s (%s)",
+        "Endpoints overridden for %s: %s",
         config_path.name,
-        base_url or raw.get("librarian_llm_base_url"),
-        model or raw.get("librarian_llm_model"),
+        ", ".join(f"{'.'.join(k)}={v}" for k, v in sorted(overrides.items())),
     )
     return patched
 
@@ -750,6 +753,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Override librarian_llm_model (env: PROCLAIM_LIBRARIAN_MODEL).",
     )
     parser.add_argument(
+        "--subagent-base-url",
+        default=None,
+        help="Override the config's llm.subagent_base_url (the evidence subagent).",
+    )
+    parser.add_argument(
+        "--subagent-model",
+        default=None,
+        help="Override the config's llm.subagent_model.",
+    )
+    parser.add_argument(
         "--timeout",
         type=int,
         default=DEFAULT_CLAIM_TIMEOUT_SECONDS,
@@ -809,12 +822,16 @@ def main(argv: list[str] | None = None) -> None:
             name: _resolve_config(rel) for name, rel in DEFAULT_SUBSET_CONFIGS.items()
         }
 
-    if args.librarian_base_url or args.librarian_model:
+    overrides = {
+        ("librarian_llm_base_url",): args.librarian_base_url,
+        ("librarian_llm_model",): args.librarian_model,
+        ("llm", "subagent_base_url"): args.subagent_base_url,
+        ("llm", "subagent_model"): args.subagent_model,
+    }
+    if any(overrides.values()):
         out_root = Path(args.out_dir).expanduser().resolve()
         subset_configs = {
-            name: _patch_config_endpoint(
-                path, out_root, args.librarian_base_url, args.librarian_model
-            )
+            name: _patch_config_endpoints(path, out_root, overrides)
             for name, path in subset_configs.items()
         }
 

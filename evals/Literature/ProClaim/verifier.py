@@ -17,6 +17,7 @@ from typing import Any, Callable, Iterable
 from xml.etree import ElementTree as ET
 
 import requests
+import yaml
 
 try:
     from tqdm.auto import tqdm
@@ -30,14 +31,19 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 
+from evals.Literature import evidence_text  # noqa: E402
+
 LABELS = ("SUPPORT", "REFUTE", "UNCERTAIN")
 SUBSETS = ("signor", "connectomedb")
 DEFAULT_FALLBACK_LABEL = "UNCERTAIN"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
-LOGGER = logging.getLogger("bioagents.eval.proclaim")
+LOGGER = logging.getLogger("librarian.eval.proclaim")
 MAX_SYNTHESIS_EVIDENCE_PAPERS = 20
 MAX_SYNTHESIS_SNIPPETS_PER_PAPER = 5
 MAX_SYNTHESIS_SNIPPET_CHARS = 1500
+#: Recorded on every prediction built from retrieved evidence. The value is not
+#: renamed with the code: predictions.jsonl carries it, and --resume reads it back.
+EVIDENCE_SYNTHESIS_MODE = "bio_agent_evidence_synthesis"
 
 
 INFERENCE_PROMPT_TEMPLATE = """You are evaluating a biomedical scientific claim using evidence from the scientific literature.
@@ -89,9 +95,6 @@ class EvalConfig:
     llm_base_url: str | None = None
     llm_model_name: str | None = None
     thinking: bool = False
-    retriever: str = "europepmc"
-    es_url: str = "http://elasticsearch:9200"
-    elastic_source: str = "abstracts"
     full_text_enrichment: bool = False
     fallback_label: str = DEFAULT_FALLBACK_LABEL
     cache_enabled: bool = False
@@ -123,7 +126,7 @@ class EvalConfig:
     verdict_base_url: str | None = None
     verdict_model_name: str | None = None
     verdict_api_key: str | None = None
-    bioagent_runner: (
+    runner: (
         Callable[[str], dict[str, Any] | str | "ProClaimPrediction"] | None
     ) = field(
         default=None,
@@ -252,7 +255,7 @@ def normalize_label(
     return fallback
 
 
-def parse_bioagent_output(
+def parse_agent_output(
     raw_output: Any,
     *,
     fallback_label: str = DEFAULT_FALLBACK_LABEL,
@@ -331,7 +334,7 @@ def predict_proclaim_verdict(
     claim: str,
     *,
     config: EvalConfig,
-    bioagent_runner: (
+    runner: (
         Callable[[str], dict[str, Any] | str | ProClaimPrediction] | None
     ) = None,
 ) -> ProClaimPrediction:
@@ -350,11 +353,11 @@ def predict_proclaim_verdict(
     last_error = ""
     for attempt in range(1, max(1, config.max_retries) + 1):
         try:
-            runner_output = _run_bioagent(prompt, config, bioagent_runner)
+            runner_output = _run_agent(prompt, config, runner)
             if isinstance(runner_output, ProClaimPrediction):
                 prediction = runner_output
             else:
-                prediction = _prediction_from_bioagent_result(
+                prediction = _prediction_from_agent_result(
                     runner_output,
                     config=config,
                     started=started,
@@ -411,15 +414,15 @@ def run_proclaim_evaluation(
     prediction_rows_by_id = {
         key: row for key, row in existing_rows.items() if key in selected_ids
     }
-    reusable_bioagent_runner = None
-    if predict_fn is None and config.bioagent_runner is None:
-        reusable_bioagent_runner = ReusableBioAgentRunner(config)
+    runner = None
+    if predict_fn is None and config.runner is None:
+        runner = VerifierRunner(config)
 
     predictor = predict_fn or (
         lambda claim, cfg: predict_proclaim_verdict(
             claim,
             config=cfg,
-            bioagent_runner=reusable_bioagent_runner,
+            runner=runner,
         )
     )
 
@@ -656,7 +659,7 @@ def render_latex_table(metrics: dict[str, Any]) -> str:
     return f"% AGR-only row\n{agr_row}\n\n% AGR / FPR / FNR row\n{full_row}\n"
 
 
-class ReusableBioAgentRunner:
+class VerifierRunner:
     """Lazily reuse one ``LibrarianAgent`` for a whole ProClaim run."""
 
     def __init__(self, config: EvalConfig) -> None:
@@ -747,36 +750,6 @@ class ReusableBioAgentRunner:
                 prompt,
                 system_message="You are evaluating a biomedical scientific claim.",
             )
-        else:
-            if self._agent is None:
-                self._agent = _build_literature_agent(self.config)
-            if self._llm is None:
-                from evals.Literature.llm_compat import build_llm_client
-
-                self._llm = build_llm_client(
-                    base_url=self.config.llm_base_url,
-                    model_name=self.config.llm_model_name,
-                    reasoning_effort=self.config.thinking,
-                )
-
-            claim = _extract_claim_from_prompt(prompt)
-            retrieval_query = (
-                "Find scientific evidence that supports or refutes this "
-                f"biomedical claim: {claim}"
-            )
-            result = self._agent.run(
-                retrieval_query,
-                additional_context=_proclaim_retrieval_context(claim),
-                progress_callback=None,
-                conversation_history=None,
-                output_channel="generic",
-                include_summary=False,
-            )
-            return _synthesize_proclaim_verdict_from_evidence(
-                claim=claim,
-                retrieval=result,
-                llm_client=self._llm,
-            )
 
 
 def _extract_claim_from_prompt(prompt: str) -> str:
@@ -790,69 +763,6 @@ def _extract_claim_from_prompt(prompt: str) -> str:
         if claim:
             return claim
     return " ".join(str(prompt).split())
-
-
-def _proclaim_retrieval_context(claim: str) -> str:
-    return (
-        "ProClaim retrieval mode: retrieve primary biomedical literature that can "
-        "support or refute the exact claim. Preserve all named entities, species, "
-        "directionality, interaction type, ligand/receptor or protein relation, "
-        "and causal wording from the claim. Include search angles for direct "
-        "support, direct contradiction, and closely related evidence that may make "
-        "the verdict uncertain. Do not broaden to generic pathway background unless "
-        "direct evidence is unavailable.\n\n"
-        f"Exact claim:\n{claim}"
-    )
-
-
-def _synthesize_proclaim_verdict_from_evidence(
-    *,
-    claim: str,
-    retrieval: dict[str, Any],
-    llm_client: Any,
-) -> dict[str, Any]:
-    """Build the ProClaim verdict from retrieved evidence, not agent summary."""
-    evidence_text = _format_proclaim_evidence_for_prompt(retrieval)
-    if not evidence_text:
-        raw_output = json.dumps(
-            {
-                "verdict": "REFUTE",
-                "reasoning": (
-                    "The literature search did not retrieve evidence that "
-                    "substantiates the claim."
-                ),
-                "citations": [],
-            },
-            ensure_ascii=False,
-        )
-    else:
-        raw_output = llm_client.chat_completion(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a biomedical claim-verification expert. Use only "
-                        "the provided evidence snippets and return valid JSON only."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": _proclaim_verdict_prompt(claim, evidence_text),
-                },
-            ],
-            temperature=0,
-            max_tokens=900,
-        )
-
-    return {
-        "summary": "",
-        "raw_output": raw_output,
-        "inference_mode": "bio_agent_evidence_synthesis",
-        "evidence_prompt_chars": len(evidence_text),
-        "evidence": list((retrieval or {}).get("evidence") or []),
-        "search_query": (retrieval or {}).get("search_query", ""),
-        "retrieved_paper_count": len((retrieval or {}).get("papers_raw") or []),
-    }
 
 
 def _proclaim_verdict_prompt(claim: str, evidence_text: str) -> str:
@@ -893,127 +803,6 @@ def _proclaim_verdict_prompt(claim: str, evidence_text: str) -> str:
         f"Retrieved evidence:\n{evidence_text}\n\n"
         "JSON:"
     )
-
-
-def _format_proclaim_evidence_for_prompt(
-    retrieval: dict[str, Any],
-    limit: int = MAX_SYNTHESIS_EVIDENCE_PAPERS,
-) -> str:
-    evidence_entries = [
-        entry
-        for entry in list(retrieval.get("evidence") or [])
-        if isinstance(entry, dict)
-    ]
-    if not evidence_entries:
-        return ""
-
-    rendered: list[str] = []
-    for entry in evidence_entries:
-        if len(rendered) >= limit:
-            break
-        block = _render_proclaim_evidence_block(
-            rank=len(rendered) + 1,
-            evidence_entry=entry,
-        )
-        if block:
-            rendered.append(block)
-
-    return "\n\n".join(rendered)
-
-
-def _render_proclaim_evidence_block(
-    *,
-    rank: int,
-    evidence_entry: dict[str, Any],
-) -> str:
-    snippets = _dedupe_texts(_extract_evidence_entry_texts(evidence_entry))
-    snippets = [
-        snippet
-        for snippet in snippets
-        if snippet
-        and snippet != "|"
-        and "No abstract or full-text excerpt" not in snippet
-    ]
-    if not snippets:
-        return ""
-
-    metadata_parts = []
-    identifier_label = _identifier_label(evidence_entry)
-    if identifier_label:
-        metadata_parts.append(identifier_label)
-
-    snippet_lines = []
-    for snippet in snippets[:MAX_SYNTHESIS_SNIPPETS_PER_PAPER]:
-        compact = _truncate_prompt_text(snippet, MAX_SYNTHESIS_SNIPPET_CHARS)
-        if compact:
-            snippet_lines.append(f"- {compact}")
-    if not snippet_lines:
-        return ""
-
-    header = f"[{rank}]"
-    if metadata_parts:
-        header += " " + "; ".join(metadata_parts)
-    return header + "\n" + "\n".join(snippet_lines)
-
-
-def _extract_evidence_entry_texts(entry: dict[str, Any]) -> list[str]:
-    texts: list[str] = []
-    _extend_texts(texts, entry.get("evidence"))
-    return texts
-
-
-def _extend_texts(target: list[str], value: Any) -> None:
-    if value is None:
-        return
-    if isinstance(value, str):
-        text = " ".join(value.split())
-        if text:
-            target.append(text)
-        return
-    if isinstance(value, list):
-        for item in value:
-            _extend_texts(target, item)
-        return
-    if isinstance(value, dict):
-        for item in value.values():
-            _extend_texts(target, item)
-
-
-def _dedupe_texts(texts: list[str]) -> list[str]:
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for text in texts:
-        normalized = " ".join(str(text).split())
-        if not normalized:
-            continue
-        fingerprint = normalized.lower()
-        if fingerprint in seen:
-            continue
-        seen.add(fingerprint)
-        deduped.append(normalized)
-    return deduped
-
-
-def _identifier_label(obj: dict[str, Any]) -> str:
-    labels: list[str] = []
-    for label, raw_key in (
-        ("PMID", "pmid"),
-        ("PMCID", "pmcid"),
-        ("DOI", "doi"),
-        ("CorpusId", "corpus_id"),
-        ("CorpusId", "corpusId"),
-    ):
-        value = str(obj.get(raw_key) or "").strip()
-        if value and f"{label}: {value}" not in labels:
-            labels.append(f"{label}: {value}")
-    return "; ".join(labels)
-
-
-def _truncate_prompt_text(text: str, limit: int) -> str:
-    compact = " ".join(str(text).split())
-    if len(compact) <= limit:
-        return compact
-    return f"{compact[: limit - 3].rstrip()}..."
 
 
 class ResponsesWebSearchClient:
@@ -1073,33 +862,19 @@ class ResponsesWebSearchClient:
         }
 
 
-def _run_bioagent(
+def _run_agent(
     prompt: str,
     config: EvalConfig,
-    bioagent_runner: Callable[[str], dict[str, Any] | str | ProClaimPrediction]
+    runner: Callable[[str], dict[str, Any] | str | ProClaimPrediction]
     | None = None,
 ) -> dict[str, Any] | str | ProClaimPrediction:
-    if bioagent_runner is not None:
-        return bioagent_runner(prompt)
-    if config.bioagent_runner is not None:
-        return config.bioagent_runner(prompt)
+    if runner is not None:
+        return runner(prompt)
+    if config.runner is not None:
+        return config.runner(prompt)
 
-    runner = ReusableBioAgentRunner(config)
+    runner = VerifierRunner(config)
     return runner(prompt)
-
-
-def _build_literature_agent(config: EvalConfig):
-    """The pre-librarian retrieval backend, which this repository does not ship.
-
-    The paper's baseline rows used an internal literature agent (optionally over
-    an Elasticsearch index) that the librarian replaced. Only the +Librarian
-    rows are reproducible here, which is what ``run_proclaim.sh`` runs.
-    """
-    raise RuntimeError(
-        "Only the librarian retrieval backend is available in this repository. "
-        "Pass --librarian-agent (what ProClaim/run_proclaim.sh does); "
-        f"got retriever={config.retriever!r}."
-    )
 
 
 def _build_librarian_agent(config: EvalConfig):
@@ -1233,7 +1008,7 @@ def _synthesize_proclaim_verdict_from_librarian_passages(
     return {
         "summary": "",
         "raw_output": raw_output,
-        "inference_mode": "bio_agent_evidence_synthesis",
+        "inference_mode": EVIDENCE_SYNTHESIS_MODE,
         "evidence_prompt_chars": len(evidence_text),
         "evidence": [],
         "search_query": claim,
@@ -1559,7 +1334,7 @@ def _retrieve_pubmed_s2_passages(
     return passages, f"pubmed=[{pubmed_query}] s2=[{s2_query}]"
 
 
-def _prediction_from_bioagent_result(
+def _prediction_from_agent_result(
     runner_output: dict[str, Any] | str,
     *,
     config: EvalConfig,
@@ -1571,11 +1346,11 @@ def _prediction_from_bioagent_result(
         result = dict(runner_output or {})
 
     raw_output = str(result.get("summary") or result.get("raw_output") or "")
-    parsed = parse_bioagent_output(raw_output, fallback_label=config.fallback_label)
+    parsed = parse_agent_output(raw_output, fallback_label=config.fallback_label)
     evidence = list(result.get("evidence") or [])
     papers = list(result.get("papers_raw") or [])
-    inference_mode = str(result.get("inference_mode", "bio_agent"))
-    if inference_mode == "bio_agent_evidence_synthesis":
+    inference_mode = str(result.get("inference_mode", "agent"))
+    if inference_mode == EVIDENCE_SYNTHESIS_MODE:
         citations = (
             parsed.citations
             or _normalize_citations(result.get("citations"))
@@ -1601,7 +1376,7 @@ def _prediction_from_bioagent_result(
         metadata["evidence_prompt_chars"] = result["evidence_prompt_chars"]
     if (
         result.get("full_text_debug")
-        and inference_mode != "bio_agent_evidence_synthesis"
+        and inference_mode != EVIDENCE_SYNTHESIS_MODE
     ):
         metadata["full_text_debug"] = result["full_text_debug"]
     if "web_search_call_count" in result:
@@ -1815,7 +1590,7 @@ def _citations_from_evidence_entries(
         if not isinstance(entry, dict):
             continue
 
-        snippets = _dedupe_texts(_extract_evidence_entry_texts(entry))
+        snippets = evidence_text.dedupe(evidence_text.evidence_texts(entry))
         if not snippets:
             continue
 
@@ -1825,7 +1600,7 @@ def _citations_from_evidence_entries(
                 "url": str(entry.get("url") or ""),
                 "pmid": str(entry.get("pmid") or ""),
                 "doi": str(entry.get("doi") or ""),
-                "evidence": _truncate_prompt_text(snippets[0], 600),
+                "evidence": evidence_text.truncate(snippets[0], 600),
             }
         )
     return citations
@@ -2025,13 +1800,10 @@ def _cache_key(claim: str, config: EvalConfig) -> str:
         "llm_base_url": config.llm_base_url,
         "llm_model_name": config.llm_model_name,
         "thinking": config.thinking,
-        "retriever": config.retriever,
         # Retrieval through the orchestrator returns different evidence from the
         # in-process librarian, so a cached verdict from one is not valid for the
         # other. Without this the two transports silently share cache entries.
         "via_api": config.via_api,
-        "es_url": config.es_url,
-        "elastic_source": config.elastic_source,
         "full_text_enrichment": config.full_text_enrichment,
         "web_search": config.web_search,
         "web_search_tool_choice": config.web_search_tool_choice,
@@ -2070,9 +1842,6 @@ def _serializable_config(config: EvalConfig) -> dict[str, Any]:
         "llm_base_url": config.llm_base_url,
         "llm_model_name": config.llm_model_name,
         "thinking": config.thinking,
-        "retriever": config.retriever,
-        "es_url": config.es_url,
-        "elastic_source": config.elastic_source,
         "full_text_enrichment": config.full_text_enrichment,
         "web_search": config.web_search,
         "web_search_tool_choice": config.web_search_tool_choice,
@@ -2097,29 +1866,8 @@ def _load_model_config(path: Path | None) -> dict[str, Any]:
     if path.suffix.lower() == ".json":
         payload = json.loads(text)
         return payload if isinstance(payload, dict) else {}
-    try:
-        import yaml
-
-        payload = yaml.safe_load(text) or {}
-        return payload if isinstance(payload, dict) else {}
-    except ImportError:
-        return _parse_flat_yaml(text)
-
-
-def _parse_flat_yaml(text: str) -> dict[str, Any]:
-    payload: dict[str, Any] = {}
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or ":" not in stripped:
-            continue
-        key, value = stripped.split(":", 1)
-        value = value.strip().strip("'\"")
-        lowered = value.lower()
-        if lowered in {"true", "false"}:
-            payload[key.strip()] = lowered == "true"
-        else:
-            payload[key.strip()] = value
-    return payload
+    payload = yaml.safe_load(text) or {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _config_from_args(args: argparse.Namespace) -> EvalConfig:
@@ -2135,11 +1883,6 @@ def _config_from_args(args: argparse.Namespace) -> EvalConfig:
         llm_base_url=get_config("llm_base_url", "base_url"),
         llm_model_name=get_config("llm_model_name", "model_name", "model"),
         thinking=bool(get_config("thinking", default=False)),
-        retriever=str(get_config("retriever", "search_backend", default="europepmc")),
-        es_url=str(
-            get_config("es_url", "elastic_url", default="http://elasticsearch:9200")
-        ),
-        elastic_source=str(get_config("elastic_source", default="abstracts")),
         full_text_enrichment=bool(get_config("full_text_enrichment", default=False)),
         fallback_label=normalize_label(
             get_config("fallback_label", default=DEFAULT_FALLBACK_LABEL)
@@ -2192,10 +1935,6 @@ def _config_from_args(args: argparse.Namespace) -> EvalConfig:
         config.thinking = True
     if args.full_text:
         config.full_text_enrichment = True
-    if args.retriever:
-        config.retriever = args.retriever
-    if args.es_url:
-        config.es_url = args.es_url
     if args.fallback_label:
         config.fallback_label = (
             normalize_label(args.fallback_label) or DEFAULT_FALLBACK_LABEL
@@ -2204,6 +1943,26 @@ def _config_from_args(args: argparse.Namespace) -> EvalConfig:
         config.web_search_tool_choice = "required"
     if config.web_search_context_size not in {"low", "medium", "high"}:
         config.web_search_context_size = "medium"
+
+    # Exactly one retrieval mode, checked here rather than by falling off the
+    # end of VerifierRunner.__call__ with nothing selected.
+    modes = [
+        name
+        for name, on in (
+            ("--librarian-agent", config.librarian_agent),
+            ("--pubmed-s2", config.pubmed_s2),
+            ("--web-search", config.web_search),
+            ("--no-agent", config.no_agent),
+        )
+        if on
+    ]
+    if len(modes) != 1:
+        chosen = ", ".join(modes) if modes else "none"
+        raise SystemExit(
+            "Pick exactly one retrieval mode: --librarian-agent (what "
+            "run_proclaim.sh uses), --pubmed-s2, --web-search or --no-agent; "
+            f"got {chosen}."
+        )
     return config
 
 
@@ -2224,8 +1983,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cache", action="store_true")
     parser.add_argument("--fallback-label", choices=list(LABELS), default=None)
     parser.add_argument("--max-retries", type=int, default=1)
-    parser.add_argument("--retriever", choices=["europepmc", "elastic"], default=None)
-    parser.add_argument("--es-url", default=None)
     parser.add_argument("--llm-base-url", default=None)
     parser.add_argument("--llm-model", default=None)
     parser.add_argument("--thinking", action="store_true")

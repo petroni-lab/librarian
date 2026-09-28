@@ -8,17 +8,10 @@ This stands in for
 
     python -m proclaim.verification.evidence_programming_direct
 
-and takes the same arguments, because it reuses ProClaim's own CLI parser. It
-is what makes the librarian arm possible without touching the clone: upstream's
-``verify_claim_direct()`` dispatches to PubMed retrieval and knows nothing about
-the librarian, so rather than patch that dispatch we simply do not call it. The
-one-shot path in backend/one_shot.py runs instead, borrowing four helpers out of
-upstream's module and leaving everything else alone.
-
-``../ProClaim_src/`` stays byte-for-byte its pinned commit, which
-``../setup.sh --check`` asserts. Upstream's own behaviour is therefore not
-merely unchanged but unreachable from here: there is no switch inside ProClaim
-left at a safe default, because nothing inside ProClaim was altered.
+and takes the same arguments, because it reuses ProClaim's own CLI parser.
+Upstream's ``verify_claim_direct()`` dispatches to PubMed retrieval and knows
+nothing about the librarian, so rather than patch that dispatch we do not call
+it: ``backend/one_shot.py`` runs instead. See NOTICE.
 
 PYTHONPATH must carry both this repository and the clone's ``src``;
 proclaim_librarian.py sets that up for the subprocesses it spawns.
