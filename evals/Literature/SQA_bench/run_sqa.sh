@@ -56,6 +56,9 @@ while [ $# -gt 0 ]; do
         --skip-citation-eval) SKIP_CITATION_EVAL=true; shift ;;
         --limit) LIMIT="$2"; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
+        # Accepted and ignored: every run already resumes. The failure hints
+        # used to suggest it, and it is the obvious thing to reach for.
+        --resume) shift ;;
         # Baseline and ablation arms, forwarded verbatim to run_sqa_new_stack.py.
         # None has an API equivalent -- the pods run their deployed config -- so
         # each also turns --via-api off rather than quietly measuring the wrong

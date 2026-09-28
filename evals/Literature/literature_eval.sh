@@ -71,8 +71,8 @@
 # "unhandled system error".
 #
 # Generation is pure network, so it can be split across machines: run
-# `--skip-citation-eval` on a CPU box and re-run on the GPU one for scoring,
-# where --resume picks up the generated answers.
+# `--skip-citation-eval` on a CPU box, then re-run the same command on the GPU
+# one, which picks up the generated answers and goes straight to scoring.
 #
 # Baselines are not scripted; each bench's script header gives the exact one-flag
 # change that produces its baseline row.

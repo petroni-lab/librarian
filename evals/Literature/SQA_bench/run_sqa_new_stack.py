@@ -432,6 +432,10 @@ def _load_predictions(path):
     return items
 
 
+#: Set when this run resumed a finished predictions file, so the results go
+#: back into it rather than into a new one per attempt.
+resumed_path: str | None = None
+
 if args.retry:
     pred_file = _find_pred_file(OUTPUT_DIR, model_file_tag)
     err_file = pred_file.replace(".json", "_errors.json") if pred_file else None
@@ -452,6 +456,8 @@ elif args.resume:
     predictions = _load_predictions(pred_file) if pred_file else []
     if pred_file:
         print(f"Resuming from: {pred_file}")
+        if not pred_file.endswith("_wip.json"):
+            resumed_path = pred_file
     answered_inputs = {
         p["input"] for p in predictions if p.get("output") and not _is_empty_result(p)
     }
@@ -772,9 +778,16 @@ if progress_bar is not None:
 _atomic_write_json(predictions_path, predictions)
 _atomic_write_json(errors_path, errors)
 
-final_stem = f"pred_{model_file_tag}_{len(predictions)}_{run_ts}"
-final_path = os.path.join(OUTPUT_DIR, f"{final_stem}.json")
-final_errors_path = os.path.join(OUTPUT_DIR, f"{final_stem}_errors.json")
+# A resumed run writes back to the file it resumed. Otherwise each re-run --
+# rescoring the same answers, say -- would leave another timestamped copy
+# behind, and which one carried the score would not be obvious.
+if resumed_path:
+    final_path = resumed_path
+    final_errors_path = f"{os.path.splitext(resumed_path)[0]}_errors.json"
+else:
+    final_stem = f"pred_{model_file_tag}_{len(predictions)}_{run_ts}"
+    final_path = os.path.join(OUTPUT_DIR, f"{final_stem}.json")
+    final_errors_path = os.path.join(OUTPUT_DIR, f"{final_stem}_errors.json")
 os.replace(predictions_path, final_path)
 os.replace(errors_path, final_errors_path)
 
@@ -829,8 +842,8 @@ if not args.skip_citation_eval:
             "       environment, because it resolves against your CUDA:\n\n"
             "         ./evals/Literature/setup.sh --bench sqa\n\n"
             f"       The predictions are already written to\n         {final_path}\n"
-            "       so re-running the same command with --resume scores them\n"
-            "       without answering the questions again.",
+            "       so re-running the same command scores them without\n"
+            "       answering the questions again.",
             file=sys.stderr,
         )
         sys.exit(1)
