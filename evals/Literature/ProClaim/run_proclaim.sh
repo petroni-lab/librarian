@@ -22,11 +22,13 @@
 # Baseline rows swap the retriever on the verifier arm: --pubmed-s2 or
 # --web-search in place of --librarian-agent.
 #
-# Env: LIBRARIAN_URL (required), LIBRARIAN_MODEL, PROCLAIM_VERDICT_MODEL,
-#      PROCLAIM_VERDICT_URL, PROCLAIM_SUBAGENT_URL, PROCLAIM_SUBAGENT_MODEL,
-#      PROCLAIM_LIBRARIAN_URL, PROCLAIM_LIBRARIAN_MODEL (these default to what
-#      the YAML config pins), RESULTS_ROOT, LIMIT, ONLY, DRY_RUN.
-#      ANTHROPIC_API_KEY must be set.
+# Env: LIBRARIAN_URL (required unless VIA_API), LIBRARIAN_MODEL,
+#      PROCLAIM_VERDICT_MODEL, PROCLAIM_VERDICT_URL, PROCLAIM_SUBAGENT_URL,
+#      PROCLAIM_SUBAGENT_MODEL, PROCLAIM_LIBRARIAN_URL, PROCLAIM_LIBRARIAN_MODEL
+#      (these four default to what the YAML config pins), PROCLAIM_CONFIG_REL,
+#      PROCLAIM_APPTAINER_IMAGE, PROCLAIM_SRC, PROCLAIM_SUBAGENT_HF_MODEL,
+#      PROCLAIM_SUBAGENT_WAIT_SECONDS, RESULTS_ROOT, LIMIT, ONLY, VIA_API,
+#      DRY_RUN. ANTHROPIC_API_KEY must be set.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -72,7 +74,7 @@ while [ $# -gt 0 ]; do
         --only) ONLY="${ONLY:+$ONLY,}$2"; shift 2 ;;
         --limit) LIMIT="$2"; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
-        -h|--help) sed -n '1,29p' "$0"; exit 0 ;;
+        -h|--help) sed -n '1,31p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done

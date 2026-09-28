@@ -90,16 +90,6 @@ _RAW_EVIDENCE_SNIPPET_CHARS = 1500
 _TOP_EVIDENCE_VERDICT_CAP = 10
 
 
-def _is_librarian_infrastructure_error(result: str) -> bool:
-    """Detect librarian backend failures that invalidate the verification run."""
-    markers = (
-        "Librarian unavailable:",
-        "Librarian search failed",
-        "RuntimeError: Librarian unavailable:",
-        "RuntimeError: Librarian search failed",
-    )
-    return any(marker in result for marker in markers)
-
 def _collect_raw_librarian_evidence(
     state,
     cap: int = _RAW_EVIDENCE_VERDICT_CAP,

@@ -765,46 +765,6 @@ def _extract_claim_from_prompt(prompt: str) -> str:
     return " ".join(str(prompt).split())
 
 
-def _proclaim_verdict_prompt(claim: str, evidence_text: str) -> str:
-    return (
-        "Evaluate the biomedical claim using only the retrieved evidence snippets.\n\n"
-        "Verdict labels:\n"
-        "- SUPPORT: the evidence directly corroborates the exact claim, including "
-        "the named entities and direction or effect.\n"
-        "- REFUTE: the evidence directly contradicts the claim or supports an "
-        "incompatible relation or direction.\n"
-        "- UNCERTAIN: the evidence is absent, ambiguous, incomplete, indirect, or "
-        "conflicting — including when retrieved snippets discuss related biology "
-        "but do not address the specific claim.\n\n"
-        "Rules:\n"
-        "- Do not use outside biomedical knowledge.\n"
-        "- Keep reasoning concise and evidence-grounded.\n"
-        "- Cite only evidence blocks provided below.\n"
-        "- If snippets consistently describe a relation (e.g. protein A stimulates "
-        "pathway B which includes protein C), treat that as indirect SUPPORT only "
-        "if the chain is explicit and unambiguous in the text.\n\n"
-        "Return JSON only with this schema:\n"
-        "{\n"
-        '  "verdict": "SUPPORT" | "REFUTE" | "UNCERTAIN",\n'
-        '  "reasoning": "one to three concise sentences",\n'
-        '  "citations": [\n'
-        "    {\n"
-        '      "title": "...",\n'
-        '      "url": "...",\n'
-        '      "pmid": "...",\n'
-        '      "doi": "...",\n'
-        '      "evidence": "short evidence snippet copied or paraphrased from one block"\n'
-        "    }\n"
-        "  ]\n"
-        "}\n\n"
-        "Use empty strings for citation fields that are not present in the "
-        "evidence block. Do not infer missing title, URL, PMID, or DOI values.\n\n"
-        f"Claim:\n{claim}\n\n"
-        f"Retrieved evidence:\n{evidence_text}\n\n"
-        "JSON:"
-    )
-
-
 class ResponsesWebSearchClient:
     """Minimal OpenAI Responses API client for ProClaim web-search baselines."""
 
