@@ -147,24 +147,27 @@ elif want multi; then
     [ "$VIA_API" = true ] && cmd+=(--via-api)
     cmd+=(${BASELINE_ARGS[@]+"${BASELINE_ARGS[@]}"})
     [ -n "${LIMIT:-}" ] && cmd+=(--limit "$LIMIT")
-    echo "RUN   ${cmd[*]}"
-    if [ "$DRY_RUN" != true ]; then
-        # Prometheus at TP=4 will not fit on fewer GPUs; say so now.
-        env_problem=""
-        command -v apptainer >/dev/null || env_problem="apptainer is not installed"
-        if [ -z "$env_problem" ]; then
-            gpu_count="$(nvidia-smi -L 2>/dev/null | wc -l)"
-            [ "$gpu_count" -ge "$JUDGE_GPUS" ] \
-                || env_problem="the Prometheus judges need >= $JUDGE_GPUS GPUs; found $gpu_count"
+
+    # Checked before the RUN line, and on a dry run too, so a dry run on a host
+    # that cannot host the judges says so rather than printing a command that
+    # would not execute. Prometheus at TP=4 will not fit on fewer GPUs.
+    env_problem=""
+    command -v apptainer >/dev/null || env_problem="apptainer is not installed"
+    if [ -z "$env_problem" ]; then
+        gpu_count="$(nvidia-smi -L 2>/dev/null | wc -l)"
+        [ "$gpu_count" -ge "$JUDGE_GPUS" ] \
+            || env_problem="the Prometheus judges need >= $JUDGE_GPUS GPUs; found $gpu_count"
+    fi
+    if [ -n "$env_problem" ]; then
+        if [ -n "$ONLY" ]; then
+            echo "ERROR: --only multi cannot run here: $env_problem." >&2
+            exit 1
         fi
-        if [ -n "$env_problem" ]; then
-            if [ -n "$ONLY" ]; then
-                echo "ERROR: --only multi cannot run here: $env_problem." >&2
-                exit 1
-            fi
-            echo "SKIP  multi — $env_problem."
-            echo "      bio and neuro above are unaffected; they need neither."
-        else
+        echo "SKIP  multi — $env_problem."
+        echo "      bio and neuro above are unaffected; they need neither."
+    else
+        echo "RUN   ${cmd[*]}"
+        if [ "$DRY_RUN" != true ]; then
             mkdir -p "$RESULTS_ROOT/sqa_multi_bio"
             "${cmd[@]}"
         fi
