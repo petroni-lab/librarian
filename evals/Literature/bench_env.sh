@@ -84,6 +84,21 @@ bench_manifest() {
     return 1
 }
 
+# The manifest that owns an environment, which for a secondary one -- the
+# `sqa-scoring` of `envs=sqa,sqa-scoring` -- is not named `bench=`.
+bench_manifest_for_env() {
+    local m envs
+    bench_manifest "$1" && return 0
+    for m in "$LIT_ROOT"/*/bench.manifest; do
+        [ -f "$m" ] || continue
+        envs="$(sed -n 's/^envs=//p' "$m" | head -1)"
+        case ",${envs// /}," in
+            *",$1,"*) printf '%s' "$m"; return 0 ;;
+        esac
+    done
+    return 1
+}
+
 bench_manifest_get() {
     local manifest="$1" key="$2"
     [ -f "$manifest" ] || return 1
@@ -205,18 +220,21 @@ _bench_build() {
             || { _bench_die "installing $lock into $env_dir failed"; return 1; }
     fi
 
-    # The manifest's post_install hook, for anything the lock cannot express,
-    # such as an editable install of the upstream clone. It runs against the
-    # built environment, with BENCH_ENV_PYTHON and BENCH_CLONE_DIR set.
+    # The manifest's post_install hook, for anything the lock cannot express:
+    # an editable install of the clone, or data a package downloads at run time.
+    # It runs once per environment the bench owns, with BENCH_ENV_NAME saying
+    # which, plus BENCH_ENV_PYTHON, BENCH_ENV_DIR and BENCH_CLONE_DIR.
     local manifest hook
-    if manifest="$(bench_manifest "$bench")"; then
+    if manifest="$(bench_manifest_for_env "$bench")"; then
         hook="$(bench_manifest_get "$manifest" post_install)"
         if [ -n "$hook" ]; then
             local bench_dir clone_rel
             bench_dir="$(dirname "$manifest")"
             clone_rel="$(bench_manifest_get "$manifest" clone)"
             echo "        post-install: $hook" >&2
+            BENCH_ENV_NAME="$bench" \
             BENCH_ENV_PYTHON="$env_dir/bin/python" \
+            BENCH_ENV_DIR="$env_dir" \
             BENCH_CLONE_DIR="${clone_rel:+$bench_dir/$clone_rel}" \
             BENCH_DIR="$bench_dir" \
             REPO_ROOT="$REPO_ROOT" \
