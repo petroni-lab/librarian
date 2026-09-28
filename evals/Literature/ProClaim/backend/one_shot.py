@@ -5,28 +5,18 @@ ProClaim retrieves with PubMed and Semantic Scholar. The paper's "ProClaim
 exists nowhere upstream: one librarian search, fact extraction, a bounded
 sparse-evidence recovery loop, and a verdict emitted on the outer-agent model.
 
-This is GPL-3.0. It is a derived work of ProClaim (see ../NOTICE) even though it
-lives outside the clone, because it is written against ProClaim's internals and
-distributed with it. The repository's root LICENSE does not reach this
-directory.
+GPL-3.0, a derived work of ProClaim; see ../NOTICE for why it lives here rather
+than in the clone.
 
-WHY IT IS HERE AND NOT IN THE CLONE
+It calls four helpers out of upstream's `evidence_programming_direct` -- the
+jupytext logging trio and `generate_notebook` -- plus `evidence_api`'s
+workspace, extraction and verdict functions, and replaces `verify_claim_direct()`
+rather than modifying it. ../direct_entry.py runs it in upstream's place, and
+../check_seam.py asserts those names are still there.
 
-`../ProClaim_src/` is a pristine clone at a pinned commit, and
-`../../setup.sh --check` asserts it stays that way. Nothing of ours is written
-inside it. Upstream's own behaviour is therefore untouched: there is no
-`retrieval_backend` switch to leave at "pubmed", because upstream never learns
-about the librarian at all.
-
-That is possible because this path is purely additive. It calls four helpers
-out of upstream's `evidence_programming_direct` — the jupytext logging trio and
-`generate_notebook` — plus `evidence_api`'s workspace, extraction and verdict
-functions, and otherwise replaces `verify_claim_direct()` rather than modifying
-it. ../direct_entry.py is what runs it in upstream's place.
-
-`build_subprocess_env` is the one helper we could not use as-is: a librarian run
-needs the AGENT_LLM_* variables and must not carry the MLP classifier. It is
-wrapped here rather than patched there.
+`build_subprocess_env` is the one helper wrapped rather than used as-is: a
+librarian run needs the AGENT_LLM_* variables and must not carry the MLP
+classifier.
 """
 
 from __future__ import annotations

@@ -2,32 +2,25 @@
 
 GPL-3.0; see NOTICE.
 
-`backend/` stands beside ProClaim rather than inside it, which is what lets the
-clone stay byte-for-byte its pinned commit. The price is that the join is made
-of imports and attribute names rather than of a patch that would refuse to
-apply. This checks that join.
+Because `backend/` stands beside ProClaim rather than inside it, the join is
+made of imports and attribute names, not of a patch that would refuse to apply.
+This checks that join.
 
 It parses the clone's source rather than importing it, so it runs without
-ProClaim's dependency stack — which means `setup.sh --bench proclaim` can call
-it on any machine, right after cloning, long before the pipeline environment
-exists (and on a laptop, where that environment cannot be built at all).
+ProClaim's dependency stack -- on any machine, right after cloning, before the
+pipeline environment exists.
 
     python evals/Literature/ProClaim/check_seam.py [--clone DIR]
 
-What it asserts, and why each one matters:
+It asserts that:
 
-  * The four helpers one_shot.py borrows are still defined. A rename upstream
-    would otherwise surface as an ImportError deep inside a per-claim
-    subprocess.
-  * `VerificationSettings` still ignores unknown keys, and still has no
-    `retrieval_backend` field of its own. Both are load-bearing: the first is
-    why `LibrarianSettings` must subclass it rather than pass extra keys, and
-    the second would mean upstream had grown its own notion of a retrieval
-    backend that ours could silently conflict with.
+  * the four helpers one_shot.py borrows are still defined;
+  * `VerificationSettings` still ignores unknown keys (which is why
+    `LibrarianSettings` subclasses it) and still has no `retrieval_backend`
+    field of its own (which would collide with ours);
   * `evidence_api` still exports the four functions the one-shot path calls.
 
-None of this proves the run works. It proves the parts we reach for are still
-there, which is the failure this layout trades a patch conflict for.
+That is not proof the run works, only that the parts we reach for are there.
 """
 
 from __future__ import annotations

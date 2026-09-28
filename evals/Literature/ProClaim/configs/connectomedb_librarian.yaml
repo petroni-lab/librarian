@@ -46,6 +46,9 @@ llm:
   # Subagent: used inside bash for evidence_api calls, including fact extraction
   # and gap analysis. Points at the local Qwen vLLM endpoint (not the GLM
   # librarian endpoint and not https://api.openai.com/v1).
+  # Overridden by run_proclaim.sh via --subagent-base-url / --subagent-model
+  # (which pass PROCLAIM_SUBAGENT_URL / PROCLAIM_SUBAGENT_MODEL). Set them
+  # here only to pin an endpoint for a standalone run.
   subagent_model: qwen3.5-9b
   subagent_base_url: http://localhost:9900/v1
 
