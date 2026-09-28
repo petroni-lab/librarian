@@ -157,10 +157,65 @@ _bench_stamp_value() {
 
 # The interpreter the virtualenv is created from, as opposed to the one inside
 # it. Its minor version is part of the stamp, since wheels do not cross one.
-_bench_base_python() {
-    if [ -n "${BENCH_BASE_PYTHON:-}" ]; then printf '%s' "$BENCH_BASE_PYTHON"; return; fi
+# The Python minor version every lock in envs/ was compiled for. Read from a
+# lock header rather than repeated here, so a relock cannot leave it behind.
+bench_required_python() {
+    local lock
+    for lock in "$LIT_ROOT"/envs/*.lock; do
+        [ -f "$lock" ] || continue
+        sed -n 's/.*--python-version \([0-9][0-9.]*\).*/\1/p' "$lock" | head -1
+        return 0
+    done
+}
+
+# The interpreter that reads literature_eval.toml, before any of it applies.
+# `uv sync` creates .venv without putting it on PATH, so prefer that one.
+bench_boot_python() {
+    if [ -x "$REPO_ROOT/.venv/bin/python" ]; then printf '%s' "$REPO_ROOT/.venv/bin/python"; return; fi
     if command -v python3 >/dev/null 2>&1; then printf 'python3'; return; fi
     printf 'python'
+}
+
+# literature_eval.toml -> the flat variables the runners read. Every entry
+# point applies it, so `[paths] python` means the same thing to all of them.
+bench_load_config() {
+    local boot
+    boot="$(bench_boot_python)"
+    command -v "$boot" >/dev/null 2>&1 || [ -x "$boot" ] || {
+        _bench_die "no Python interpreter found; run \`uv sync\` at the repository root"; return 1; }
+    eval "$("$boot" "$LIT_ROOT/load_config.py")"
+}
+
+# The interpreter each locked environment is created from. `[paths] python`
+# (BENCH_BASE_PYTHON) wins; otherwise uv finds the version the locks want,
+# because the ambient python3 is usually not it.
+_bench_base_python() {
+    if [ -n "${BENCH_BASE_PYTHON:-}" ]; then printf '%s' "$BENCH_BASE_PYTHON"; return; fi
+    local want found
+    want="$(bench_required_python)"
+    if [ -n "$want" ] && command -v uv >/dev/null 2>&1; then
+        if found="$(uv python find "$want" 2>/dev/null)" && [ -n "$found" ]; then
+            printf '%s' "$found"; return
+        fi
+    fi
+    if command -v python3 >/dev/null 2>&1; then printf 'python3'; return; fi
+    printf 'python'
+}
+
+# Refuse to build from an interpreter the locks were not compiled for: the
+# wheels are hash-pinned per minor version, and a mismatch also makes every
+# environment read as stale on the next --check.
+bench_require_base_python() {
+    local want have
+    want="$(bench_required_python)"
+    [ -n "$want" ] || return 0
+    have="$(_bench_base_python_version)"
+    [ "$have" = "$want" ] && return 0
+    _bench_die "the locks in envs/ are compiled for Python $want, but the base
+       interpreter $(_bench_base_python) is $have.
+       Install it and point [paths] python (or BENCH_BASE_PYTHON) at it:
+         uv python install $want && export BENCH_BASE_PYTHON=\"\$(uv python find $want)\""
+    return 1
 }
 
 _bench_base_python_version() {

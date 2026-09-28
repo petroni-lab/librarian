@@ -42,6 +42,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=evals/Literature/bench_env.sh
 . "$SCRIPT_DIR/bench_env.sh"
 
+# The same config and the same base interpreter literature_eval.sh uses, so
+# `[paths] python` means one thing and --check cannot disagree with a run.
+bench_load_config
+export BENCH_BASE_PYTHON="$(_bench_base_python)"
+bench_require_base_python
+
 CHECK_ONLY=false
 RELOCK=false
 RELOCK_WHAT=""
