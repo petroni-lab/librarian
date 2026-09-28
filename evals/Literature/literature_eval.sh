@@ -246,30 +246,52 @@ fi
 
 # A bench with an upstream repository needs it cloned first; setup.sh does that.
 # Environments are not checked here, because a run builds its own on first use.
-require_setup() {
+missing_clone() {
     local bench="$1" manifest bench_dir clone
-    manifest="$(bench_manifest "$bench")" || return 0
+    manifest="$(bench_manifest "$bench")" || return 1
     bench_dir="$(dirname "$manifest")"
     clone="$(bench_manifest_get "$manifest" clone)"
-    [ -n "$clone" ] || return 0
-    [ -d "$bench_dir/$clone/.git" ] && return 0
-    echo "ERROR: $bench needs $(bench_manifest_get "$manifest" name) at" >&2
-    echo "       ${bench_dir#"$SCRIPT_DIR/"}/$clone, which is not there." >&2
-    echo "       Fetch just what this bench needs:" >&2
-    echo "         ./evals/Literature/setup.sh --bench $bench" >&2
-    echo "       It clones the upstream benchmark at its pinned commit." >&2
+    [ -n "$clone" ] || return 1
+    [ -d "$bench_dir/$clone/.git" ] && return 1
+    printf '%s at %s/%s' "$(bench_manifest_get "$manifest" name)" \
+        "${bench_dir#"$SCRIPT_DIR/"}" "$clone"
+}
+
+# Every bench that is missing its clone, reported together: --bench all on a
+# fresh checkout should say what to fetch in one pass, the way setup.sh --check
+# does, not stop at whichever bench came first.
+require_setup_all() {
+    local bench what missing=()
+    for bench in "$@"; do
+        what="$(missing_clone "$bench")" && missing+=("$bench|$what")
+    done
+    [ "${#missing[@]}" -eq 0 ] && return 0
+    if [ "${#missing[@]}" -eq 1 ]; then
+        echo "ERROR: ${missing[0]%%|*} needs its upstream repository:" >&2
+        echo "       ${missing[0]#*|} is not there." >&2
+        echo "       Fetch it at its pinned commit:" >&2
+        echo "         ./evals/Literature/setup.sh --bench ${missing[0]%%|*}" >&2
+    else
+        echo "ERROR: ${#missing[@]} benches need their upstream repository:" >&2
+        for what in "${missing[@]}"; do
+            echo "       ${what%%|*}: ${what#*|} is not there." >&2
+        done
+        echo "       Fetch them all at their pinned commits:" >&2
+        echo "         ./evals/Literature/setup.sh" >&2
+    fi
     exit 1
 }
 
 run_bench() {
     local bench="$1" manifest bench_dir runner
-    require_setup "$bench"
     manifest="$(bench_manifest "$bench")" || { echo "ERROR: no manifest for $bench" >&2; exit 1; }
     bench_dir="$(dirname "$manifest")"
     runner="$(bench_manifest_get "$manifest" run)"
     [ -n "$runner" ] || { echo "ERROR: $manifest declares no run= script" >&2; exit 1; }
     bash "$bench_dir/$runner" ${PASSTHRU[@]+"${PASSTHRU[@]}"}
 }
+
+require_setup_all "${BENCHES[@]}"
 
 for b in "${BENCHES[@]}"; do
     [ "${#BENCHES[@]}" -gt 1 ] && { echo ""; echo "═══ $b ═══"; }

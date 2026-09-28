@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # setup.sh — fetch each bench's upstream code and build its environment.
 #
-#   ./evals/Literature/setup.sh [--bench <name>[,<name>...]] [--check] [--relock [name]]
+#   ./evals/Literature/setup.sh [--bench <name>[,<name>...]] [--check]
+#                               [--fetch-only] [--relock [name]]
 #
-#   --bench    act on these benches only (default: all that are present)
-#   --check    report what is present, missing or drifted, and exit non-zero if
-#              anything needs doing. Never builds, fetches or writes.
-#   --relock   regenerate envs/<bench>.lock from envs/<bench>.in and exit.
+#   --bench       act on these benches only (default: all that are present)
+#   --check       report what is present, missing or drifted, and exit non-zero
+#                 if anything needs doing. Never builds, fetches or writes.
+#   --fetch-only  clone and prepare data, but build no environment. Enough for
+#                 `literature_eval.sh --dry-run`, and it costs no GB.
+#   --relock      regenerate envs/<bench>.lock from envs/<bench>.in and exit.
 #
 # The clones are pinned to a commit and left unmodified; everything this
 # repository adds to a bench lives beside the clone and is applied at run time.
@@ -49,12 +52,14 @@ export BENCH_BASE_PYTHON="$(_bench_base_python)"
 bench_require_base_python
 
 CHECK_ONLY=false
+FETCH_ONLY=false
 RELOCK=false
 RELOCK_WHAT=""
 WANT="all"
 while [ $# -gt 0 ]; do
     case "$1" in
         --check) CHECK_ONLY=true ;;
+        --fetch-only) FETCH_ONLY=true ;;
         --bench) WANT="${2:-}"; shift ;;
         --bench=*) WANT="${1#--bench=}" ;;
         --relock)
@@ -63,7 +68,7 @@ while [ $# -gt 0 ]; do
             ;;
         --relock=*) RELOCK=true; RELOCK_WHAT="${1#--relock=}" ;;
         -h|--help) sed -n '/^set -euo/q;p' "$0"; exit 0 ;;
-        *) echo "usage: $0 [--bench <name>[,...]] [--check] [--relock [name]]" >&2; exit 2 ;;
+        *) echo "usage: $0 [--bench <name>[,...]] [--check] [--fetch-only] [--relock [name]]" >&2; exit 2 ;;
     esac
     shift
 done
@@ -226,7 +231,12 @@ for bench in $(all_benches); do
         fi
     fi
 
-    # The environments. A run builds any that are still missing, the same way.
+    # The environments. A run builds any that are still missing, the same way,
+    # which is what makes --fetch-only safe to stop short here.
+    if [ "$FETCH_ONLY" = true ]; then
+        echo "SKIP    $bench environments (--fetch-only; a run builds them)"
+        continue
+    fi
     for env_name in $(bench_envs "$bench"); do
         optional=false
         bench_env_is_optional "$bench" "$env_name" && optional=true
