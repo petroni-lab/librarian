@@ -20,9 +20,6 @@ TaskKind = Literal[
     "litqa2",
     "litqa2_open",
     "litqa2_open_llm_only",
-    "pubmedqa_open",
-    "sqa",
-    "arxivdigestables",
 ]
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
@@ -146,15 +143,6 @@ def _extract_paper_query(state: TaskState) -> str:
     return sample_input
 
 
-def _pubmedqa_prompt(question: str) -> str:
-    return (
-        "Use web search to answer the following PubMedQA biomedical question. "
-        "Give a concise answer that clearly indicates yes, no, or maybe, "
-        "with one short sentence of rationale.\n\n"
-        f"Question:\n{question}"
-    )
-
-
 def _parse_doi(text: str) -> str:
     if not text:
         return ""
@@ -215,10 +203,6 @@ def _infer_task_type(task_type: TaskKind, state: TaskState) -> TaskKind:
         return "paper_finder"
     if metadata.get("unsure_letter") or has_choices:
         return "litqa2"
-    if metadata.get("case_id") or metadata.get("initial_prompt"):
-        return "sqa"
-    if metadata.get("corpus_ids"):
-        return "arxivdigestables"
     return "litqa2_open"
 
 
@@ -243,14 +227,9 @@ def llm_web_search_solver(
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         del generate
         resolved_task = _infer_task_type(task_type, state)
-        if resolved_task in {"litqa2_open", "litqa2_open_llm_only", "pubmedqa_open"}:
+        if resolved_task in {"litqa2_open", "litqa2_open_llm_only"}:
             question = _extract_question(state)
-            prompt = (
-                _pubmedqa_prompt(question)
-                if resolved_task == "pubmedqa_open"
-                else question
-            )
-            answer = await asyncio.to_thread(client.query_text, prompt)
+            answer = await asyncio.to_thread(client.query_text, question)
             state.output.completion = answer.strip() or "No answer generated."
             return state
 

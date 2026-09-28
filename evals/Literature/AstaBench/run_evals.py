@@ -16,10 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal
 
-PROJECT_ROOT = next(
-    (p for p in Path(__file__).resolve().parents if (p / "agents").is_dir()),
-    Path(__file__).resolve().parents[3],
-)  # repo root = first ancestor containing agents/ (move-proof)
+# evals/Literature/AstaBench/<this file> -> the repository root.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 VENDORED_ASTABENCH_ROOT = Path(__file__).resolve().parent / "vendor"
 
 try:
@@ -145,8 +143,6 @@ def _require_asta_tool_key_for_standard_tooling(
         return
     if "standard_tooling" not in config_names:
         return
-    if task_labels and set(task_labels) <= PUBLIC_SEARCH_TASK_LABELS:
-        return
     if os.getenv("ASTA_TOOL_KEY"):
         return
 
@@ -170,11 +166,6 @@ from evals.Literature.AstaBench.openscholar_solver import openscholar_solver
 from evals.Literature.AstaBench.litqa2_open_judge import (
     DEFAULT_LITQA2_OPEN_JUDGE_MODEL,
     litqa2_open_judge_task,
-)
-from evals.Literature.AstaBench.pubmedqa_open_judge import (
-    DEFAULT_PUBMEDQA_DATASET,
-    DEFAULT_PUBMEDQA_OPEN_JUDGE_MODEL,
-    pubmedqa_open_judge_task,
 )
 
 
@@ -210,34 +201,18 @@ class EvalSpec:
 
 
 TASK_LABELS = (
-    "PaperFindingBench",
     "LitQA2-FullText",
     "LitQA2-FullText-OpenJudge",
     "LitQA2-FullText-OpenJudge-Full",
     "LitQA2-FullText-OpenJudge-EuropePMCFullText",
-    "PubMedQA-OpenJudge",
     "LitQA2-FullText-Search",
-    "ScholarQA-CS2",
-    "ArxivDIGESTables-Clean",
 )
-PUBLIC_SEARCH_TASK_LABELS = {"PubMedQA-OpenJudge"}
-
 SOLVER_LABELS = (
     "bio_agent",
     "llm_only",
     "llm_web_search",
     "openscholar_api",
 )
-
-
-def _paper_finder_task(split: SplitName, with_asta_search: bool) -> object:
-    task_module = importlib.import_module("astabench.evals.paper_finder.task")
-    paper_finder_test = task_module.paper_finder_test
-    paper_finder_validation = task_module.paper_finder_validation
-
-    if split == "validation":
-        return paper_finder_validation(with_search_tools=with_asta_search)
-    return paper_finder_test(with_search_tools=with_asta_search)
 
 
 def _paper_finder_litqa2_task(split: SplitName, with_asta_search: bool) -> object:
@@ -272,207 +247,40 @@ def _litqa2_open_judge_task(
     )
 
 
-def _pubmedqa_open_judge_task(
-    dataset_path: str,
-    judge_model: str,
-) -> object:
-    return pubmedqa_open_judge_task(
-        dataset_path=dataset_path,
-        judge_model=judge_model,
-    )
-
-
-def _sqa_task(
-    split: SplitName,
-    with_asta_search: bool,
-    scorer_model: str | None = None,
-) -> object:
-    task_module = importlib.import_module("astabench.evals.sqa.task")
-    sqa = task_module.sqa
-
-    benchmark_split = "dev" if split == "validation" else "test"
-    kwargs: dict[str, object] = {
-        "split": benchmark_split,
-        "with_search_tools": with_asta_search,
-    }
-    if scorer_model:
-        kwargs["scorer_model"] = scorer_model
-    return sqa(**kwargs)
-
-
-def _arxivdigestables_task(split: SplitName, with_asta_search: bool) -> object:
-    task_module = importlib.import_module("astabench.evals.arxivdigestables.task")
-    arxivdigestables_test = task_module.arxivdigestables_test
-    arxivdigestables_validation = task_module.arxivdigestables_validation
-
-    if split == "validation":
-        return arxivdigestables_validation(
-            with_snippet_search_tool=with_asta_search,
-        )
-    return arxivdigestables_test(with_snippet_search_tool=with_asta_search)
-
-
 def _build_eval_specs(
     config_name: ConfigName,
     split: SplitName,
-    sqa_scorer_model: str | None = None,
     litqa2_open_judge_model: str = DEFAULT_LITQA2_OPEN_JUDGE_MODEL,
-    pubmedqa_open_judge_model: str = DEFAULT_PUBMEDQA_OPEN_JUDGE_MODEL,
-    pubmedqa_dataset: str = str(DEFAULT_PUBMEDQA_DATASET),
 ) -> list[EvalSpec]:
+    """Every LitQA2 task, in the order ``--task`` names them."""
     with_asta_search = config_name == "standard_tooling"
-    if split == "validation":
-        return [
-            EvalSpec(
-                label="PaperFindingBench",
-                task_type="paper_finder",
-                task_factory=lambda: _paper_finder_task(split, with_asta_search),
+    open_judge = "litqa2_open" if config_name != "llm_only" else "litqa2_open_llm_only"
+
+    def open_judge_spec(label: str, dataset: str) -> EvalSpec:
+        return EvalSpec(
+            label=label,
+            task_type=open_judge,
+            task_factory=lambda: _litqa2_open_judge_task(
+                dataset, with_asta_search, litqa2_open_judge_model
             ),
-            EvalSpec(
-                label="LitQA2-FullText",
-                task_type="litqa2",
-                task_factory=lambda: _litqa2_task(split, with_asta_search),
-            ),
-            EvalSpec(
-                label="LitQA2-FullText-OpenJudge",
-                task_type="litqa2_open"
-                if config_name != "llm_only"
-                else "litqa2_open_llm_only",
-                task_factory=lambda: _litqa2_open_judge_task(
-                    split,
-                    with_asta_search,
-                    litqa2_open_judge_model,
-                ),
-                include_by_default=False,
-            ),
-            EvalSpec(
-                label="LitQA2-FullText-OpenJudge-Full",
-                task_type="litqa2_open"
-                if config_name != "llm_only"
-                else "litqa2_open_llm_only",
-                task_factory=lambda: _litqa2_open_judge_task(
-                    "full",
-                    with_asta_search,
-                    litqa2_open_judge_model,
-                ),
-                include_by_default=False,
-            ),
-            EvalSpec(
-                label="LitQA2-FullText-OpenJudge-EuropePMCFullText",
-                task_type="litqa2_open"
-                if config_name != "llm_only"
-                else "litqa2_open_llm_only",
-                task_factory=lambda: _litqa2_open_judge_task(
-                    "europepmc_fulltext",
-                    with_asta_search,
-                    litqa2_open_judge_model,
-                ),
-                include_by_default=False,
-            ),
-            EvalSpec(
-                label="PubMedQA-OpenJudge",
-                task_type="pubmedqa_open",
-                task_factory=lambda: _pubmedqa_open_judge_task(
-                    pubmedqa_dataset,
-                    pubmedqa_open_judge_model,
-                ),
-                include_by_default=False,
-            ),
-            EvalSpec(
-                label="LitQA2-FullText-Search",
-                task_type="paper_finder",
-                task_factory=lambda: _paper_finder_litqa2_task(split, with_asta_search),
-            ),
-            EvalSpec(
-                label="ScholarQA-CS2",
-                task_type="sqa",
-                task_factory=lambda: _sqa_task(
-                    split,
-                    with_asta_search,
-                    scorer_model=sqa_scorer_model,
-                ),
-            ),
-            EvalSpec(
-                label="ArxivDIGESTables-Clean",
-                task_type="arxivdigestables",
-                task_factory=lambda: _arxivdigestables_task(split, with_asta_search),
-            ),
-        ]
+            include_by_default=False,
+        )
 
     return [
-        EvalSpec(
-            label="PaperFindingBench",
-            task_type="paper_finder",
-            task_factory=lambda: _paper_finder_task(split, with_asta_search),
-        ),
         EvalSpec(
             label="LitQA2-FullText",
             task_type="litqa2",
             task_factory=lambda: _litqa2_task(split, with_asta_search),
         ),
-        EvalSpec(
-            label="LitQA2-FullText-OpenJudge",
-            task_type="litqa2_open"
-            if config_name != "llm_only"
-            else "litqa2_open_llm_only",
-            task_factory=lambda: _litqa2_open_judge_task(
-                split,
-                with_asta_search,
-                litqa2_open_judge_model,
-            ),
-            include_by_default=False,
-        ),
-        EvalSpec(
-            label="LitQA2-FullText-OpenJudge-Full",
-            task_type="litqa2_open"
-            if config_name != "llm_only"
-            else "litqa2_open_llm_only",
-            task_factory=lambda: _litqa2_open_judge_task(
-                "full",
-                with_asta_search,
-                litqa2_open_judge_model,
-            ),
-            include_by_default=False,
-        ),
-        EvalSpec(
-            label="LitQA2-FullText-OpenJudge-EuropePMCFullText",
-            task_type="litqa2_open"
-            if config_name != "llm_only"
-            else "litqa2_open_llm_only",
-            task_factory=lambda: _litqa2_open_judge_task(
-                "europepmc_fulltext",
-                with_asta_search,
-                litqa2_open_judge_model,
-            ),
-            include_by_default=False,
-        ),
-        EvalSpec(
-            label="PubMedQA-OpenJudge",
-            task_type="pubmedqa_open",
-            task_factory=lambda: _pubmedqa_open_judge_task(
-                pubmedqa_dataset,
-                pubmedqa_open_judge_model,
-            ),
-            include_by_default=False,
+        open_judge_spec("LitQA2-FullText-OpenJudge", split),
+        open_judge_spec("LitQA2-FullText-OpenJudge-Full", "full"),
+        open_judge_spec(
+            "LitQA2-FullText-OpenJudge-EuropePMCFullText", "europepmc_fulltext"
         ),
         EvalSpec(
             label="LitQA2-FullText-Search",
             task_type="paper_finder",
             task_factory=lambda: _paper_finder_litqa2_task(split, with_asta_search),
-        ),
-        EvalSpec(
-            label="ScholarQA-CS2",
-            task_type="sqa",
-            task_factory=lambda: _sqa_task(
-                split,
-                with_asta_search,
-                scorer_model=sqa_scorer_model,
-            ),
-        ),
-        EvalSpec(
-            label="ArxivDIGESTables-Clean",
-            task_type="arxivdigestables",
-            task_factory=lambda: _arxivdigestables_task(split, with_asta_search),
         ),
     ]
 
@@ -481,18 +289,12 @@ def _select_eval_specs(
     config_name: ConfigName,
     split: SplitName,
     task_labels: list[str] | None,
-    sqa_scorer_model: str | None = None,
     litqa2_open_judge_model: str = DEFAULT_LITQA2_OPEN_JUDGE_MODEL,
-    pubmedqa_open_judge_model: str = DEFAULT_PUBMEDQA_OPEN_JUDGE_MODEL,
-    pubmedqa_dataset: str = str(DEFAULT_PUBMEDQA_DATASET),
 ) -> list[EvalSpec]:
     specs = _build_eval_specs(
         config_name=config_name,
         split=split,
-        sqa_scorer_model=sqa_scorer_model,
         litqa2_open_judge_model=litqa2_open_judge_model,
-        pubmedqa_open_judge_model=pubmedqa_open_judge_model,
-        pubmedqa_dataset=pubmedqa_dataset,
     )
     if not task_labels:
         return [spec for spec in specs if spec.include_by_default]
@@ -546,7 +348,7 @@ def main() -> None:
         help=(
             "Which solver to use. `bio_agent` runs the librarian wrapper. "
             "`llm_only` runs a direct LLM baseline. "
-            "`openscholar_api` uses the OpenScholar API (ScholarQA-CS2 only)."
+            "`openscholar_api` uses the OpenScholar API (open-judge tasks only)."
         ),
     )
     parser.add_argument(
@@ -637,22 +439,6 @@ def main() -> None:
         help="Enable or disable librarian full-text enrichment (default: enabled).",
     )
     parser.add_argument(
-        "--bio-agent-query-planner",
-        default="default",
-        help=(
-            "Librarian query planner to use. Built-ins: default, "
-            "simple_bm25, raw_question, epmc_full_interface. You can also pass "
-            "the stem of a .md prompt under agents/literature/prompts, e.g. "
-            "europepmc_claude_librarian."
-        ),
-    )
-    parser.add_argument(
-        "--bio-agent-max-query-count",
-        type=int,
-        default=None,
-        help="Optional hard cap for generated librarian search queries.",
-    )
-    parser.add_argument(
         "--bio-agent-num-subqueries",
         type=int,
         default=None,
@@ -673,43 +459,6 @@ def main() -> None:
         type=int,
         default=None,
         help="Override LibrarianAgent's paragraphs_per_judge_batch (LibrarianAgent path only).",
-    )
-    parser.add_argument(
-        "--bio-agent-simple-bm25-max-queries",
-        type=int,
-        default=7,
-        help="Maximum plain BM25 queries for --bio-agent-query-planner simple_bm25.",
-    )
-    parser.add_argument(
-        "--bio-agent-epmc-full-interface-max-queries",
-        type=int,
-        default=7,
-        help=(
-            "Maximum EuropePMC advanced queries for "
-            "--bio-agent-query-planner epmc_full_interface."
-        ),
-    )
-    parser.add_argument(
-        "--bio-agent-retrieval-policy",
-        choices=[
-            "synthesis",
-            "localized_evidence",
-            "localized_evidence_bm25",
-            "localized_evidence_bm25_per_paper",
-            "cascade_bm25",
-            "upfront_fulltext",
-            "upfront_fulltext_bm25_filter",
-            "simple_fulltext_bm25",
-        ],
-        default=os.getenv("LITERATURE_RETRIEVAL_POLICY", "synthesis"),
-        help=(
-            "Librarian retrieval policy. `localized_evidence` uses semantic "
-            "localized full-text prefiltering with the heuristic paragraph "
-            "scorer; `localized_evidence_bm25_per_paper` mirrors the same "
-            "pipeline end-to-end but substitutes per-paragraph BM25 for the "
-            "heuristic (clean scoring-function A/B); `localized_evidence_bm25` "
-            "uses a separate global-BM25 passage pipeline with paper bundles."
-        ),
     )
     parser.add_argument(
         "--score-after-run",
@@ -741,7 +490,7 @@ def main() -> None:
         choices=TASK_LABELS,
         help=(
             "Optional dataset label to run. Pass multiple times to run a subset, "
-            "for example `--task ScholarQA-CS2 --task LitQA2-FullText`."
+            "for example `--task LitQA2-FullText --task LitQA2-FullText-Search`."
         ),
     )
     parser.add_argument(
@@ -758,14 +507,6 @@ def main() -> None:
         help="Optional override for the librarian LLM model name.",
     )
     parser.add_argument(
-        "--sqa-scorer-model",
-        default=None,
-        help=(
-            "Optional ScholarQA judge model override. "
-            "If omitted, the task default is used (Gemini in upstream AstaBench)."
-        ),
-    )
-    parser.add_argument(
         "--litqa2-open-judge-model",
         default=os.getenv(
             "ASTABENCH_LITQA2_OPEN_JUDGE_MODEL",
@@ -774,22 +515,6 @@ def main() -> None:
         help=(
             "Judge model for `LitQA2-FullText-OpenJudge` answer-to-choice "
             f"mapping (default: {DEFAULT_LITQA2_OPEN_JUDGE_MODEL})."
-        ),
-    )
-    parser.add_argument(
-        "--pubmedqa-dataset",
-        default=str(DEFAULT_PUBMEDQA_DATASET),
-        help="Path to the PubMedQA PQA-L ori_pqal.json file.",
-    )
-    parser.add_argument(
-        "--pubmedqa-open-judge-model",
-        default=os.getenv(
-            "ASTABENCH_PUBMEDQA_OPEN_JUDGE_MODEL",
-            DEFAULT_PUBMEDQA_OPEN_JUDGE_MODEL,
-        ),
-        help=(
-            "Judge model for `PubMedQA-OpenJudge` open-answer yes/no/maybe "
-            f"mapping (default: {DEFAULT_PUBMEDQA_OPEN_JUDGE_MODEL})."
         ),
     )
     parser.add_argument(
@@ -813,12 +538,6 @@ def main() -> None:
                 llm_base_url=args.llm_base_url,
                 llm_model_name=args.llm_model,
                 full_text_enrichment=args.bio_agent_full_text,
-                query_planner=args.bio_agent_query_planner,
-                simple_bm25_max_queries=args.bio_agent_simple_bm25_max_queries,
-                epmc_full_interface_max_queries=(
-                    args.bio_agent_epmc_full_interface_max_queries
-                ),
-                max_query_count_override=args.bio_agent_max_query_count,
                 librarian_num_subqueries_override=args.bio_agent_num_subqueries,
                 librarian_paragraphs_per_subquery_override=(
                     args.bio_agent_paragraphs_per_subquery
@@ -826,7 +545,6 @@ def main() -> None:
                 librarian_paragraphs_per_judge_batch_override=(
                     args.bio_agent_paragraphs_per_judge_batch
                 ),
-                retrieval_policy=args.bio_agent_retrieval_policy,
             )
         if args.solver == "llm_only":
             return llm_only_solver(
@@ -889,27 +607,19 @@ def main() -> None:
             config_name=config_name,
             split=args.split,
             task_labels=args.task,
-            sqa_scorer_model=args.sqa_scorer_model,
             litqa2_open_judge_model=args.litqa2_open_judge_model,
-            pubmedqa_open_judge_model=args.pubmedqa_open_judge_model,
-            pubmedqa_dataset=args.pubmedqa_dataset,
         )
         if args.solver == "openscholar_api":
             unsupported = [
                 spec.label
                 for spec in selected_specs
                 if spec.task_type
-                not in {
-                    "sqa",
-                    "litqa2_open",
-                    "litqa2_open_llm_only",
-                    "pubmedqa_open",
-                }
+                not in {"litqa2_open", "litqa2_open_llm_only"}
             ]
             if unsupported:
                 raise RuntimeError(
-                    "OpenScholar API solver only supports ScholarQA-CS2 and "
-                    "open-answer judge tasks. Remove unsupported tasks: "
+                    "OpenScholar API solver only supports the open-answer "
+                    "judge tasks. Remove unsupported tasks: "
                     f"{', '.join(unsupported)}."
                 )
         if args.solver == "llm_web_search":
@@ -917,17 +627,12 @@ def main() -> None:
                 spec.label
                 for spec in selected_specs
                 if spec.task_type
-                not in {
-                    "litqa2_open",
-                    "litqa2_open_llm_only",
-                    "pubmedqa_open",
-                    "paper_finder",
-                }
+                not in {"litqa2_open", "litqa2_open_llm_only", "paper_finder"}
             ]
             if unsupported:
                 raise RuntimeError(
-                    "LLM web search solver only supports LitQA2-FullText-OpenJudge "
-                    "PubMedQA-OpenJudge, and paper-finder tasks. "
+                    "LLM web search solver only supports the open-answer judge "
+                    "and search tasks. "
                     f"Remove unsupported tasks: {', '.join(unsupported)}."
                 )
         for spec in selected_specs:

@@ -104,8 +104,6 @@ esac
 SPLIT_FILE="$SCRIPT_DIR/data/litqa2_europepmc_fulltext/litqa2_full_europepmc_fulltext.json"
 if [ ! -f "$SPLIT_FILE" ] && [ "$DRY_RUN" != true ]; then
     echo "Building the europepmc_fulltext split (one-off, queries Europe PMC) ..."
-    # --output-dir is explicit: the script's own default still points at the
-    # pre-reorg evals/AstaBench/data path, which no longer exists.
     "$PYTHON_BIN" "$SCRIPT_DIR/check_litqa2_europepmc_fulltext.py" \
         --output-dir "$(dirname "$SPLIT_FILE")"
 fi

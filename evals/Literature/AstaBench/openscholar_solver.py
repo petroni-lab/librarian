@@ -19,9 +19,6 @@ TaskKind = Literal[
     "litqa2",
     "litqa2_open",
     "litqa2_open_llm_only",
-    "pubmedqa_open",
-    "sqa",
-    "arxivdigestables",
 ]
 
 DEFAULT_API_BASE = "https://openscilm.allen.ai"
@@ -263,44 +260,7 @@ def _infer_task_type(task_type: TaskKind, state: TaskState) -> TaskKind:
         return "paper_finder"
     if metadata.get("unsure_letter") or has_choices:
         return "litqa2"
-    if metadata.get("case_id") or metadata.get("initial_prompt"):
-        return "sqa"
-    if metadata.get("corpus_ids"):
-        return "arxivdigestables"
     raise ValueError("Could not infer AstaBench task type from TaskState.")
-
-
-def _build_sqa_response(payload: dict[str, Any] | None) -> dict[str, Any]:
-    if not payload:
-        return {
-            "sections": [
-                {"title": "Answer", "text": "No answer generated.", "citations": []}
-            ]
-        }
-
-    text = str(payload.get("output") or "").strip() or "No answer generated."
-    ctxs = list(payload.get("ctxs") or [])
-    citations: list[dict[str, Any]] = []
-
-    for idx, ctx in enumerate(ctxs, start=1):
-        metadata: dict[str, Any] = {}
-        year = ctx.get("year")
-        corpus_id = ctx.get("corpusId")
-        if year not in (None, ""):
-            metadata["year"] = year
-        if corpus_id not in (None, ""):
-            metadata["corpusId"] = corpus_id
-
-        citations.append(
-            {
-                "id": f"[{idx}]",
-                "snippets": [str(ctx.get("text") or "")],
-                "title": str(ctx.get("title") or "Untitled"),
-                "metadata": metadata,
-            }
-        )
-
-    return {"sections": [{"title": "Answer", "text": text, "citations": citations}]}
 
 
 @solver
@@ -312,7 +272,7 @@ def openscholar_solver(
     poll_interval: int = 8,
     max_poll_attempts: int = 40,
 ) -> Solver:
-    """OpenScholar solver for ScholarQA-CS2 tasks."""
+    """OpenScholar solver for the LitQA2 open-answer judge tasks."""
 
     config = OpenScholarConfig(
         api_base_url=api_base_url,
@@ -326,18 +286,13 @@ def openscholar_solver(
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         del generate
         resolved_task = _infer_task_type(task_type, state)
-        if resolved_task not in {
-            "sqa",
-            "litqa2_open",
-            "litqa2_open_llm_only",
-            "pubmedqa_open",
-        }:
+        if resolved_task not in {"litqa2_open", "litqa2_open_llm_only"}:
             state.output.completion = json.dumps(
                 {
                     "sections": [
                         {
                             "title": "Unsupported task",
-                            "text": "OpenScholar API only supports ScholarQA-CS2 and open-answer judge tasks.",
+                            "text": "OpenScholar API only supports the open-answer judge tasks.",
                             "citations": [],
                         }
                     ]
@@ -349,12 +304,8 @@ def openscholar_solver(
 
         question = _extract_question(state)
         payload = await asyncio.to_thread(client.query, question)
-        if resolved_task == "sqa":
-            response = _build_sqa_response(payload)
-            state.output.completion = json.dumps(response, indent=2, ensure_ascii=False)
-        else:
-            text = str(payload.get("output") if payload else "").strip()
-            state.output.completion = text or "No answer generated."
+        text = str(payload.get("output") if payload else "").strip()
+        state.output.completion = text or "No answer generated."
         return state
 
     return solve

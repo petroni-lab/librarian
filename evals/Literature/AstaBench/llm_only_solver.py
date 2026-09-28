@@ -22,9 +22,6 @@ TaskKind = Literal[
     "litqa2",
     "litqa2_open",
     "litqa2_open_llm_only",
-    "pubmedqa_open",
-    "sqa",
-    "arxivdigestables",
 ]
 
 
@@ -54,12 +51,6 @@ class LLMOnlyAstaWrapper:
             return await self._solve_litqa2(state)
         if task_type in {"litqa2_open", "litqa2_open_llm_only"}:
             return await self._solve_litqa2_open(state)
-        if task_type == "pubmedqa_open":
-            return await self._solve_pubmedqa_open(state)
-        if task_type == "sqa":
-            return await self._solve_sqa(state)
-        if task_type == "arxivdigestables":
-            return await self._solve_arxivdigestables(state)
         raise ValueError(f"Unsupported task type '{task_type}'.")
 
     def _infer_task_type(self, state: TaskState) -> TaskKind:
@@ -79,10 +70,6 @@ class LLMOnlyAstaWrapper:
             return "paper_finder"
         if metadata.get("unsure_letter") or has_choices:
             return "litqa2"
-        if metadata.get("case_id") or metadata.get("initial_prompt"):
-            return "sqa"
-        if metadata.get("corpus_ids"):
-            return "arxivdigestables"
         raise ValueError("Could not infer AstaBench task type from TaskState.")
 
     async def _solve_paper_finder(self, state: TaskState) -> TaskState:
@@ -137,92 +124,9 @@ class LLMOnlyAstaWrapper:
         state.output.completion = answer.strip() or "No answer generated."
         return state
 
-    async def _solve_pubmedqa_open(self, state: TaskState) -> TaskState:
-        question = self._state_input_text(state).strip()
-        prompt = (
-            "Answer the following PubMedQA biomedical question directly. "
-            "Give a concise answer that clearly indicates yes, no, or maybe, "
-            "with one short sentence of rationale.\n\n"
-            f"Question:\n{question}"
-        )
-        answer = await asyncio.to_thread(
-            self.llm_client.generate_structured_output,
-            prompt,
-            "You are a careful biomedical scientist.",
-        )
-        state.output.completion = answer.strip() or "No answer generated."
-        return state
-
-    async def _solve_sqa(self, state: TaskState) -> TaskState:
-        metadata = dict(state.metadata or {})
-        question = str(
-            metadata.get("initial_prompt") or self._extract_user_query(state)
-        ).strip()
-        prompt = (
-            "Generate a ScholarQA-style response. Return JSON with a top-level "
-            "`sections` list. Each section must include `title`, `text`, and "
-            "`citations` (a list). If you cannot provide citations, return an "
-            "empty list.\n\n"
-            f"Question:\n{question}\n\n"
-            "Return JSON only."
-        )
-
-        raw_output = await asyncio.to_thread(
-            self.llm_client.generate_structured_output,
-            prompt,
-            "You are a precise report formatter. Return valid JSON only.",
-        )
-        parsed = extract_json_from_response(raw_output) or {}
-        normalized = self._normalize_sqa_response(parsed, fallback_text=raw_output)
-        state.output.completion = json.dumps(normalized, indent=2, ensure_ascii=False)
-        return state
-
-    async def _solve_arxivdigestables(self, state: TaskState) -> TaskState:
-        sample_input = self._state_input_text(state)
-        prompt = (
-            "You are building an ArxivDIGESTables-style comparison table.\n"
-            'Return JSON only with the schema {"cell_values": '
-            '[{"paper_id": ..., "column_name": ..., "cell_value": ...}, ...]}.\n\n'
-            f"Task input:\n{sample_input}"
-        )
-
-        raw_output = await asyncio.to_thread(
-            self.llm_client.generate_structured_output,
-            prompt,
-            "You are a careful table formatter. Return valid JSON only.",
-        )
-        parsed = extract_json_from_response(raw_output)
-        if not parsed or "cell_values" not in parsed:
-            parsed = {"cell_values": []}
-        state.output.completion = json.dumps(parsed, indent=2, ensure_ascii=False)
-        return state
-
-    @staticmethod
-    def _normalize_sqa_response(
-        parsed: dict[str, Any],
-        fallback_text: str,
-    ) -> dict[str, Any]:
-        if isinstance(parsed, dict) and parsed.get("sections"):
-            return parsed
-        return {
-            "sections": [
-                {
-                    "title": "Answer",
-                    "text": fallback_text.strip() or "No answer generated.",
-                    "citations": [],
-                }
-            ]
-        }
-
     @staticmethod
     def _state_input_text(state: TaskState) -> str:
         return str(getattr(state, "input", "") or "")
-
-    def _extract_user_query(self, state: TaskState) -> str:
-        sample_input = self._state_input_text(state)
-        if sample_input.startswith("Find papers relevant to the following query:"):
-            return sample_input.split("\n", 1)[0].split(":", 1)[1].strip()
-        return sample_input.strip()
 
     def _extract_question_from_multichoice_input(self, state: TaskState) -> str:
         sample_input = self._state_input_text(state)
