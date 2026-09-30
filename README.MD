@@ -229,6 +229,19 @@ for paper in agent.run("does metformin extend lifespan in mammals?"):
 takes `on_progress=callable` for live stage updates, and the constructor takes
 `tracer=` for span tracing (see [`tracing_port.py`](librarian/tracing_port.py)).
 
+**Embedding librarian** in another application: install it from a commit tarball
+(`pip install https://github.com/petroni-lab/librarian/archive/<sha>.tar.gz`), then
+plug in your own pieces through the constructor and `run()`:
+
+- `llm_client=` — any object with `chat_completion(messages, temperature=...,
+  max_tokens=...) -> str`, used instead of building one from `LLM_*`.
+- `literature_source=` — your search and full-text backend (a cache, a worker
+  pool, ...), implementing `LiteratureSource` in
+  [`literature_search.py`](librarian/literature_search.py). The default,
+  `EuropePmcSource`, calls Europe PMC directly and fetches full texts one by one.
+- `progress_callback=` on `run()` — called with step `0`, `1`, `2` from the calling
+  thread; raise from it to cancel the run.
+
 **HTTP** — [`orchestrator.py`](orchestrator.py) is a minimal FastAPI wrapper:
 
 ```bash
@@ -402,6 +415,7 @@ loudly at load rather than silently defaulting:
 | `max_paragraph_words` | 250 | window size before a long paragraph is split |
 | `paragraph_overlap_words` | 50 | overlap between adjacent split windows |
 | `filter_temperature` | 0.1 | relevance-judge temperature |
+| `filter_max_tokens` | 8192 | output budget per Stage-3 LLM call; raise it for reasoning models, whose trace counts against it |
 
 `paragraphs_per_judge_batch` should be `>= paragraphs_per_subquery * num_subqueries`
 so the whole pool is judged in one call — the judge ranks globally, but results from

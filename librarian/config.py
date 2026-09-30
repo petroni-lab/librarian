@@ -68,6 +68,10 @@ class LibrarianRuntimeConfig(DataClassTOMLMixin):
     paragraph_overlap_words: int
     # Relevance-filter LLM sampling temperature.
     filter_temperature: float
+    # Output budget for one Stage-3 judge call. It must hold the model's
+    # reasoning trace plus the relevant_ids list: too low and the judge returns
+    # nothing and the batch is dropped without an error.
+    filter_max_tokens: int
 
     def __post_init__(self) -> None:
         """Reject a sub-query budget too small to cover all the query roles.
