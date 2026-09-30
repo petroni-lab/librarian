@@ -63,7 +63,7 @@ Librarian improves results over strong published baselines and over web search.
 
 * **[2026.09.11]** Librarian is now installable as an **agent skill** — two commands
   in Claude Code or Codex, and a directory symlink for Antigravity and opencode.
-  See [🛠️ Installation](#️-installation). The same run is also served over HTTP by
+  See [🛠️ Install as an agent skill](#️-install-as-an-agent-skill). The same run is also served over HTTP by
   [`orchestrator.py`](orchestrator.py) — see [🐍 Python, CLI & HTTP](#-python-cli--http).
 * **[2026.09.03]** Retrieval pipeline rework: paragraph-level pooling across
   sub-queries, a single relevance judge (replacing the two concurrent
@@ -79,19 +79,23 @@ Librarian improves results over strong published baselines and over web search.
 
 ## 🛠️ Install as an agent skill
 
-Click your agent for a one-minute, no-terminal install. No API key needed.
 <div align="center">
 
-[![Codex](https://img.shields.io/badge/Codex-install-412991?style=for-the-badge)](#install-codex)
-[![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?style=for-the-badge&logo=claude&logoColor=white)](#install-claude)
-[![Antigravity](https://img.shields.io/badge/Antigravity-install-4285F4?style=for-the-badge&logo=google&logoColor=white)](#install-antigravity-opencode)
+![Codex](https://img.shields.io/badge/Codex-install-412991?style=for-the-badge)
+![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?style=for-the-badge&logo=claude&logoColor=white)
+![Antigravity](https://img.shields.io/badge/Antigravity-install-4285F4?style=for-the-badge&logo=google&logoColor=white)
+![opencode](https://img.shields.io/badge/opencode-install-1A1A1A?style=for-the-badge&logo=opencode&logoColor=white)
 
 </div>
 
-<a name="install-codex"></a>
-### Codex / ChatGPT (desktop app)
+Open the section for your agent for a one-minute install. No API key needed: Librarian runs on your agent's own model access.
 
-No terminal needed. **Settings → Plugins → Add → Add plugin marketplace**, source
+<details>
+<summary><b>Codex / ChatGPT (desktop app)</b> — no terminal needed</summary>
+
+<br>
+
+**Settings → Plugins → Add → Add plugin marketplace**, source
 `petroni-lab/librarian`, then search **librarian** in Plugins and click **+**. Type
 `/librarian` followed by your question in a new chat.
 
@@ -103,10 +107,14 @@ codex plugin marketplace add petroni-lab/librarian
 codex plugin add librarian@librarian
 ```
 
-<a name="install-claude"></a>
-### Claude (desktop app)
+</details>
 
-No terminal needed. **Settings → Plugins → Add → Add marketplace**, type
+<details>
+<summary><b>Claude (desktop app)</b> — no terminal needed</summary>
+
+<br>
+
+**Settings → Plugins → Add → Add marketplace**, type
 `petroni-lab/librarian`, then install **EMBL AI Librarian**. Type `/librarian`
 followed by your question in a new chat.
 
@@ -118,8 +126,12 @@ Prefer the Claude Code CLI?
 /plugin install librarian@librarian
 ```
 
-<a name="install-antigravity-opencode"></a>
-### Antigravity / opencode
+</details>
+
+<details>
+<summary><b>Antigravity / opencode</b></summary>
+
+<br>
 
 These have no marketplace — they discover skills from a directory, so one clone and
 one symlink covers both. Keep the clone: the skill runs the Python package inside it.
@@ -141,6 +153,8 @@ Antigravity also scans the workspace `.agents/skills/` (older builds: `.agent/`)
 opencode also reads `~/.claude/skills/` and `~/.config/opencode/skills/`. Inside a
 clone of this repo no setup is needed — `.agents/skills/librarian` is already there.
 Authenticate the `agy` CLI once interactively before first use.
+
+</details>
 
 ### Using the skill
 
