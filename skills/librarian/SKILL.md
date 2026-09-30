@@ -4,7 +4,7 @@ description: Retrieve Europe PMC evidence for a biomedical research question. Us
 license: MIT
 compatibility: Requires network access to Europe PMC; installs uv on first run if missing. Runs in any Agent Skills-compatible harness, but the two LLM steps shell out to a child session, so the `claude`, `codex`, or Antigravity `agy` CLI must be installed and signed in once (the skill installs it if missing).
 metadata:
-  version: "0.3.0"
+  version: "1.0.0"
 ---
 
 # Librarian
