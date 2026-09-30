@@ -8,6 +8,7 @@ Single-pass pipeline (max_loops=1, the only supported mode):
   Stage 2 — Paper-level retrieval + paragraph BM25 ranking (_paragraphs_for_subquery,
       one thread per sub-query):
         - search the sub-query against Europe PMC (papers_per_subquery papers),
+        - fetch the open-access full texts of those papers in one batch,
         - decompose every paper into paragraphs (abstract + full-text body chunks,
           no distinction), BM25-rank the pool against the sub-query, keep the top k
           (paragraphs_per_subquery).
@@ -36,11 +37,15 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import bm25s
 import pysbd
-import requests
 
 from librarian.config import LibrarianRuntimeConfig
 from librarian.jats import extract_body_paragraphs
-from librarian.literature_search import search_scientific_literature_structured
+from librarian.literature_search import (
+    EuropePmcSource,
+    Fulltext,
+    LiteratureSource,
+    normalize_pmcid,
+)
 from librarian.llm_client import create_llm_client, parse_json_response
 from librarian.tracing_port import NullTracer, TracingPort
 
@@ -51,9 +56,6 @@ logger = logging.getLogger(__name__)
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _QUERY_PROMPT_PATH = _PROMPTS_DIR / "stage_1_europe_pmc_query_generation.md"
 _FILTER_PROMPT_PATH = _PROMPTS_DIR / "stage_3_paragraph_relevance_judge.md"
-
-# Europe PMC full-text fetch endpoint (PMC id -> JATS XML).
-_FULLTEXT_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML"
 
 # Implementation constants — env-independent and never tuned. Every tunable knob
 # (query count, page size, evidence words, pool caps, filter batches, ...) lives
@@ -148,6 +150,20 @@ def _first_affiliation(paper: Dict[str, Any]) -> str:
         if affiliation:
             return affiliation
     return ""
+
+
+def _fulltext_pmcid(paper: Dict[str, Any]) -> str:
+    """The PMC id whose full text this paper is worth fetching, or ''.
+
+    Gated on the open-access flags Europe PMC returned with the search, then
+    ``fullTextIds[0]`` with ``pmcid`` as the fallback. Pure, so the batch
+    prefetch and the per-paper lookup derive the same key from the same record.
+    """
+    if not (paper.get("inEPMC") or paper.get("hasFreeFullText")):
+        return ""
+    full_text_ids = paper.get("fullTextIds") or []
+    raw_id = (full_text_ids[0] if full_text_ids else "") or paper.get("pmcid") or ""
+    return normalize_pmcid(raw_id) if str(raw_id).strip() else ""
 
 
 def _candidate_id(paper: Dict[str, Any]) -> str:
@@ -491,6 +507,8 @@ class LibrarianAgent:
         llm_base_url: Optional[str] = None,
         llm_model_name: Optional[str] = None,
         tracer: Optional[TracingPort] = None,
+        llm_client: Optional[Any] = None,
+        literature_source: Optional[LiteratureSource] = None,
     ):
         """Build a librarian ready to retrieve evidence for a query.
 
@@ -513,6 +531,15 @@ class LibrarianAgent:
             to ``NullTracer`` (no-op) — pass your own backend's adapter to
             trace a real run.
         :type tracer: TracingPort or None
+        :param llm_client: A ready-made LLM client to use instead of building
+            one. It needs ``chat_completion(messages, temperature=...,
+            max_tokens=...) -> str``, like ``llm_client.LLMClient``. When
+            given, ``llm_base_url`` and ``llm_model_name`` are ignored.
+        :type llm_client: object or None
+        :param literature_source: Where papers and full texts come from (see
+            ``literature_search.LiteratureSource``). Defaults to
+            ``EuropePmcSource`` (plain Europe PMC REST calls, no cache).
+        :type literature_source: LiteratureSource or None
         """
         # Full text is the default retrieval path; the flag is kept for harness
         # compatibility (turning it off falls back to abstract-only paragraphs).
@@ -541,9 +568,16 @@ class LibrarianAgent:
         self._paragraph_overlap_words = runtime_config.paragraph_overlap_words
         self._filter_temperature = runtime_config.filter_temperature
 
-        self.llm = create_llm_client(
-            base_url=llm_base_url,
-            model_name=llm_model_name or runtime_config.default_model_name,
+        self.llm = (
+            llm_client
+            if llm_client is not None
+            else create_llm_client(
+                base_url=llm_base_url,
+                model_name=llm_model_name or runtime_config.default_model_name,
+            )
+        )
+        self._source: LiteratureSource = (
+            literature_source if literature_source is not None else EuropePmcSource()
         )
         self._query_prompt = _QUERY_PROMPT_PATH.read_text(encoding="utf-8")
         self._filter_prompt = _FILTER_PROMPT_PATH.read_text(encoding="utf-8")
@@ -696,12 +730,15 @@ class LibrarianAgent:
     # ── Stage 2: per-sub-query retrieval + paragraph ranking ─────────────────
 
     def _paragraph_records_for_paper(
-        self, paper: Dict[str, Any]
+        self, paper: Dict[str, Any], fulltexts: Dict[str, Fulltext]
     ) -> List[Dict[str, Any]]:
         """One paper → its paragraph records: abstract + full-text body chunks.
 
         Abstract and body paragraphs share one pool with no distinction. Each
         record carries a ``paper`` reference so its metadata is reachable later.
+
+        ``fulltexts`` is the batch this sub-query already fetched, keyed by
+        normalised PMC id; this method only looks its paper up, never fetches.
         """
         records: List[Dict[str, Any]] = []
 
@@ -718,7 +755,7 @@ class LibrarianAgent:
 
         if self.full_text_enrichment:
             body_metadata = _bm25_metadata(paper, _BODY_BM25_FIELDS)
-            for record in self._fetch_body_paragraphs(paper):
+            for record in self._body_paragraphs(paper, fulltexts):
                 record["bm25_metadata"] = body_metadata
                 records.append(record)
 
@@ -736,28 +773,96 @@ class LibrarianAgent:
     def _paragraphs_for_subquery(self, subquery: str) -> List[Dict[str, Any]]:
         """One sub-query → its top-``k`` paragraphs, end to end in this thread.
 
-        Search Europe PMC for the sub-query, decompose every returned paper
+        Search the literature source for the sub-query, fetch the returned
+        papers' open-access full texts in one batch, decompose every paper
         into paragraphs (abstract + full-text chunks), BM25-rank the whole
         pool against the sub-query, and keep the top
         ``paragraphs_per_subquery``. Runs entirely in the calling thread so
         ``run`` can fan these out, one thread per sub-query, with no shared
         state.
         """
-        # A search failure propagates out of the thread pool and fails the
-        # run, so the caller can tell "the search broke" apart from "no
-        # literature found" — silently returning [] here would surface a
-        # Europe PMC outage as an empty result set.
-        papers = search_scientific_literature_structured(
-            subquery, page_size=self._papers_per_subquery
-        )
+        # One parent span per sub-query so a trace groups this thread's network
+        # and CPU children together instead of interleaving them under stage2.
+        with self._tracer.start_span(
+            "librarian.subquery",
+            attributes={
+                "openinference.span.kind": "CHAIN",
+                "input.value": subquery,
+            },
+        ) as subquery_span:
+            # Sub-spans split this thread's wall clock into network (search,
+            # full text) vs local CPU (paragraph decomposition + BM25).
+            # Sub-queries run one per thread, so these durations overlap across
+            # siblings — read each on its own, not summed.
+            with self._tracer.start_span(
+                "librarian.epmc_search",
+                attributes={
+                    "openinference.span.kind": "RETRIEVER",
+                    "input.value": subquery,
+                },
+            ) as search_span:
+                # A search failure propagates out of the thread pool and fails
+                # the run, so the caller can tell "the search broke" apart from
+                # "no literature found" — silently returning [] here would
+                # surface a Europe PMC outage as an empty result set.
+                papers = self._source.search(
+                    subquery, page_size=self._papers_per_subquery
+                )
+                self._tracer.set_span_attributes(
+                    search_span, {"paper.count": len(papers)}
+                )
 
-        pool: List[Dict[str, Any]] = []
-        for paper in papers:
-            pool.extend(self._paragraph_records_for_paper(paper))
+            # Every open-access full text this sub-query needs, fetched in one
+            # call before any paper is decomposed, so a source can fetch the
+            # batch concurrently.
+            fulltexts: Dict[str, Fulltext] = {}
+            if self.full_text_enrichment:
+                with self._tracer.start_span(
+                    "librarian.epmc_fulltext",
+                    attributes={
+                        "openinference.span.kind": "RETRIEVER",
+                        "paper.count": len(papers),
+                    },
+                ) as fulltext_span:
+                    fulltexts = self._source.fetch_fulltext_many(
+                        _fulltext_pmcid(p) for p in papers
+                    )
+                    self._tracer.set_span_attributes(
+                        fulltext_span,
+                        {"fulltext.count": sum(1 for f in fulltexts.values() if f.ok)},
+                    )
 
-        top = _rank_paragraphs_for_subquery(
-            subquery, pool, self._paragraphs_per_subquery
-        )
+            # Paragraph decomposition is counted here with BM25: both are local
+            # CPU on already-fetched bytes.
+            with self._tracer.start_span(
+                "librarian.bm25_rank",
+                attributes={
+                    "openinference.span.kind": "RERANKER",
+                    "paper.count": len(papers),
+                    "input.value": subquery,
+                },
+            ) as rank_span:
+                pool: List[Dict[str, Any]] = []
+                for paper in papers:
+                    pool.extend(self._paragraph_records_for_paper(paper, fulltexts))
+
+                top = _rank_paragraphs_for_subquery(
+                    subquery, pool, self._paragraphs_per_subquery
+                )
+                self._tracer.set_span_attributes(
+                    rank_span,
+                    {
+                        "paragraph.count.pool": len(pool),
+                        "paragraph.count.kept": len(top),
+                    },
+                )
+            self._tracer.set_span_attributes(
+                subquery_span,
+                {
+                    "paper.count": len(papers),
+                    "paragraph.count.kept": len(top),
+                },
+            )
         self._log(f"{subquery!r} → {len(papers)} papers, {len(top)} paragraphs")
         return top
 
@@ -802,31 +907,28 @@ class LibrarianAgent:
             "has_fulltext": bool(paper.get("inEPMC") or paper.get("hasFreeFullText")),
         }
 
-    # ── Full-text fetch + body extraction ────────────────────────────────────
+    # ── Body extraction from the prefetched full text ────────────────────────
 
-    def _fetch_body_paragraphs(self, paper: Dict[str, Any]) -> List[Dict[str, str]]:
-        """Fetch full text and return body paragraph records (or [])."""
-        if not (paper.get("inEPMC") or paper.get("hasFreeFullText")):
-            return []
-        full_text_ids = paper.get("fullTextIds") or []
-        pmcid = (full_text_ids[0] if full_text_ids else "") or paper.get("pmcid") or ""
-        pmcid = str(pmcid).strip()
+    def _body_paragraphs(
+        self, paper: Dict[str, Any], fulltexts: Dict[str, Fulltext]
+    ) -> List[Dict[str, str]]:
+        """Body paragraph records for one paper from the prefetched batch (or []).
+
+        Three ways to legitimately get nothing back, all of which leave the
+        paper abstract-only: it is not open access, its full text could not be
+        fetched, or the JATS had no usable body. Only the fetch failure is
+        worth logging — the other two are ordinary.
+        """
+        pmcid = _fulltext_pmcid(paper)
         if not pmcid:
             return []
-        return extract_body_paragraphs(self._fetch_fulltext_xml(pmcid))
-
-    def _fetch_fulltext_xml(self, pmcid: str) -> str:
-        """Fetch JATS full-text XML for a PMC id (returns '' on failure)."""
-        pmcid = pmcid.upper()
-        if pmcid.isdigit():
-            pmcid = f"PMC{pmcid}"
-        try:
-            response = requests.get(_FULLTEXT_URL.format(pmcid=pmcid), timeout=30)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as exc:
-            self._log(f"full-text fetch failed for {pmcid}: {exc}")
-            return ""
-        return response.text
+        fulltext = fulltexts.get(pmcid)
+        if fulltext is None:
+            return []
+        if not fulltext.ok:
+            self._log(f"full-text unavailable for {pmcid}: {fulltext.error}")
+            return []
+        return extract_body_paragraphs(fulltext.xml)
 
     # ── Step 5: single-pass LLM relevance filter ─────────────────────────────
 

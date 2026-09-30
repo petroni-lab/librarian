@@ -5,15 +5,24 @@ returns a list of paper dicts (title, abstract, authors, ids, full-text
 availability, ...). The full agent wrapped this in a LangChain retriever and a
 Redis/diskcache look-aside cache; neither is needed to run the librarian, so
 this version is a single plain ``requests`` call with a small retry loop.
+
+``LiteratureSource`` is the port ``LibrarianAgent`` searches and fetches full
+texts through; ``EuropePmcSource`` is the default implementation built on the
+plain functions in this module. An embedding application can pass its own
+source (with a cache, a worker pool, ...) as
+``LibrarianAgent(literature_source=...)``.
 """
 
 import time
-from typing import Any, Dict, List
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Protocol
 from urllib.parse import quote
 
 import requests
 
 _SEARCH_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+# Europe PMC full-text fetch endpoint (PMC id -> JATS XML).
+_FULLTEXT_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML"
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
@@ -124,6 +133,106 @@ def search_scientific_literature_structured(
 
     results = response.json().get("resultList", {}).get("result", [])
     return [_parse_result(r) for r in results]
+
+
+@dataclass
+class Fulltext:
+    """One full-text fetch outcome: the JATS XML, or why it is missing."""
+
+    pmcid: str
+    xml: str = ""
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        """True when the XML was retrieved (it may still be empty or unparseable)."""
+        return not self.error
+
+
+def normalize_pmcid(pmcid: str) -> str:
+    """Upper-case a PMC id and prefix bare digits, so one paper keys one way.
+
+    :param pmcid: A PMC id in any of the forms Europe PMC hands out
+        (``PMC123``, ``pmc123``, ``123``).
+    :return: The canonical ``PMC123`` form, used for both the dict key and the URL.
+    :rtype: str
+    """
+    normalized = str(pmcid).strip().upper()
+    return f"PMC{normalized}" if normalized.isdigit() else normalized
+
+
+def fetch_fulltext(pmcid: str) -> Fulltext:
+    """Fetch the JATS full-text XML for one PMC id.
+
+    A failed request is returned as a ``Fulltext`` with ``error`` set rather
+    than raised, so one missing full text only leaves its paper abstract-only.
+
+    :param pmcid: A PMC id in any form (see ``normalize_pmcid``).
+    :return: The XML, or the error that replaced it.
+    :rtype: Fulltext
+    """
+    pmcid = normalize_pmcid(pmcid)
+    try:
+        response = requests.get(_FULLTEXT_URL.format(pmcid=pmcid), timeout=30)
+        # Without this a 404 page would come back as if it were the XML.
+        response.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        return Fulltext(pmcid=pmcid, error=str(exc))
+    return Fulltext(pmcid=pmcid, xml=response.text)
+
+
+def fetch_fulltext_many(pmcids: Iterable[str]) -> Dict[str, Fulltext]:
+    """Fetch several full texts one after another, keyed by normalised PMC id.
+
+    Blank ids are dropped and repeats are fetched once.
+
+    :param pmcids: PMC ids in any form; blanks are dropped.
+    :type pmcids: Iterable[str]
+    :return: One ``Fulltext`` per distinct id, successes and failures alike.
+    :rtype: Dict[str, Fulltext]
+    """
+    unique = dict.fromkeys(normalize_pmcid(p) for p in pmcids if str(p or "").strip())
+    return {pmcid: fetch_fulltext(pmcid) for pmcid in unique}
+
+
+class LiteratureSource(Protocol):
+    """What ``LibrarianAgent`` needs from a literature backend.
+
+    ``search`` returns up to ``page_size`` paper dicts in the shape
+    ``_parse_result`` builds. The agent reads ``inEPMC``, ``hasFreeFullText``,
+    ``fullTextIds``, ``pmcid``, ``pmid``, ``epmcId``,
+    ``epmcSource``/``sourceCode``, ``doi``, ``title``, ``authors``,
+    ``journal``, ``year``, ``url``, ``abstract`` and
+    ``authorsWithAffiliations``. It must raise on failure, never return ``[]``
+    for an outage: the agent lets the exception fail the run, so a caller can
+    tell "the search broke" from "no literature found".
+
+    ``fetch_fulltext_many`` is called once per sub-query with one id per paper,
+    already normalised (``normalize_pmcid``), or ``""`` for a paper that is not
+    open access. Drop the blanks and return one entry per distinct remaining
+    id, keyed by that id. The agent only reads each value's ``ok``, ``xml``
+    and ``error``, so any object with those attributes will do.
+    """
+
+    def search(self, query: str, page_size: int) -> List[Dict[str, Any]]:
+        """Run one literature query; return its paper dicts."""
+        ...
+
+    def fetch_fulltext_many(self, pmcids: Iterable[str]) -> Dict[str, Fulltext]:
+        """Fetch the full texts for a batch of PMC ids."""
+        ...
+
+
+class EuropePmcSource:
+    """Default source: plain Europe PMC REST calls, no cache."""
+
+    def search(self, query: str, page_size: int) -> List[Dict[str, Any]]:
+        """Search Europe PMC (see ``search_scientific_literature_structured``)."""
+        return search_scientific_literature_structured(query, page_size=page_size)
+
+    def fetch_fulltext_many(self, pmcids: Iterable[str]) -> Dict[str, Fulltext]:
+        """Fetch full texts sequentially (see ``fetch_fulltext_many``)."""
+        return fetch_fulltext_many(pmcids)
 
 
 if __name__ == "__main__":
