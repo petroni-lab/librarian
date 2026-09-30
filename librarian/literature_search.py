@@ -177,7 +177,9 @@ def fetch_fulltext(pmcid: str) -> Fulltext:
         # Without this a 404 page would come back as if it were the XML.
         response.raise_for_status()
     except requests.exceptions.RequestException as exc:
-        return Fulltext(pmcid=pmcid, error=str(exc))
+        # Never an empty error: ok is "no error", so a message-less exception
+        # would otherwise read as a successful fetch.
+        return Fulltext(pmcid=pmcid, error=str(exc) or type(exc).__name__)
     return Fulltext(pmcid=pmcid, xml=response.text)
 
 
