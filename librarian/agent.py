@@ -825,7 +825,7 @@ class LibrarianAgent:
                     },
                 ) as fulltext_span:
                     fulltexts = self._source.fetch_fulltext_many(
-                        _fulltext_pmcid(p) for p in papers
+                        [_fulltext_pmcid(p) for p in papers]
                     )
                     self._tracer.set_span_attributes(
                         fulltext_span,
