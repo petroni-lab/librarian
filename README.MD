@@ -1,11 +1,7 @@
 <div align="center">
 
-<table>
-<tr>
-<td valign="middle" align="left"><h1><span style="color:#18974C">EMBL AI Librarian</span></h1></td>
-<td valign="middle" align="right"><img src="assets/ai-librarian.png" alt="EMBL AI Librarian logo" width="140"></td>
-</tr>
-</table>
+<img src="assets/ai-librarian.png" alt="EMBL AI Librarian logo" width="140">
+<h1><span style="color:#18974C">EMBL AI Librarian</span></h1></td>
 
 <h3>A life-sciences knowledge layer for AI agents</h3>
 
