@@ -415,7 +415,7 @@ loudly at load rather than silently defaulting:
 | `max_paragraph_words` | 250 | window size before a long paragraph is split |
 | `paragraph_overlap_words` | 50 | overlap between adjacent split windows |
 | `filter_temperature` | 0.1 | relevance-judge temperature |
-| `filter_max_tokens` | 8192 | output budget per Stage-3 LLM call; raise it for reasoning models, whose trace counts against it |
+| `filter_max_tokens` | 8192 | output budget per Stage-3 LLM call |
 
 `paragraphs_per_judge_batch` should be `>= paragraphs_per_subquery * num_subqueries`
 so the whole pool is judged in one call — the judge ranks globally, but results from
