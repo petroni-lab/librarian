@@ -66,9 +66,6 @@ _FILTER_PROMPT_PATH = _PROMPTS_DIR / "stage_3_paragraph_relevance_judge.md"
 # (search + BM25) and instead size to the CPUs actually available (see
 # _available_cpus), so they match the container's cores without oversubscribing.
 _JUDGE_WORKERS = 8
-# Output budget for one Stage-3 relevance batch. Generous margin over a plain
-# JSON id-list response so a wide batch doesn't get silently truncated.
-_FILTER_MAX_TOKENS = 8192
 # Quoted tokens in a judge reply; used to salvage ids when the JSON is unparseable.
 _QUOTED_TOKEN_RE = re.compile(r'"([A-Za-z0-9_\-]+)"')
 
@@ -567,6 +564,7 @@ class LibrarianAgent:
         self._max_paragraph_words = runtime_config.max_paragraph_words
         self._paragraph_overlap_words = runtime_config.paragraph_overlap_words
         self._filter_temperature = runtime_config.filter_temperature
+        self._filter_max_tokens = runtime_config.filter_max_tokens
 
         self.llm = (
             llm_client
@@ -982,7 +980,7 @@ class LibrarianAgent:
                     {"role": "user", "content": prompt},
                 ],
                 temperature=self._filter_temperature,
-                max_tokens=_FILTER_MAX_TOKENS,
+                max_tokens=self._filter_max_tokens,
             )
         except Exception as exc:
             self._log(f"filter batch error: {exc}")
@@ -1152,6 +1150,7 @@ class LibrarianAgent:
         query: str,
         max_loops: int = 1,
         on_progress: Optional[Callable[[str], None]] = None,
+        progress_callback: Optional[Callable[[int], None]] = None,
     ) -> List[Dict[str, Any]]:
         """Single-pass retrieval: Stage 1 (generate + validate sub-queries) →
         Stage 2 (per-sub-query paragraph BM25 ranking) → Stage 3 (relevance
@@ -1160,7 +1159,18 @@ class LibrarianAgent:
 
         ``on_progress`` (optional) is called with a short human-readable
         status string at each pipeline stage — wire it to a spinner for live
-        feedback.
+        feedback. It may also be called from worker threads.
+
+        ``progress_callback`` (optional) is called with the step number, 0
+        (starting), 1 (sub-queries ready, searching) and 2 (paragraphs
+        pooled, judging), always from the thread that called ``run``. An
+        exception it raises propagates out of ``run``, so a caller can use it
+        as a cancellation checkpoint.
+
+        After the call, ``last_run_debug`` describes this run: at least
+        ``search_queries`` once Stage 1 is done, plus ``query_count``,
+        ``paragraph_count``, ``relevant_count`` and ``final_pmids`` when
+        Stage 3 ran.
         """
         if max_loops != 1:
             raise NotImplementedError(
@@ -1177,7 +1187,7 @@ class LibrarianAgent:
             },
         ) as run_span:
             try:
-                evidence_items = self._run(query)
+                evidence_items = self._run(query, progress_callback)
             except Exception as exc:
                 self._tracer.mark_span_error(run_span, exc)
                 raise
@@ -1203,14 +1213,27 @@ class LibrarianAgent:
             )
         return evidence_items
 
-    def _run(self, query: str) -> List[Dict[str, Any]]:
+    def _run(
+        self,
+        query: str,
+        progress_callback: Optional[Callable[[int], None]] = None,
+    ) -> List[Dict[str, Any]]:
         """Internal implementation of the single-pass retrieval pipeline."""
+        # Cleared first: every return below, including the early one and an
+        # exception, must describe this run and not leave the previous one's
+        # numbers behind.
+        self.last_run_debug: Dict[str, Any] = {}
+        if progress_callback:
+            progress_callback(0)
         self._filter_done = 0  # reset so a reused agent reports fresh counts
         self._filter_total = 0
         self._progress("Generating search queries")
         generated = self._generate_queries(query)
         self._progress("Validating queries")
         queries = self._validate_queries(generated)
+        self.last_run_debug["search_queries"] = queries
+        if progress_callback:
+            progress_callback(1)
 
         # Stage 2 — one thread per sub-query: search EPMC, decompose papers
         # into paragraphs, BM25-rank against that sub-query, keep its top-k
@@ -1251,6 +1274,8 @@ class LibrarianAgent:
             )
         self._log(f"{len(paragraphs)} paragraphs after Stage 2")
         self._progress(f"Found {len(paragraphs)} candidate paragraphs")
+        if progress_callback:
+            progress_callback(2)
         if not paragraphs:
             return []
 
@@ -1282,13 +1307,14 @@ class LibrarianAgent:
                 },
             )
 
-        self.last_run_debug = {
-            "search_queries": queries,
-            "query_count": len(queries),
-            "paragraph_count": len(paragraphs),
-            "relevant_count": len(relevant_papers),
-            "final_pmids": [str(p.get("pmid") or "") for p in relevant_papers],
-        }
+        self.last_run_debug.update(
+            {
+                "query_count": len(queries),
+                "paragraph_count": len(paragraphs),
+                "relevant_count": len(relevant_papers),
+                "final_pmids": [str(p.get("pmid") or "") for p in relevant_papers],
+            }
+        )
         logger.debug(
             "[Librarian] queries=%d paragraphs=%d relevant=%d",
             len(queries),

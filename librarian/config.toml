@@ -42,3 +42,6 @@ max_paragraph_words = 250
 paragraph_overlap_words = 50
 # 0.1 is the winning LitQA2 config; use 0 for deterministic, reproducible filtering.
 filter_temperature = 0.1
+# Generous margin over a plain JSON id-list response so a wide batch doesn't get
+# silently truncated. Reasoning models need more (their trace counts against it).
+filter_max_tokens = 8192
