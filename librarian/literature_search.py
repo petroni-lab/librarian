@@ -13,6 +13,7 @@ source (with a cache, a worker pool, ...) as
 ``LibrarianAgent(literature_source=...)``.
 """
 
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -36,8 +37,9 @@ _PERMANENT_CONFIRM_DELAY_S = 0.5
 # cores. One module-level pool shared by every sub-query thread: this is the
 # total number of concurrent full-text requests Europe PMC sees, not a per-caller
 # limit. Same value as bio-agents' libs/literature_search.py.
-# ponytail: threads spawn on first submit, so no lazy init or lock is needed.
-_FULLTEXT_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="epmc-ft")
+_FULLTEXT_WORKERS = 8
+_fulltext_pool: "ThreadPoolExecutor | None" = None
+_fulltext_pool_lock = threading.Lock()
 
 
 def _parse_result(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -163,6 +165,11 @@ class Fulltext:
         """True when the XML was retrieved (it may still be empty or unparseable)."""
         return not self.error
 
+    @property
+    def permanent(self) -> bool:
+        """True when re-requesting this pmcid cannot change the outcome."""
+        return self.status in _PERMANENT_FULLTEXT_STATUSES
+
 
 def normalize_pmcid(pmcid: str) -> str:
     """Upper-case a PMC id and prefix bare digits, so one paper keys one way.
@@ -206,17 +213,29 @@ def fetch_fulltext(pmcid: str) -> Fulltext:
     """
     pmcid = normalize_pmcid(pmcid)
     result = _attempt_fulltext(pmcid)
-    if not result.ok and result.status in _PERMANENT_FULLTEXT_STATUSES:
+    if not result.ok and result.permanent:
         time.sleep(_PERMANENT_CONFIRM_DELAY_S)
         result = _attempt_fulltext(pmcid)
     return result
+
+
+def _get_fulltext_pool() -> ThreadPoolExecutor:
+    """The shared full-text fetch pool, created on first use."""
+    global _fulltext_pool
+    if _fulltext_pool is None:
+        with _fulltext_pool_lock:
+            if _fulltext_pool is None:
+                _fulltext_pool = ThreadPoolExecutor(
+                    max_workers=_FULLTEXT_WORKERS, thread_name_prefix="epmc-ft"
+                )
+    return _fulltext_pool
 
 
 def fetch_fulltext_many(pmcids: Iterable[str]) -> Dict[str, Fulltext]:
     """Fetch several full texts concurrently, keyed by normalised PMC id.
 
     Blank ids are dropped and repeats are fetched once. All callers share
-    the pool's 8 slots, so the sub-query fan-out cannot multiply into a
+    ``_FULLTEXT_WORKERS`` slots, so the sub-query fan-out cannot multiply into a
     burst against Europe PMC.
 
     :param pmcids: PMC ids in any form; blanks are dropped.
@@ -227,7 +246,7 @@ def fetch_fulltext_many(pmcids: Iterable[str]) -> Dict[str, Fulltext]:
     unique = list(
         dict.fromkeys(normalize_pmcid(p) for p in pmcids if str(p or "").strip())
     )
-    return {r.pmcid: r for r in _FULLTEXT_POOL.map(fetch_fulltext, unique)}
+    return {r.pmcid: r for r in _get_fulltext_pool().map(fetch_fulltext, unique)}
 
 
 class LiteratureSource(Protocol):
