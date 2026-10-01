@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Run one Librarian pipeline step with the project's Python environment.
+# Run a Librarian script with the project's Python environment.
 #
-#   run.sh step1_query_prompt --provider claude "<question>"
-#   run.sh step2_retrieve --run "<RUN_DIR>"
+#   run.sh search --provider claude "<question>"
 #
 # The project root is derived from this script's location, so the skill works
 # from a plugin cache, a clone, or a vendored copy — no cwd or git root needed.

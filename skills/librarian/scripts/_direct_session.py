@@ -1,8 +1,7 @@
 """Run a fresh Claude Code, Codex, or Antigravity session for one rendered prompt.
 
-The root agent passes paths to this module, never the prompt contents. The child
-CLI receives the prompt through stdin and its final JSON response is validated
-and written locally, avoiding model Read and Write tool calls.
+The child CLI receives the prompt through stdin and its raw response is returned
+to ``CliClient`` (``search.py``), which hands it to ``LibrarianAgent`` as an LLM reply.
 """
 
 from __future__ import annotations
@@ -16,8 +15,6 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import _runs
-from librarian.llm_client import parse_json_response
 
 PROVIDERS = ("claude", "codex", "antigravity")
 
@@ -58,29 +55,16 @@ def _require_cli(provider: str) -> str:
     raise SystemExit(f"{provider} CLI ({cli}) is not installed or not on PATH.")
 
 
-def _validate_response(raw_response: str, key: str) -> Dict[str, List[str]]:
-    """Parse and validate the one-field JSON object returned by the model."""
-    parsed = parse_json_response(raw_response)
-    values = parsed.get(key) if isinstance(parsed, dict) else None
-    if not isinstance(values, list) or not all(
-        isinstance(value, str) for value in values
-    ):
-        raise SystemExit(
-            f"Model response must be a JSON object with a string-array '{key}'."
-        )
-    return {key: values}
-
-
 def _claude_command(executable: str) -> List[str]:
     """Build a one-turn Claude Code command with no inherited project context.
 
-    ``--effort`` is the one knob that matters for latency here. Both prompts ask
-    for a single JSON object from material already in front of the model — the
-    planner picks query strings, the judge ranks paragraphs it can read — so
-    extended thinking buys nothing and costs a lot: on a 173 KB judge batch the
-    default effort spent ~5k thinking tokens and 55 s, ``low`` spent none and
-    took 9 s, and the two returned the same paragraphs. It also keeps a large
-    batch clear of the 180-second timeout in ``_run_command``. Override with
+    Thinking is the latency knob. Both prompts ask for a single JSON object from
+    material already in front of the model — the planner picks query strings, the
+    judge ranks paragraphs it can read — so extended thinking buys nothing. The
+    caller sets ``MAX_THINKING_TOKENS=0``: ``--effort low`` alone still spent
+    5-11k hidden tokens (75-105 s) on a ~100-token query reply. ``--effort`` is
+    kept as a secondary cap, and keeps a large batch clear of the 180-second
+    timeout in ``_run_command``. Override with
     ``LIBRARIAN_CLAUDE_EFFORT`` (low, medium, high, xhigh, max); an empty value
     drops the flag and restores the CLI default.
     """
@@ -276,14 +260,12 @@ def _antigravity_response(raw_output: str) -> str:
 def run_direct_session(
     provider: str,
     prompt_path: Path,
-    output_path: Path,
     output_key: str,
-) -> None:
-    """Run a fresh CLI model session and save its validated JSON response.
+) -> str:
+    """Run a fresh CLI model session and return its raw response text.
 
     :param provider: CLI provider: ``claude``, ``codex``, or ``antigravity``.
     :param prompt_path: Rendered prompt file streamed directly to the child CLI.
-    :param output_path: JSON hand-off file consumed by the next pipeline step.
     :param output_key: Required list field in the model response.
     """
     if provider not in PROVIDERS:
@@ -315,14 +297,20 @@ def run_direct_session(
             )
         raw_response = completed.stdout
     elif provider == "claude":
-        completed = _run_command(_claude_command(executable), prompt_path)
+        # ponytail: thinking off. --effort low still thinks (5-11k hidden tokens, 75-105 s
+        # for a ~100-token reply on Haiku); MAX_THINKING_TOKENS=0 makes it ~4 s.
+        completed = _run_command(
+            _claude_command(executable),
+            prompt_path,
+            {**os.environ, "MAX_THINKING_TOKENS": "0"},
+        )
         raw_response = completed.stdout
     elif provider == "codex":
         with tempfile.TemporaryDirectory(dir=prompt_path.parent) as temporary_directory:
             temporary_path = Path(temporary_directory)
             schema_path = temporary_path / "response_schema.json"
             response_path = temporary_path / "response.json"
-            _runs.write_json(schema_path, _response_schema(output_key))
+            schema_path.write_text(json.dumps(_response_schema(output_key)), encoding="utf-8")
             command = _codex_command(
                 executable,
                 prompt_path,
@@ -341,4 +329,4 @@ def run_direct_session(
         raise SystemExit(f"{provider} session failed: {message}")
     if provider == "antigravity":
         raw_response = _antigravity_response(raw_response)
-    _runs.write_json(output_path, _validate_response(raw_response, output_key))
+    return raw_response

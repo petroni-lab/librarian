@@ -9,64 +9,49 @@ metadata:
 
 # Librarian
 
-Run the librarian pipeline without a served LLM. The scripts reuse
-`librarian/agent.py` for Europe PMC search, full-text chunking, BM25
-ranking, and evidence assembly.
-
-Steps 1 and 3 invoke a fresh Claude Code, Codex, or Antigravity CLI session for the two LLM
-operations. The root agent never reads their large prompts and never creates an
-`Agent` subagent. Step 5 is a response-only synthesis mode: it reads the
-literature-synthesis prompt after retrieval is complete, not either pipeline
-prompt. Step 5 is how every run's final answer is presented to the user.
+Runs the repo's own `LibrarianAgent` (`librarian/agent.py`) — query planning,
+Europe PMC search, full-text chunking, BM25, relevance judge, evidence assembly —
+with one change: its LLM client is a fresh Claude Code, Codex, or Antigravity CLI
+session instead of a served model. Nothing from the pipeline is reimplemented in
+the skill. Step 2 is a response-only synthesis from the instructions the script prints
+after retrieval; it is how every run's final answer is presented.
 
 ## Failure boundary
 
 Use only this pipeline's Europe PMC evidence. Never fall back to web search,
-browser tools, other literature sources, or an answer from memory when a step
-fails. If step 1 or step 3 fails, stop and report the actual CLI error; do not
-attribute a model startup failure to Europe PMC. For step 2, follow the retry
-rule below.
+browser tools, other literature sources, or an answer from memory when the
+script fails. If it fails on a CLI session, stop and report the actual CLI
+error; do not attribute a model startup failure to Europe PMC. For an empty
+retrieval, follow the retry rule below.
 
-The CLI sessions need network access to their model provider, and step 2 needs
-network access to Europe PMC. In a network-restricted Codex task, run steps 1,
-2, and 3 through `exec_command` with `sandbox_permissions="require_escalated"`
-and a justification for model-provider or Europe PMC access **on the first
-attempt**. Use the host's approval flow; do not change sandbox environment
-variables or bypass workspace policies. If approval is denied, stop and report
-the denial. Network access is not permission to use web search.
+The CLI sessions need network access to their model provider, and the script
+needs network access to Europe PMC. In a network-restricted Codex task, run it
+through `exec_command` with `sandbox_permissions="require_escalated"` and a
+justification for model-provider or Europe PMC access **on the first attempt**.
+Use the host's approval flow; do not change sandbox environment variables or
+bypass workspace policies. If approval is denied, stop and report the denial.
+Network access is not permission to use web search.
 
-The launcher prints progress before starting the model. A failed connectivity
-check means no child was launched: retry with approved network access instead
-of waiting. A model timeout means the child was stopped after 180 seconds:
-report the timeout rather than continuing to poll or saying it is still running.
+A failed connectivity check means no child was launched: retry with approved
+network access instead of waiting. A model timeout means the child was stopped
+after 180 seconds: report the timeout rather than continuing to poll.
 
 ## Context boundary
 
-Steps 1 and 3 render a prompt file in the run directory, then stream that file
-directly to a fresh model process through stdin. The process returns JSON on
-stdout; the local script validates and writes it to the run directory.
-
-The root agent sees only paths, counts, and the step-4 report. It must never
-read `01_query_prompt.md`, `02_paragraphs.json`, files under `03_judge/`, or
-`04_evidence.json`. The only exception is the package's
-`../../librarian/prompts/summarizer.md` read in Step 5 below.
-
-Use the direct CLI launcher rather than native subagent tools in any harness;
-this keeps prompt and result file handling in the local scripts.
+The prompts go straight from the agent to the CLI session over stdin; the root
+agent sees only the script's final report. Use the direct CLI launcher rather
+than native subagent tools in any harness. The root agent reads no files; the synthesis
+instructions arrive in the script's output.
 
 ## First run: install what is missing
 
 The user may have installed this skill from a desktop app and never opened a
-terminal, so set up the two prerequisites yourself instead of asking them to.
-Check once per session, before step 1:
-
-```bash
-command -v uv || ls ~/.local/bin/uv
-```
-
-If `uv` is missing, install it with the official installer through the host's
-normal approval flow, then continue. `run.sh` finds it in `~/.local/bin`
-without a new shell, and installs the Python dependencies itself on first call.
+terminal, so set up missing prerequisites yourself instead of asking them to.
+Do not check ahead of time — that costs a model round-trip every run. Just run
+step 1; `run.sh` finds `uv` in `~/.local/bin` and installs the Python
+dependencies itself on first call. Only if it exits 127 (`need uv`), install
+`uv` with the official installer through the host's normal approval flow, then
+re-run step 1:
 
 - macOS/Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - Windows: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
@@ -84,24 +69,25 @@ run `claude` (or `codex`) once, sign in, and ask again.
 
 ## Setup
 
-Every step runs through `scripts/run.sh`, resolved relative to this `SKILL.md`.
-The launcher derives the project root from its own location and provisions the
-Python environment with `uv` on first call, so there is nothing to install and
-no absolute path to configure:
+The pipeline runs through `scripts/run.sh`, in the directory containing this
+`SKILL.md`. The launcher derives the project root from its own location and
+provisions the Python environment with `uv` on first call, so there is nothing
+to install and no absolute path to configure. Write the command out in full on
+one line, with the real path and provider substituted — shell variables do not
+persist between calls, and `VAR=x cmd "$VAR"` on one line leaves `$VAR` empty:
 
 ```bash
-RUN="<directory containing this SKILL.md>/scripts/run.sh"
-PROVIDER="claude"  # or "codex" or "antigravity"
+bash "<directory containing this SKILL.md>/scripts/run.sh" search --provider <claude|codex|antigravity> "<user question>"
 ```
 
 When installed as a plugin, that directory is
 `${CLAUDE_PLUGIN_ROOT}/skills/librarian`. Set `LIBRARIAN_PYTHON` to a Python
 interpreter that already has Librarian's dependencies if `uv` is unavailable.
 
-Set `PROVIDER` to `claude`, `codex`, or `antigravity`. Honor an explicit user
+Choose `--provider` from `claude`, `codex`, or `antigravity`. Honor an explicit user
 choice; otherwise use the provider matching your host (Antigravity →
 `antigravity`). In other hosts, use an installed, authenticated provider.
-Keep the same provider for steps 1 and 3; do not silently switch on failure.
+Do not silently switch providers on failure.
 
 The Antigravity provider calls the official `agy` CLI, which must be on PATH
 and authenticated once through an interactive `agy` session. It sends one
@@ -118,30 +104,17 @@ loading still fails, report it and ask the user to run Codex once from their
 normal terminal to refresh authentication and policy caches, then retry the
 skill.
 
-Keep the `RUN_DIR` printed by step 1 and pass it explicitly to later steps.
 Claude uses its configured default model. Codex uses `gpt-5.6-luna` at low
 effort because both child tasks are bounded JSON transformations. Override with
 `LIBRARIAN_CODEX_MODEL` or `LIBRARIAN_CODEX_EFFORT`; set either to an empty
 value to restore the Codex CLI default. These are still Codex CLI sessions using
-the user's existing authentication and plan, not API calls from `.env`.
+the user's existing authentication plan, not API calls from `.env`.
 
-Run the steps in two shell calls, not four. Every root-agent turn between steps
-costs a full model round-trip on top of the work, and only one decision point in
-the pipeline is genuinely the root agent's: whether Europe PMC came through.
+The single command above runs the whole pipeline.
 
-```bash
-"$RUN" step1_query_prompt --provider "$PROVIDER" "<user question>" && \
-  "$RUN" step2_retrieve --run "<RUN_DIR printed above>"
-```
-
-Step 1 prints `RUN_DIR` before step 2 needs it, so substitute it into the second
-half of the same command. Then read the `paragraphs=` count, apply the Europe
-PMC rule below, and if it holds run the rest in one more call:
-
-```bash
-"$RUN" step3_judge_prompts --run "<RUN_DIR>" --provider "$PROVIDER" && \
-  "$RUN" step4_finalize --run "<RUN_DIR>"
-```
+Progress goes to stderr; stdout is `[Librarian] queries=N paragraphs=N relevant=N`
+followed by the report. Each paper's block carries a `Cite as:` line — the
+author-year markdown link Step 2 cites it with.
 
 `LIBRARIAN_CLAUDE_EFFORT` sets the child sessions' effort level; it defaults to
 `low`, which is what keeps the judge step fast. Raise it only to test whether a
@@ -158,80 +131,22 @@ Antigravity bakes the reasoning tier into the model slug, so it defaults to
 `gemini-3.7-flash-high` when a question is worth the fuller evidence sweep, or
 to an empty value to use the account default.
 
-## Step 1 — plan Europe PMC queries
+## Step 1 — search
 
-```bash
-"$RUN" step1_query_prompt --provider "$PROVIDER" "<user question>"
-```
+The command above. If it reports `paragraphs=0`, or fails with a Europe PMC
+network/HTTP/timeout error, the fault is Europe PMC's, not this skill's:
 
-Chain step 2 onto this call as shown under Setup. The script creates
-`RUN_DIR`, renders `01_query_prompt.md`, starts a fresh CLI session with that
-file as stdin, and writes the returned `{"queries": [...]}` to
-`01_queries.json`. No prompt content enters the root agent's context.
-
-## Step 2 — retrieve, chunk, and rank
-
-```bash
-"$RUN" step2_retrieve --run "<RUN_DIR>"
-```
-
-No model session is involved. The script validates the generated Europe PMC
-queries, searches Europe PMC, fetches available full text, chunks papers into
-paragraphs, BM25-ranks each sub-query pool, and writes the merged selection to
-`02_paragraphs.json`.
-
-Read only stdout.
-
-### If Europe PMC doesn't come through
-
-Two outcomes count as "doesn't come through," and both are treated the same
-way:
-
-- A clean run that reports `paragraphs=0` (the queries ran fine, Europe PMC
-  just had nothing to give back), or
-- The command itself failing (a non-zero exit, a traceback, a Europe PMC
-  network/HTTP/timeout error).
-
-Either way, the fault is Europe PMC's, not this skill's:
-
-- Retry exactly once: re-run the identical `run.sh step2_retrieve --run <RUN_DIR>`
-  command, unmodified.
-- If the retry also comes back empty or fails, **stop the pipeline entirely**. Do
-  not run step 3 or step 4.
-- Reply to the user with exactly this message:
+- Retry exactly once: re-run the identical command, unmodified.
+- If the retry also comes back empty or fails, **stop**. Reply to the user with
+  exactly this message:
   > I'm extremely sorry — this isn't a problem with the librarian pipeline, it's Europe PMC itself: literature retrieval failed twice. I won't guess at an answer without literature evidence. Please try again later.
 
-## Step 3 — judge paragraph relevance
+## Step 2 — synthesize the final answer
 
-```bash
-"$RUN" step3_judge_prompts --run "<RUN_DIR>" --provider "$PROVIDER"
-```
-
-The script renders one or more files under `03_judge/`, starts one fresh direct
-CLI session per file, and runs those sessions in parallel. Each session receives
-only its own rendered prompt and writes a validated `{"relevant_ids": [...]}`
-output through the local launcher. The root agent sees none of the prompts.
-
-## Step 4 — assemble final evidence
-
-```bash
-"$RUN" step4_finalize --run "<RUN_DIR>"
-```
-
-No model session is involved. The script maps cited sentence IDs back to the
-paragraphs, groups contiguous citations into evidence spans, and prints the
-final report. Each paper's block carries a `Cite as:` line — the author-year
-markdown link Step 5 cites it with. Do not answer from this report directly —
-proceed to Step 5, staying within its evidence.
-
-## Step 5 — synthesize the final answer
-
-After every successful Step 4, read `librarian/prompts/summarizer.md` in full,
-then use
-its structure, source-fidelity rules, and citation discipline to synthesize
-the Step-4 evidence report into the final answer presented to the user. Always
-use this step, whether the user's request was a broad search/overview/summary
-or a narrow, specific question — the summarizer prompt already directs the
-answer at the original user query, so it fits both. Feed it the user's exact
-question so it answers that question directly, not just a generic overview of
-the retrieved papers.
+After every successful Step 1, the script has already printed the synthesis
+instructions (`librarian/prompts/summarizer.md`) after the report. Do not read
+that file separately. Follow those instructions — structure, source-fidelity
+rules, citation discipline — to turn the report into the final answer. Always
+use this step, whether the request was a broad overview or a narrow question,
+and answer the user's exact question directly, not a generic overview of the
+retrieved papers.
