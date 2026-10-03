@@ -67,7 +67,7 @@ def _run(
     :returns: The query, the sub-queries the planner produced, and the ranked
         evidence passages (``LibrarianAgent.run``'s output, verbatim).
     """
-    # ponytail: a fresh agent per request. Construction just reads two prompt
+    # A fresh agent per request. Construction just reads two prompt
     # files and builds an HTTP client; cache it in a module global if profiling
     # ever says otherwise.
     agent = LibrarianAgent(
@@ -128,7 +128,7 @@ def _stream(
         finally:
             events.put(("done", {}))
 
-    # ponytail: no cancellation. A client that hangs up leaves the run going to
+    # No cancellation. A client that hangs up leaves the run going to
     # completion; thread a stop flag into LibrarianAgent.run if wasted LLM calls
     # start costing real money.
     threading.Thread(target=worker, daemon=True).start()

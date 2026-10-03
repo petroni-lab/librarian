@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
 """Run the repo's own ``LibrarianAgent`` with a CLI session as its LLM.
 
-    search.py --provider claude "<research question>"
+    run.sh search --provider claude "<research question>"
 
 The agent does everything (queries, Europe PMC, BM25, judge, evidence); the only
 thing swapped is the LLM client, which shells out to a fresh CLI session.
 Prints the report the root agent answers from.
+
+What this relies on from ``librarian`` (run.sh puts the repo root on
+``PYTHONPATH``):
+
+- ``LibrarianAgent`` and ``load_runtime_config``;
+- the client contract ``chat_completion(messages, temperature, max_tokens) -> str``;
+- the reply keys the agent parses, ``queries`` and ``relevant_ids``, which the
+  Codex/AGY schema in ``_direct_session.py`` hard-codes;
+- ``last_run_debug["search_queries"]`` and ``["paragraph_count"]``;
+- ``citations.render_report`` and ``prompts/summarizer.md``.
 """
 
 from __future__ import annotations
@@ -15,13 +25,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+import librarian
+from _direct_session import PROVIDERS, CliSessionError, run_direct_session
+from librarian import LibrarianAgent, load_runtime_config
+from librarian.citations import render_report
 
-from _direct_session import PROVIDERS, run_direct_session  # noqa: E402
-from librarian import LibrarianAgent, load_runtime_config  # noqa: E402
-from librarian.citations import render_report  # noqa: E402
-
-SUMMARIZER = Path(__file__).resolve().parents[3] / "librarian" / "prompts" / "summarizer.md"
+SUMMARIZER = Path(librarian.__file__).parent / "prompts" / "summarizer.md"
 
 
 class CliClient:
@@ -30,18 +39,14 @@ class CliClient:
     def __init__(self, provider: str):
         self.provider = provider
 
-    # ponytail: temperature/max_tokens ignored, a one-shot CLI session exposes neither.
+    # temperature/max_tokens are ignored: a one-shot CLI session exposes neither.
     def chat_completion(self, messages, temperature=0.0, max_tokens=0) -> str:
-        system, prompt = messages[0]["content"], messages[-1]["content"]
-        key = "relevant_ids" if "relevant_ids" in system else "queries"
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "prompt.md"
             path.write_text(
-                f"{system}\n\n{prompt}\n\nReturn only one JSON object with the key "
-                f"`{key}` (an array of strings). No tools, prose or Markdown fences.\n",
-                encoding="utf-8",
+                "\n\n".join(m["content"] for m in messages) + "\n", encoding="utf-8"
             )
-            return run_direct_session(self.provider, path, key)
+            return run_direct_session(self.provider, path)
 
 
 def main() -> int:
@@ -56,15 +61,21 @@ def main() -> int:
     agent = LibrarianAgent(
         runtime_config=load_runtime_config(), llm_client=CliClient(args.provider)
     )
-    evidence = agent.run(query, on_progress=lambda m: print(f"[Librarian] {m}", file=sys.stderr))
+    try:
+        evidence = agent.run(
+            query, on_progress=lambda m: print(f"[Librarian] {m}", file=sys.stderr)
+        )
+    except CliSessionError as exc:
+        # Query planning has no fallback, so its CLI failure ends the run.
+        raise SystemExit(f"[Librarian] {exc}") from None
     debug = agent.last_run_debug
-    paragraphs = debug.get("paragraph_count", 0)
-    print(f"[Librarian] queries={debug.get('query_count', 0)} paragraphs={paragraphs} relevant={len(evidence)}")
+    # paragraph_count is absent when the agent returns early on no paragraphs.
+    queries, paragraphs = len(debug["search_queries"]), debug.get("paragraph_count", 0)
+    print(f"[Librarian] queries={queries} paragraphs={paragraphs} relevant={len(evidence)}")
     if not paragraphs:
-        print("No paragraphs retrieved — nothing to judge. Report the empty result.")
-        return 0
+        return 0  # SKILL.md Step 1 says what to do on paragraphs=0.
     summary = (
-        f"{debug['query_count']} sub-queries → {paragraphs} paragraphs "
+        f"{queries} sub-queries → {paragraphs} paragraphs "
         f"→ {len(evidence)} papers cited by the judge"
     )
     print()

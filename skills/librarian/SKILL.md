@@ -33,8 +33,10 @@ bypass workspace policies. If approval is denied, stop and report the denial.
 Network access is not permission to use web search.
 
 A failed connectivity check means no child was launched: retry with approved
-network access instead of waiting. A model timeout means the child was stopped
-after 180 seconds: report the timeout rather than continuing to poll.
+network access instead of waiting. Each child session is stopped after 180
+seconds. A failed or timed-out judge session only costs that batch (the agent
+retries it in halves); a failed query-planning session ends the run with the
+CLI error on stderr: report it rather than retrying in a loop.
 
 ## Context boundary
 
@@ -80,6 +82,11 @@ persist between calls, and `VAR=x cmd "$VAR"` on one line leaves `$VAR` empty:
 bash "<directory containing this SKILL.md>/scripts/run.sh" search --provider <claude|codex|antigravity> "<user question>"
 ```
 
+The run usually takes about 40-80 s, but a slow provider can push it past
+several minutes, longer than a default command timeout (Claude Code's Bash tool
+stops at 120 s). Run it in the foreground with the host's longest timeout — in
+Claude Code, pass `timeout: 600000` to the Bash tool — and wait for it to finish.
+
 When installed as a plugin, that directory is
 `${CLAUDE_PLUGIN_ROOT}/skills/librarian`. Set `LIBRARIAN_PYTHON` to a Python
 interpreter that already has Librarian's dependencies if `uv` is unavailable.
@@ -116,10 +123,12 @@ Progress goes to stderr; stdout is `[Librarian] queries=N paragraphs=N relevant=
 followed by the report. Each paper's block carries a `Cite as:` line — the
 author-year markdown link Step 2 cites it with.
 
-`LIBRARIAN_CLAUDE_EFFORT` sets the child sessions' effort level; it defaults to
-`low`, which is what keeps the judge step fast. Raise it only to test whether a
-harder question needs more reasoning — the judge ranks paragraphs it has already
-been handed, so it normally does not.
+Claude child sessions run with thinking off
+(`LIBRARIAN_CLAUDE_THINKING_TOKENS=0`, passed on as `MAX_THINKING_TOKENS`) and
+`LIBRARIAN_CLAUDE_EFFORT=low`; that is what keeps them fast. Raise either only to
+test whether a harder question needs more reasoning — the judge ranks paragraphs
+it has already been handed, so it normally does not. An empty value restores the
+CLI default.
 
 Codex child sessions likewise default to `LIBRARIAN_CODEX_MODEL=gpt-5.6-luna`
 and `LIBRARIAN_CODEX_EFFORT=low`. Raise either only when benchmarking shows a
