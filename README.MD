@@ -238,7 +238,7 @@ plug in your own pieces through the constructor and `run()`:
 - `literature_source=` — your search and full-text backend (a cache, a worker
   pool, ...), implementing `LiteratureSource` in
   [`literature_search.py`](librarian/literature_search.py). The default,
-  `EuropePmcSource`, calls Europe PMC directly and fetches full texts one by one.
+  `EuropePmcSource`, calls Europe PMC directly and fetches full texts concurrently.
 - `progress_callback=` on `run()` — called with step `0`, `1`, `2` from the calling
   thread; raise from it to cancel the run.
 
