@@ -64,7 +64,7 @@ def citation_keys(evidence: list[dict[str, Any]]) -> list[str]:
         if shared[base] == 1:
             keys.append(base)
             continue
-        # ponytail: 26 same-author-same-year papers in one run would run past 'z';
+        # 26 same-author-same-year papers in one run would run past 'z';
         # switch to a numeric suffix if that ever shows up.
         keys.append(f"{base}{chr(ord('a') + used[base])}")
         used[base] += 1

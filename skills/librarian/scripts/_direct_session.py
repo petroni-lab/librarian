@@ -1,35 +1,49 @@
 """Run a fresh Claude Code, Codex, or Antigravity session for one rendered prompt.
 
-The root agent passes paths to this module, never the prompt contents. The child
-CLI receives the prompt through stdin and its final JSON response is validated
-and written locally, avoiding model Read and Write tool calls.
+The child CLI receives the prompt through stdin and its raw response is returned
+to ``CliClient`` (``search.py``), which hands it to ``LibrarianAgent`` as an LLM reply.
 """
 
 from __future__ import annotations
 
+import functools
 import os
 import json
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import _runs
-from librarian.llm_client import parse_json_response
 
 PROVIDERS = ("claude", "codex", "antigravity")
 
 
-def _response_schema(key: str) -> Dict[str, Any]:
-    """Build the Codex schema for the single list-valued response field."""
-    return {
-        "type": "object",
-        "properties": {key: {"type": "array", "items": {"type": "string"}}},
-        "required": [key],
-        "additionalProperties": False,
-    }
+class CliSessionError(RuntimeError):
+    """A child CLI session failed.
+
+    A ``RuntimeError``, not ``SystemExit``, so it fails one LLM call: the agent's
+    judge logs it and splits the batch, and only a query-planning failure ends
+    the run (``search.py`` turns that into the exit message).
+    """
+
+
+# Codex and AGY need a fixed reply schema, but the agent's prompts do not say
+# which reply they want in a machine-readable way. One schema carries both keys
+# the agent reads (query planning: ``queries``; judge: ``relevant_ids``); the
+# prompt names the one to fill, and the other comes back empty and is ignored.
+# Codex's strict schemas require every property, hence both in ``required``.
+_RESPONSE_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        key: {"type": "array", "items": {"type": "string"}}
+        for key in ("queries", "relevant_ids")
+    },
+    "required": ["queries", "relevant_ids"],
+    "additionalProperties": False,
+}
 
 
 # Where installers and desktop apps put each CLI when it is not on the host's
@@ -55,34 +69,22 @@ def _require_cli(provider: str) -> str:
         path = Path(candidate).expanduser()
         if os.access(path, os.X_OK):
             return str(path)
-    raise SystemExit(f"{provider} CLI ({cli}) is not installed or not on PATH.")
-
-
-def _validate_response(raw_response: str, key: str) -> Dict[str, List[str]]:
-    """Parse and validate the one-field JSON object returned by the model."""
-    parsed = parse_json_response(raw_response)
-    values = parsed.get(key) if isinstance(parsed, dict) else None
-    if not isinstance(values, list) or not all(
-        isinstance(value, str) for value in values
-    ):
-        raise SystemExit(
-            f"Model response must be a JSON object with a string-array '{key}'."
-        )
-    return {key: values}
+    raise CliSessionError(f"{provider} CLI ({cli}) is not installed or not on PATH.")
 
 
 def _claude_command(executable: str) -> List[str]:
     """Build a one-turn Claude Code command with no inherited project context.
 
-    ``--effort`` is the one knob that matters for latency here. Both prompts ask
-    for a single JSON object from material already in front of the model — the
-    planner picks query strings, the judge ranks paragraphs it can read — so
-    extended thinking buys nothing and costs a lot: on a 173 KB judge batch the
-    default effort spent ~5k thinking tokens and 55 s, ``low`` spent none and
-    took 9 s, and the two returned the same paragraphs. It also keeps a large
-    batch clear of the 180-second timeout in ``_run_command``. Override with
-    ``LIBRARIAN_CLAUDE_EFFORT`` (low, medium, high, xhigh, max); an empty value
-    drops the flag and restores the CLI default.
+    Thinking is the latency knob. Both prompts ask for a single JSON object from
+    material already in front of the model — the planner picks query strings, the
+    judge ranks paragraphs it can read — so extended thinking buys nothing. The
+    child environment sets ``MAX_THINKING_TOKENS`` from
+    ``LIBRARIAN_CLAUDE_THINKING_TOKENS`` (default ``0``): ``--effort low`` alone
+    still spent 5-11k hidden tokens (75-105 s) on a ~100-token query reply, and
+    ``0`` brings it to ~4 s. ``--effort`` is kept as a secondary cap, and keeps a
+    large batch clear of the 180-second timeout in ``_run_command``. Override with
+    ``LIBRARIAN_CLAUDE_EFFORT`` (low, medium, high, xhigh, max). An empty value
+    for either variable restores the CLI default.
     """
     command = [
         executable,
@@ -103,7 +105,7 @@ def _claude_command(executable: str) -> List[str]:
     return command
 
 
-def _antigravity_command(executable: str, output_key: str) -> List[str]:
+def _antigravity_command(executable: str) -> List[str]:
     """Build a one-turn AGY command on a fast, explicitly chosen model.
 
     AGY bakes the reasoning tier into the model slug, so picking the model is
@@ -136,7 +138,7 @@ def _antigravity_command(executable: str, output_key: str) -> List[str]:
         "--output-format",
         "stream-json",
         "--json-schema",
-        json.dumps(_response_schema(output_key)),
+        json.dumps(_RESPONSE_SCHEMA),
     ]
     model = os.environ.get("LIBRARIAN_ANTIGRAVITY_MODEL", "gemini-3.7-flash-low").strip()
     if model:
@@ -234,7 +236,7 @@ def _run_command(
     :return: Completed child process result.
     :rtype: subprocess.CompletedProcess[str]
     """
-    print("[Librarian] Starting model session (180-second timeout).", flush=True)
+    print("[Librarian] Starting model session (180-second timeout).", file=sys.stderr)
     with prompt_path.open(encoding="utf-8") as prompt_file:
         try:
             return subprocess.run(
@@ -248,7 +250,7 @@ def _run_command(
             )
         except subprocess.TimeoutExpired:
             # Raw CLI diagnostics may echo the prompt; keep that context private.
-            raise SystemExit(
+            raise CliSessionError(
                 "Model session timed out after 180 seconds and was stopped. "
                 "Check model-provider connectivity and retry with approved network "
                 "access. Do not keep waiting or fall back to web search."
@@ -270,38 +272,44 @@ def _antigravity_response(raw_output: str) -> str:
             raise ValueError
         return response
     except (ValueError, KeyError, TypeError, AttributeError):
-        raise SystemExit("Antigravity did not return one successful model response.") from None
+        raise CliSessionError("Antigravity did not return one successful model response.") from None
 
 
-def run_direct_session(
-    provider: str,
-    prompt_path: Path,
-    output_path: Path,
-    output_key: str,
-) -> None:
-    """Run a fresh CLI model session and save its validated JSON response.
+@functools.cache
+def _check_codex_network() -> None:
+    """Fail fast if chatgpt.com is unreachable, before Codex's long reconnect loop.
+
+    Cached, so it probes once per process rather than once per judge batch; a
+    failure raises and is not cached, so a later call probes again.
+    """
+    print("[Librarian] Checking Codex network access...", file=sys.stderr)
+    try:
+        with socket.create_connection(("chatgpt.com", 443), timeout=5):
+            pass
+    except OSError as error:
+        raise CliSessionError(
+            f"Codex cannot reach chatgpt.com:443: {error}. "
+            "Retry this command with approved network access "
+            "(exec_command sandbox_permissions='require_escalated'), "
+            "or run it in your normal terminal. Do not fall back to web search."
+        ) from None
+
+
+def run_direct_session(provider: str, prompt_path: Path) -> str:
+    """Run a fresh CLI model session and return its raw response text.
 
     :param provider: CLI provider: ``claude``, ``codex``, or ``antigravity``.
     :param prompt_path: Rendered prompt file streamed directly to the child CLI.
-    :param output_path: JSON hand-off file consumed by the next pipeline step.
-    :param output_key: Required list field in the model response.
+    :return: The model's reply, unparsed (``LibrarianAgent`` parses it).
+    :rtype: str
+    :raises CliSessionError: The CLI is missing, timed out, exited non-zero, or
+        returned no usable reply.
     """
     if provider not in PROVIDERS:
-        raise SystemExit(f"provider must be one of {', '.join(PROVIDERS)}.")
+        raise CliSessionError(f"provider must be one of {', '.join(PROVIDERS)}.")
     executable = _require_cli(provider)
     if provider == "codex":
-        # The isolated Codex CLI uses ChatGPT; fail before its long reconnect loop.
-        print("[Librarian] Checking Codex network access...", flush=True)
-        try:
-            with socket.create_connection(("chatgpt.com", 443), timeout=5):
-                pass
-        except OSError as error:
-            raise SystemExit(
-                f"Codex cannot reach chatgpt.com:443: {error}. "
-                "Retry this command with approved network access "
-                "(exec_command sandbox_permissions='require_escalated'), "
-                "or run it in your normal terminal. Do not fall back to web search."
-            ) from None
+        _check_codex_network()
     if provider == "antigravity":
         # AGY accepts stdin prompts as user events; EOF ends this fresh session.
         with tempfile.TemporaryDirectory(dir=prompt_path.parent) as temporary_directory:
@@ -311,18 +319,22 @@ def run_direct_session(
                 "message": {"content": prompt_path.read_text(encoding="utf-8")},
             }) + "\n", encoding="utf-8")
             completed = _run_command(
-                _antigravity_command(executable, output_key), input_path
+                _antigravity_command(executable), input_path
             )
         raw_response = completed.stdout
     elif provider == "claude":
-        completed = _run_command(_claude_command(executable), prompt_path)
+        thinking = os.environ.get("LIBRARIAN_CLAUDE_THINKING_TOKENS", "0").strip()
+        environment = dict(os.environ)
+        if thinking:
+            environment["MAX_THINKING_TOKENS"] = thinking
+        completed = _run_command(_claude_command(executable), prompt_path, environment)
         raw_response = completed.stdout
     elif provider == "codex":
         with tempfile.TemporaryDirectory(dir=prompt_path.parent) as temporary_directory:
             temporary_path = Path(temporary_directory)
             schema_path = temporary_path / "response_schema.json"
             response_path = temporary_path / "response.json"
-            _runs.write_json(schema_path, _response_schema(output_key))
+            schema_path.write_text(json.dumps(_RESPONSE_SCHEMA), encoding="utf-8")
             command = _codex_command(
                 executable,
                 prompt_path,
@@ -338,7 +350,7 @@ def run_direct_session(
             )
     if completed.returncode != 0:
         message = completed.stderr.strip() or completed.stdout.strip()
-        raise SystemExit(f"{provider} session failed: {message}")
+        raise CliSessionError(f"{provider} session failed: {message}")
     if provider == "antigravity":
         raw_response = _antigravity_response(raw_response)
-    _runs.write_json(output_path, _validate_response(raw_response, output_key))
+    return raw_response
