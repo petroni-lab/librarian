@@ -37,6 +37,9 @@ _PERMANENT_CONFIRM_DELAY_S = 0.5
 # cores. One module-level pool shared by every sub-query thread: this is the
 # total number of concurrent full-text requests Europe PMC sees, not a per-caller
 # limit. Same value as bio-agents' libs/literature_search.py.
+# This is the supported override (ablation and load-test scripts set it): assign
+# librarian.literature_search._FULLTEXT_WORKERS before the first fetch, because
+# the pool is built once, on first use, and keeps that size for the process.
 _FULLTEXT_WORKERS = 8
 _fulltext_pool: "ThreadPoolExecutor | None" = None
 _fulltext_pool_lock = threading.Lock()
@@ -157,8 +160,9 @@ class Fulltext:
 
     pmcid: str
     xml: str = ""
-    status: "int | None" = None
     error: str = ""
+    # Last, so a positional Fulltext(pmcid, xml, error) still lands in error.
+    status: "int | None" = None
 
     @property
     def ok(self) -> bool:
@@ -184,7 +188,12 @@ def normalize_pmcid(pmcid: str) -> str:
 
 
 def _attempt_fulltext(pmcid: str) -> Fulltext:
-    """One GET for *pmcid*, with no retry."""
+    """One GET for *pmcid*, with no retry.
+
+    Unlike search, 429/5xx are not retried: the paper just stays abstract-only.
+    With ``_FULLTEXT_WORKERS`` requests in flight rate limits are likelier, so
+    if "full-text unavailable" logs show them, reuse the search retry loop here.
+    """
     try:
         response = requests.get(_FULLTEXT_URL.format(pmcid=pmcid), timeout=30)
         # Without this a 404 page would come back as if it were the XML.
