@@ -226,17 +226,21 @@ def _codex_environment(runtime_path: Path) -> Dict[str, str]:
 
 
 def _run_command(
-    command: List[str], prompt_path: Path, environment: Optional[Dict[str, str]] = None
+    command: List[str],
+    prompt_path: Path,
+    environment: Optional[Dict[str, str]] = None,
+    timeout: float = 180,
 ) -> subprocess.CompletedProcess[str]:
     """Run one CLI session with the rendered prompt streamed from disk.
 
     :param command: Fully formed provider CLI command.
     :param prompt_path: Rendered brief provided as the CLI standard input.
     :param environment: Optional environment overrides for the child process.
+    :param timeout: Seconds before the child is stopped.
     :return: Completed child process result.
     :rtype: subprocess.CompletedProcess[str]
     """
-    print("[Librarian] Starting model session (180-second timeout).", file=sys.stderr)
+    print(f"[Librarian] Starting model session ({timeout:.0f}-second timeout).", file=sys.stderr)
     with prompt_path.open(encoding="utf-8") as prompt_file:
         try:
             return subprocess.run(
@@ -246,12 +250,12 @@ def _run_command(
                 env=environment,
                 text=True,
                 check=False,
-                timeout=180,
+                timeout=timeout,
             )
         except subprocess.TimeoutExpired:
             # Raw CLI diagnostics may echo the prompt; keep that context private.
             raise CliSessionError(
-                "Model session timed out after 180 seconds and was stopped. "
+                f"Model session timed out after {timeout:.0f} seconds and was stopped. "
                 "Check model-provider connectivity and retry with approved network "
                 "access. Do not keep waiting or fall back to web search."
             ) from None
@@ -295,11 +299,12 @@ def _check_codex_network() -> None:
         ) from None
 
 
-def run_direct_session(provider: str, prompt_path: Path) -> str:
+def run_direct_session(provider: str, prompt_path: Path, timeout: float = 180) -> str:
     """Run a fresh CLI model session and return its raw response text.
 
     :param provider: CLI provider: ``claude``, ``codex``, or ``antigravity``.
     :param prompt_path: Rendered prompt file streamed directly to the child CLI.
+    :param timeout: Seconds before the child session is stopped.
     :return: The model's reply, unparsed (``LibrarianAgent`` parses it).
     :rtype: str
     :raises CliSessionError: The CLI is missing, timed out, exited non-zero, or
@@ -319,7 +324,7 @@ def run_direct_session(provider: str, prompt_path: Path) -> str:
                 "message": {"content": prompt_path.read_text(encoding="utf-8")},
             }) + "\n", encoding="utf-8")
             completed = _run_command(
-                _antigravity_command(executable), input_path
+                _antigravity_command(executable), input_path, timeout=timeout
             )
         raw_response = completed.stdout
     elif provider == "claude":
@@ -327,7 +332,9 @@ def run_direct_session(provider: str, prompt_path: Path) -> str:
         environment = dict(os.environ)
         if thinking:
             environment["MAX_THINKING_TOKENS"] = thinking
-        completed = _run_command(_claude_command(executable), prompt_path, environment)
+        completed = _run_command(
+            _claude_command(executable), prompt_path, environment, timeout
+        )
         raw_response = completed.stdout
     elif provider == "codex":
         with tempfile.TemporaryDirectory(dir=prompt_path.parent) as temporary_directory:
@@ -342,7 +349,7 @@ def run_direct_session(provider: str, prompt_path: Path) -> str:
                 response_path,
             )
             environment = _codex_environment(temporary_path)
-            completed = _run_command(command, prompt_path, environment)
+            completed = _run_command(command, prompt_path, environment, timeout)
             raw_response = (
                 response_path.read_text(encoding="utf-8")
                 if response_path.exists()

@@ -34,9 +34,11 @@ Network access is not permission to use web search.
 
 A failed connectivity check means no child was launched: retry with approved
 network access instead of waiting. Each child session is stopped after 180
-seconds. A failed or timed-out judge session only costs that batch (the agent
-retries it in halves); a failed query-planning session ends the run with the
-CLI error on stderr: report it rather than retrying in a loop.
+seconds, and the whole run after 540. A failed or timed-out judge session only
+costs that batch (the agent retries it in halves) and prints a `WARNING: ...
+judge call(s) failed` line on stderr: tell the user the evidence may be
+incomplete. If every judge call fails, or query planning fails, the script
+exits non-zero with the CLI error: report it rather than retrying in a loop.
 
 ## Context boundary
 
@@ -82,9 +84,8 @@ persist between calls, and `VAR=x cmd "$VAR"` on one line leaves `$VAR` empty:
 bash "<directory containing this SKILL.md>/scripts/run.sh" search --provider <claude|codex|antigravity> "<user question>"
 ```
 
-The run usually takes about 40-80 s, but a slow provider can push it past
-several minutes, longer than a default command timeout (Claude Code's Bash tool
-stops at 120 s). Run it in the foreground with the host's longest timeout — in
+A run usually takes 1.5-3 min (provider-dependent) and is capped at 540 s, longer than a
+default command timeout (Claude Code's Bash tool stops at 120 s). Run it in the foreground with the host's longest timeout — in
 Claude Code, pass `timeout: 600000` to the Bash tool — and wait for it to finish.
 
 When installed as a plugin, that directory is

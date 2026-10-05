@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import librarian
@@ -33,20 +34,44 @@ from librarian.citations import render_report
 SUMMARIZER = Path(librarian.__file__).parent / "prompts" / "summarizer.md"
 
 
+# Whole-run wall clock, under the 600 s host timeout SKILL.md asks for. The
+# judge retries a failed batch in halves, one after the other, so a hung
+# provider would otherwise cost 7 x 180 s for a single batch.
+RUN_BUDGET_SECONDS = 540
+SESSION_TIMEOUT_SECONDS = 180
+
+
 class CliClient:
-    """The ``chat_completion`` shape ``LibrarianAgent`` needs, backed by a CLI session."""
+    """The ``chat_completion`` shape ``LibrarianAgent`` needs, backed by a CLI session.
+
+    Every failed call is kept in ``errors``: the agent's judge swallows them
+    (it logs only when verbose), so ``main`` reports them itself.
+    """
 
     def __init__(self, provider: str):
         self.provider = provider
+        self.deadline = time.monotonic() + RUN_BUDGET_SECONDS
+        self.errors: list[str] = []
 
     # temperature/max_tokens are ignored: a one-shot CLI session exposes neither.
     def chat_completion(self, messages, temperature=0.0, max_tokens=0) -> str:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "prompt.md"
-            path.write_text(
-                "\n\n".join(m["content"] for m in messages) + "\n", encoding="utf-8"
-            )
-            return run_direct_session(self.provider, path)
+        try:
+            remaining = self.deadline - time.monotonic()
+            if remaining < 10:
+                raise CliSessionError(
+                    f"run budget of {RUN_BUDGET_SECONDS} s used up; model call skipped."
+                )
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "prompt.md"
+                path.write_text(
+                    "\n\n".join(m["content"] for m in messages) + "\n", encoding="utf-8"
+                )
+                return run_direct_session(
+                    self.provider, path, min(SESSION_TIMEOUT_SECONDS, remaining)
+                )
+        except CliSessionError as exc:
+            self.errors.append(str(exc))
+            raise
 
 
 def main() -> int:
@@ -58,9 +83,8 @@ def main() -> int:
     if not query:
         parser.error("query must not be empty")
 
-    agent = LibrarianAgent(
-        runtime_config=load_runtime_config(), llm_client=CliClient(args.provider)
-    )
+    client = CliClient(args.provider)
+    agent = LibrarianAgent(runtime_config=load_runtime_config(), llm_client=client)
     try:
         evidence = agent.run(
             query, on_progress=lambda m: print(f"[Librarian] {m}", file=sys.stderr)
@@ -68,6 +92,14 @@ def main() -> int:
     except CliSessionError as exc:
         # Query planning has no fallback, so its CLI failure ends the run.
         raise SystemExit(f"[Librarian] {exc}") from None
+    if client.errors:
+        failed = f"{len(client.errors)} judge call(s) failed: " + " | ".join(
+            dict.fromkeys(client.errors)
+        )
+        if not evidence:
+            # Every judge call failed: an empty report would read as "no papers".
+            raise SystemExit(f"[Librarian] {failed}")
+        print(f"[Librarian] WARNING: {failed} Evidence may be incomplete.", file=sys.stderr)
     debug = agent.last_run_debug
     # paragraph_count is absent when the agent returns early on no paragraphs.
     queries, paragraphs = len(debug["search_queries"]), debug.get("paragraph_count", 0)

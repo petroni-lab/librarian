@@ -494,7 +494,12 @@ def _group_contiguous_spans(sentences: List[_Sentence]) -> List[str]:
 
 
 class LibrarianAgent:
-    """Retrieves and ranks evidence for a research question."""
+    """Retrieves and ranks evidence for a research question.
+
+    The librarian skill drives this class with a CLI-session LLM client; see
+    ``skills/librarian/scripts/search.py`` for what it relies on before changing
+    prompts, reply keys or ``last_run_debug``.
+    """
 
     def __init__(
         self,
