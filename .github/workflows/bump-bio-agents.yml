@@ -1,0 +1,57 @@
+# Keeps petroni-lab/bio-agents on librarian main: every push here rewrites the SHA in
+# bio-agents' requirements-librarian.txt on the branch bot/bump-librarian and opens a PR
+# if none is open. This workflow never merges; bio-agents merges the PR once its checks pass.
+name: Bump librarian in bio-agents
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: bump-bio-agents
+  cancel-in-progress: true # a newer push supersedes an in-flight bump
+permissions: {}
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      # A GitHub App token, not GITHUB_TOKEN: GITHUB_TOKEN can't write to another repo,
+      # and PRs it opens don't trigger bio-agents' checks.
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.BIO_AGENTS_BUMP_APP_ID }}
+          private-key: ${{ secrets.BIO_AGENTS_BUMP_APP_PRIVATE_KEY }}
+          owner: petroni-lab
+          repositories: bio-agents
+      - uses: actions/checkout@v6
+        with:
+          repository: petroni-lab/bio-agents
+          token: ${{ steps.app-token.outputs.token }}
+      - id: pin
+        name: Rewrite the pin
+        run: |
+          f=requirements-librarian.txt
+          [ -f "$f" ] || { echo "bio-agents has no $f; nothing to bump"; exit 0; }
+          sed -i -E "s#(librarian/archive/)[0-9a-f]{40}(\.tar\.gz)#\1${GITHUB_SHA}\2#" "$f"
+          grep -q "$GITHUB_SHA" "$f" || { echo "pin line not found in $f"; exit 1; }
+          git diff --quiet && { echo "already pinned"; exit 0; }
+          git config user.name "librarian-bump[bot]"
+          git config user.email "librarian-bump[bot]@users.noreply.github.com"
+          git switch -C bot/bump-librarian
+          git commit -am "chore: bump librarian to ${GITHUB_SHA::7}" \
+            -m "https://github.com/petroni-lab/librarian/commit/${GITHUB_SHA}"
+          git push --force origin bot/bump-librarian
+          echo "pushed=1" >> "$GITHUB_OUTPUT"
+      - name: Open the PR if none is open
+        if: steps.pin.outputs.pushed == '1'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          # `gh pr view <branch>` also finds merged/closed PRs, so list open ones explicitly.
+          open=$(gh pr list --repo petroni-lab/bio-agents --head bot/bump-librarian \
+            --state open --json number --jq length)
+          if [ "$open" = "0" ]; then
+            gh pr create --repo petroni-lab/bio-agents --head bot/bump-librarian --base main \
+              --title "chore: bump librarian to latest main" \
+              --body "Automated: pins librarian to the latest commit on petroni-lab/librarian main. merge-librarian-bump.yml merges it when lint and tests pass."
+          fi
