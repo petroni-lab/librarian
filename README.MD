@@ -239,6 +239,10 @@ plug in your own pieces through the constructor and `run()`:
   pool, ...), implementing `LiteratureSource` in
   [`literature_search.py`](librarian/literature_search.py). The default,
   `EuropePmcSource`, calls Europe PMC directly and fetches full texts concurrently.
+  To cache full texts across runs (failures too, on a shorter TTL), install
+  `librarian[cache]` and pass
+  `CachedEuropePmcSource(DiskCacheBackend("/path/to/cache"))`, or give it your own
+  `CacheBackend` (anything with `get(key)` and `set(key, value, expire_seconds)`).
 - `progress_callback=` on `run()` — called with step `0`, `1`, `2` from the calling
   thread; raise from it to cancel the run.
 

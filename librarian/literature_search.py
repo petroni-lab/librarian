@@ -11,16 +11,23 @@ texts through; ``EuropePmcSource`` is the default implementation built on the
 plain functions in this module. An embedding application can pass its own
 source (with a cache, a worker pool, ...) as
 ``LibrarianAgent(literature_source=...)``.
+
+``CachedEuropePmcSource`` is that source with a look-aside full-text cache in
+front of the fetch. It works with any ``CacheBackend``; ``DiskCacheBackend``
+(``pip install librarian[cache]``) is the one shipped here.
 """
 
+import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Protocol
+from typing import Any, Dict, Iterable, List, Optional, Protocol
 from urllib.parse import quote
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 _SEARCH_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 # Europe PMC full-text fetch endpoint (PMC id -> JATS XML).
@@ -163,6 +170,8 @@ class Fulltext:
     error: str = ""
     # Last, so a positional Fulltext(pmcid, xml, error) still lands in error.
     status: "int | None" = None
+    # True when CachedEuropePmcSource served this outcome without a request.
+    from_cache: bool = False
 
     @property
     def ok(self) -> bool:
@@ -296,6 +305,185 @@ class EuropePmcSource:
     def fetch_fulltext_many(self, pmcids: Iterable[str]) -> Dict[str, Fulltext]:
         """Fetch full texts concurrently (see ``fetch_fulltext_many``)."""
         return fetch_fulltext_many(pmcids)
+
+
+class CacheBackend(Protocol):
+    """Key/value store ``CachedEuropePmcSource`` keeps fetch outcomes in.
+
+    Values are plain JSON-able dicts. Both methods must be best-effort: a
+    backend that is down returns ``None`` from ``get`` and drops the ``set``,
+    so a cache outage degrades to live requests instead of failing the run.
+    """
+
+    def get(self, key: str) -> Any:
+        """The stored value for *key*, or None on a miss."""
+        ...
+
+    def set(self, key: str, value: Any, expire_seconds: int) -> None:
+        """Store *value* under *key* for *expire_seconds*."""
+        ...
+
+
+class DiskCacheBackend:
+    """``CacheBackend`` on a local diskcache (SQLite) directory.
+
+    Needs the optional dependency: ``pip install librarian[cache]``.
+    diskcache caps the directory at 1 GB by default and evicts the oldest
+    entries past that, so the cache never grows without bound.
+    """
+
+    def __init__(self, directory: str) -> None:
+        """Open (or create) the cache in *directory*.
+
+        :param directory: Where diskcache keeps its SQLite files.
+        :type directory: str
+        """
+        # Imported here so the base install never needs diskcache.
+        import diskcache
+
+        # diskcache's `timeout` kwarg is the SQLite busy-timeout, not a TTL;
+        # entry lifetime is the expire_seconds passed to set().
+        self._cache = diskcache.Cache(directory)
+        # Concurrent SQLite writes from the fetch pool can raise "database is
+        # locked"; serialise only the writes, reads and requests stay parallel.
+        self._write_lock = threading.Lock()
+        self._warned = False
+
+    def _warn_once(self, exc: Exception) -> None:
+        # One warning per backend, so a broken cache doesn't spam every fetch.
+        if not self._warned:
+            logger.warning("full-text cache unavailable (%s); fetching live", exc)
+            self._warned = True
+
+    def get(self, key: str) -> Any:
+        """The stored value for *key*, or None on a miss or a broken cache."""
+        try:
+            return self._cache.get(key)
+        except Exception as exc:  # corrupt/locked db -> treat as a miss
+            self._warn_once(exc)
+            return None
+
+    def set(self, key: str, value: Any, expire_seconds: int) -> None:
+        """Store *value* under *key*; a failed write is logged once and dropped."""
+        try:
+            with self._write_lock:
+                self._cache.set(key, value, expire=expire_seconds)
+        except Exception as exc:  # best-effort write, never break retrieval
+            self._warn_once(exc)
+
+
+def _fulltext_cache_key(pmcid: str) -> str:
+    # Literal normalised PMCID: one paper, one key, however its id was spelled.
+    return "epmc:ft:" + normalize_pmcid(pmcid)
+
+
+def _fulltext_from_entry(pmcid: str, entry: Any) -> Optional[Fulltext]:
+    # A bare string is the format from before failures were cached: a success.
+    if isinstance(entry, str):
+        return Fulltext(pmcid=pmcid, xml=entry, status=200, from_cache=True)
+    if isinstance(entry, dict):
+        return Fulltext(
+            pmcid=pmcid,
+            xml=str(entry.get("xml") or ""),
+            error=str(entry.get("error") or ""),
+            status=entry.get("status"),
+            from_cache=True,
+        )
+    return None
+
+
+class CachedEuropePmcSource(EuropePmcSource):
+    """``EuropePmcSource`` with a look-aside cache in front of the full-text fetch.
+
+    Failures are cached too, because ~15% of the papers Europe PMC flags as
+    open access have no fetchable full text. On a read:
+
+    - a cached success is returned as-is;
+    - a cached permanent failure (400/403/404/410, already confirmed by
+      ``fetch_fulltext``) is returned without a request;
+    - a cached transient failure (429/5xx, timeout, connection error) is
+      fetched again, and the new outcome replaces it.
+
+    Failures expire on a shorter clock than successes, so a paper that becomes
+    open access later is not skipped for the full success TTL. Search is not
+    cached.
+    """
+
+    def __init__(
+        self,
+        backend: CacheBackend,
+        ttl_days: float = 60,
+        negative_ttl_days: float = 7,
+    ) -> None:
+        """Wrap Europe PMC with *backend*.
+
+        :param backend: Where outcomes are stored (e.g. ``DiskCacheBackend``).
+        :type backend: CacheBackend
+        :param ttl_days: Lifetime of a cached success.
+        :type ttl_days: float
+        :param negative_ttl_days: Lifetime of a cached failure.
+        :type negative_ttl_days: float
+        """
+        self.backend = backend
+        self.ttl_days = ttl_days
+        self.negative_ttl_days = negative_ttl_days
+
+    def get_cached_fulltext(self, pmcid: str) -> Optional[Fulltext]:
+        """The cached outcome for *pmcid*, or None on a miss.
+
+        :param pmcid: A PMC id in any form.
+        :type pmcid: str
+        :return: The cached success or failure, with ``from_cache`` set.
+        :rtype: Fulltext or None
+        """
+        normalized = normalize_pmcid(pmcid)
+        entry = self.backend.get(_fulltext_cache_key(normalized))
+        cached = _fulltext_from_entry(normalized, entry) if entry is not None else None
+        logger.debug(
+            "full-text cache %s pmcid=%s",
+            "miss" if cached is None else ("hit" if cached.ok else cached.status),
+            normalized,
+        )
+        return cached
+
+    def set_cached_fulltext(self, result: Fulltext) -> None:
+        """Store one fetch outcome, success or failure, under its own TTL.
+
+        :param result: The outcome to cache.
+        :type result: Fulltext
+        """
+        ttl_days = self.ttl_days if result.ok else self.negative_ttl_days
+        entry = {"xml": result.xml, "status": result.status, "error": result.error}
+        self.backend.set(
+            _fulltext_cache_key(result.pmcid), entry, int(ttl_days * 86400)
+        )
+
+    def fetch_fulltext_many(self, pmcids: Iterable[str]) -> Dict[str, Fulltext]:
+        """Serve what the cache settles, fetch the rest on the shared pool.
+
+        :param pmcids: PMC ids in any form; blanks are dropped.
+        :type pmcids: Iterable[str]
+        :return: One ``Fulltext`` per distinct id, successes and failures alike.
+        :rtype: Dict[str, Fulltext]
+        """
+        unique = list(
+            dict.fromkeys(normalize_pmcid(p) for p in pmcids if str(p or "").strip())
+        )
+        results: Dict[str, Fulltext] = {}
+        misses: List[str] = []
+        # ponytail: cache reads run serially before the pool; each is a local or
+        # one-round-trip lookup. Move them into the pool if they ever show in traces.
+        for pmcid in unique:
+            cached = self.get_cached_fulltext(pmcid)
+            if cached is not None and (cached.ok or cached.permanent):
+                results[pmcid] = cached
+            else:
+                misses.append(pmcid)
+        fetched = super().fetch_fulltext_many(misses)
+        for pmcid, result in fetched.items():
+            self.set_cached_fulltext(result)
+            results[pmcid] = result
+        return results
 
 
 if __name__ == "__main__":
