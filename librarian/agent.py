@@ -41,7 +41,7 @@ import pysbd
 from librarian.config import LibrarianRuntimeConfig
 from librarian.jats import extract_body_paragraphs
 from librarian.literature_search import (
-    EuropePmcSource,
+    default_literature_source,
     Fulltext,
     LiteratureSource,
     normalize_pmcid,
@@ -540,7 +540,8 @@ class LibrarianAgent:
         :type llm_client: object or None
         :param literature_source: Where papers and full texts come from (see
             ``literature_search.LiteratureSource``). Defaults to
-            ``EuropePmcSource`` (plain Europe PMC REST calls, no cache).
+            ``default_literature_source()``: Europe PMC with full texts
+            cached on disk (``LIBRARIAN_CACHE_DIR=off`` to disable).
         :type literature_source: LiteratureSource or None
         """
         # Full text is the default retrieval path; the flag is kept for harness
@@ -580,7 +581,9 @@ class LibrarianAgent:
             )
         )
         self._source: LiteratureSource = (
-            literature_source if literature_source is not None else EuropePmcSource()
+            literature_source
+            if literature_source is not None
+            else default_literature_source()
         )
         self._query_prompt = _QUERY_PROMPT_PATH.read_text(encoding="utf-8")
         self._filter_prompt = _FILTER_PROMPT_PATH.read_text(encoding="utf-8")

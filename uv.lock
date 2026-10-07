@@ -219,6 +219,7 @@ version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "bm25s" },
+    { name = "diskcache" },
     { name = "fastapi" },
     { name = "mashumaro", extra = ["toml"] },
     { name = "pysbd" },
@@ -228,15 +229,10 @@ dependencies = [
     { name = "uvicorn" },
 ]
 
-[package.optional-dependencies]
-cache = [
-    { name = "diskcache" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "bm25s", specifier = ">=0.2" },
-    { name = "diskcache", marker = "extra == 'cache'", specifier = ">=5.6" },
+    { name = "diskcache", specifier = ">=5.6" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "mashumaro", extras = ["toml"], specifier = ">=3.22" },
     { name = "pysbd", specifier = ">=0.3" },
@@ -245,7 +241,6 @@ requires-dist = [
     { name = "requests", specifier = ">=2.31" },
     { name = "uvicorn", specifier = ">=0.27" },
 ]
-provides-extras = ["cache"]
 
 [[package]]
 name = "mashumaro"

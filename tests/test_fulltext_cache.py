@@ -165,7 +165,6 @@ def test_mixed_batch_dedupes_and_only_fetches_misses(source, backend, monkeypatc
 
 def test_disk_backend_round_trips(tmp_path):
     """DiskCacheBackend stores and returns a cache entry unchanged."""
-    pytest.importorskip("diskcache")
     disk = DiskCacheBackend(str(tmp_path))
     entry = {"xml": "<a/>", "status": 200, "error": ""}
 
@@ -173,3 +172,33 @@ def test_disk_backend_round_trips(tmp_path):
 
     assert disk.get("epmc:ft:PMC1") == entry
     assert disk.get("epmc:ft:PMC2") is None
+
+
+def test_default_source_caches_on_disk(tmp_path, monkeypatch):
+    """With no configuration the agent's default source is the disk cache."""
+    monkeypatch.setenv("LIBRARIAN_CACHE_DIR", str(tmp_path))
+
+    source = literature_search.default_literature_source()
+
+    assert isinstance(source, CachedEuropePmcSource)
+    assert isinstance(source.backend, DiskCacheBackend)
+
+
+def test_default_source_off_switch(monkeypatch):
+    """LIBRARIAN_CACHE_DIR=off gives plain, uncached Europe PMC requests."""
+    monkeypatch.setenv("LIBRARIAN_CACHE_DIR", "off")
+
+    source = literature_search.default_literature_source()
+
+    assert not isinstance(source, CachedEuropePmcSource)
+
+
+def test_default_source_survives_an_unopenable_directory(tmp_path, monkeypatch):
+    """A cache that cannot be created falls back to uncached, never raises."""
+    blocker = tmp_path / "a-file"
+    blocker.write_text("")
+    monkeypatch.setenv("LIBRARIAN_CACHE_DIR", str(blocker / "cache"))
+
+    source = literature_search.default_literature_source()
+
+    assert not isinstance(source, CachedEuropePmcSource)

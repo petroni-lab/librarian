@@ -13,11 +13,14 @@ source (with a cache, a worker pool, ...) as
 ``LibrarianAgent(literature_source=...)``.
 
 ``CachedEuropePmcSource`` is that source with a look-aside full-text cache in
-front of the fetch. It works with any ``CacheBackend``; ``DiskCacheBackend``
-(``pip install librarian[cache]``) is the one shipped here.
+front of the fetch. It works with any ``CacheBackend``; ``DiskCacheBackend`` is
+the one shipped here. ``default_literature_source`` is what ``LibrarianAgent``
+uses when given no source: the disk cache under ``~/.cache/librarian``, moved
+with ``LIBRARIAN_CACHE_DIR`` and turned off with ``LIBRARIAN_CACHE_DIR=off``.
 """
 
 import logging
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -25,6 +28,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Protocol
 from urllib.parse import quote
 
+import diskcache
 import requests
 
 logger = logging.getLogger(__name__)
@@ -327,7 +331,6 @@ class CacheBackend(Protocol):
 class DiskCacheBackend:
     """``CacheBackend`` on a local diskcache (SQLite) directory.
 
-    Needs the optional dependency: ``pip install librarian[cache]``.
     diskcache caps the directory at 1 GB by default and evicts the oldest
     entries past that, so the cache never grows without bound.
     """
@@ -338,9 +341,6 @@ class DiskCacheBackend:
         :param directory: Where diskcache keeps its SQLite files.
         :type directory: str
         """
-        # Imported here so the base install never needs diskcache.
-        import diskcache
-
         # diskcache's `timeout` kwarg is the SQLite busy-timeout, not a TTL;
         # entry lifetime is the expire_seconds passed to set().
         self._cache = diskcache.Cache(directory)
@@ -484,6 +484,31 @@ class CachedEuropePmcSource(EuropePmcSource):
             self.set_cached_fulltext(result)
             results[pmcid] = result
         return results
+
+
+def default_literature_source() -> EuropePmcSource:
+    """The source ``LibrarianAgent`` uses when the caller passes none.
+
+    Full texts are cached on disk in ``$LIBRARIAN_CACHE_DIR``, by default
+    ``$XDG_CACHE_HOME/librarian`` (``~/.cache/librarian``). Set
+    ``LIBRARIAN_CACHE_DIR=off`` for plain uncached requests. A cache that
+    cannot be opened (read-only home, ...) is logged and skipped, never fatal.
+
+    :return: A ``CachedEuropePmcSource`` on the disk cache, or a plain
+        ``EuropePmcSource`` when caching is off or unavailable.
+    :rtype: EuropePmcSource
+    """
+    xdg_cache_home = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    default_directory = os.path.join(xdg_cache_home, "librarian")
+    directory = os.environ.get("LIBRARIAN_CACHE_DIR", "").strip() or default_directory
+    if directory.lower() == "off":
+        return EuropePmcSource()
+    try:
+        backend = DiskCacheBackend(directory)
+    except Exception as exc:  # the cache is an optimisation, never a hard dependency
+        logger.warning("full-text cache disabled: cannot open %s (%s)", directory, exc)
+        return EuropePmcSource()
+    return CachedEuropePmcSource(backend)
 
 
 if __name__ == "__main__":
