@@ -25,7 +25,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from librarian.synthesis import SynthesisAgent, _fill
+from librarian.synthesis import SynthesisAgent, _fill, _render_history_block
 
 _PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "summarizer_numbered.md"
 
@@ -102,7 +102,14 @@ class NumberedCitationSynthesisAgent(SynthesisAgent):
         super().__init__(*args, **kwargs)
         self._summarizer_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
 
-    def _build_prompt(self, query: str, passages: list[dict[str, Any]]) -> str:
+    def _build_prompt(
+        self,
+        query: str,
+        passages: list[dict[str, Any]],
+        conversation_history: list[dict[str, str]] | None = None,
+        language: str = "",
+        output_channel: str | None = None,
+    ) -> str:
         """Fill the numbered summarizer prompt's eight placeholders."""
         import datetime
 
@@ -114,9 +121,11 @@ class NumberedCitationSynthesisAgent(SynthesisAgent):
                 "{today_year}": str(today.year),
                 "{output_channel}": _OUTPUT_CHANNEL,
                 "{formatting_guidance}": _FORMATTING_GUIDANCE,
-                "{conversation_history}": _NO_HISTORY,
+                "{conversation_history}": (
+                    _render_history_block(conversation_history) or _NO_HISTORY
+                ),
                 "{user_query}": query,
-                "{answer_language}": _ANSWER_LANGUAGE,
+                "{answer_language}": language or _ANSWER_LANGUAGE,
                 "{papers_text}": render_papers_numbered(passages),
             },
         )

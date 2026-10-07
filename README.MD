@@ -472,7 +472,7 @@ skills/librarian/
   scripts/step*.py             the four pipeline steps, reusing librarian/agent.py
 librarian/
   agent.py                     the retrieval pipeline (start here)
-  synthesis.py                 SynthesisAgent: cited answer over the evidence
+  synthesis.py                 SynthesisAgent: cited answer over the evidence; with a librarian it also routes, searches and reads the conversation history
   citations.py                 author-year citation keys + the summarizer's paper blocks
   config.py                    LibrarianRuntimeConfig + config.toml loader
   config.toml                  the tuning knobs themselves
@@ -481,7 +481,7 @@ librarian/
   literature_search.py         Europe PMC search
   jats.py                      JATS full-text XML -> body paragraphs
   progress.py                  stdlib terminal spinner for live progress
-  prompts/                     query planner, relevance-judge, summarizer prompts
+  prompts/                     query planner, relevance-judge, router, summarizer prompts
   query_validation/            deterministic Europe PMC query validation
 evals/Literature/              evaluation harness: one locked environment per benchmark suite
 tests/                         unit tests
