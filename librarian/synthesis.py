@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from librarian.agent import LibrarianAgent
 
 # Prompts — co-located with the planner and judge prompts. The skill reads the
-# summarizer file (skills/librarian/SKILL.md, Step 5), so the citation discipline
+# summarizer file (skills/librarian/SKILL.md, Step 2), so the citation discipline
 # is identical whichever path produced the answer.
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _SUMMARIZER_PROMPT_PATH = _PROMPTS_DIR / "summarizer.md"
@@ -79,6 +79,62 @@ _NO_PAPERS_MESSAGE = (
     "question. Try rephrasing or broadening the query."
 )
 
+# The router is asked for the *name* of the language, but some models answer with
+# an ISO 639-1 code ("en"). The summarizer is told the language outright, so both
+# forms are turned into the same name. A code missing from this table passes
+# through unchanged.
+_LANGUAGE_NAMES = {
+    "af": "Afrikaans",
+    "ar": "Arabic",
+    "bg": "Bulgarian",
+    "bn": "Bengali",
+    "ca": "Catalan",
+    "cs": "Czech",
+    "da": "Danish",
+    "de": "German",
+    "el": "Greek",
+    "en": "English",
+    "es": "Spanish",
+    "et": "Estonian",
+    "fa": "Persian",
+    "fi": "Finnish",
+    "fr": "French",
+    "ga": "Irish",
+    "he": "Hebrew",
+    "hi": "Hindi",
+    "hr": "Croatian",
+    "hu": "Hungarian",
+    "id": "Indonesian",
+    "is": "Icelandic",
+    "it": "Italian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "lt": "Lithuanian",
+    "lv": "Latvian",
+    "ms": "Malay",
+    "nl": "Dutch",
+    "no": "Norwegian",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "ro": "Romanian",
+    "ru": "Russian",
+    "sk": "Slovak",
+    "sl": "Slovenian",
+    "sr": "Serbian",
+    "sv": "Swedish",
+    "sw": "Swahili",
+    "ta": "Tamil",
+    "te": "Telugu",
+    "th": "Thai",
+    "tr": "Turkish",
+    "uk": "Ukrainian",
+    "ur": "Urdu",
+    "vi": "Vietnamese",
+    "zh": "Chinese",
+}
+# A two-letter code, optionally with a region or script ("pt-BR", "zh_Hans").
+_LANGUAGE_CODE = re.compile(r"^([A-Za-z]{2})(?:[-_][A-Za-z0-9]+)*$")
+
 
 def _fill(template: str, values: dict[str, str]) -> str:
     """Substitute every ``{placeholder}`` in ``template`` in a single pass.
@@ -97,6 +153,28 @@ def _fill(template: str, values: dict[str, str]) -> str:
     """
     pattern = re.compile("|".join(re.escape(key) for key in values))
     return pattern.sub(lambda match: values[match.group(0)], template)
+
+
+def _normalize_language(value: Any) -> str:
+    """Turn the language the router reported into a language name.
+
+    ``"en"``, ``"English"`` and ``"english"`` all give ``"English"``; a code
+    with a region (``"pt-BR"``) gives the name of its language. A code that is
+    not in ``_LANGUAGE_NAMES`` is returned as written; any other text is taken
+    for a name and gets its first letter capitalised.
+
+    :param value: The ``language`` field of the router's JSON, as parsed.
+    :type value: Any
+    :return: The language name, or ``""`` when the router gave none.
+    :rtype: str
+    """
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    text = value.strip()
+    match = _LANGUAGE_CODE.match(text)
+    if match:
+        return _LANGUAGE_NAMES.get(match.group(1).lower(), text)
+    return text[0].upper() + text[1:]
 
 
 def _render_history_block(
@@ -225,11 +303,12 @@ class SynthesisAgent:
         :type conversation_history: list[dict[str, str]] or None
         :return: ``{"action": "search" | "reply", "answer", "query",
             "language"}``. ``answer`` is the direct reply when the action is
-            ``reply`` and empty otherwise; ``query`` is the standalone search
-            query (the question itself when the router gave none);
-            ``language`` is the language the router read off the question,
-            which the summarizer then answers in — empty when the model omitted
-            the field.
+            ``reply`` and empty otherwise; a reply with no text counts as a
+            search, like unreadable router output. ``query`` is the standalone
+            search query (the question itself when the router gave none);
+            ``language`` is the name of the language the router read off the
+            question (``"en"`` is turned into ``"English"``), which the
+            summarizer then answers in — empty when the model omitted it.
         :rtype: dict[str, str]
         """
         history_block = ""
@@ -260,16 +339,21 @@ class SynthesisAgent:
                 raise
             parsed = parse_json_response(response)
             language = ""
+            reply = ""
             if isinstance(parsed, dict):
-                language = str(parsed.get("language", "")).strip()
-            if isinstance(parsed, dict) and parsed.get("action") == "reply":
+                language = _normalize_language(parsed.get("language"))
+                if parsed.get("action") == "reply":
+                    reply = str(parsed.get("answer") or "").strip()
+            if reply:
                 result = {
                     "action": "reply",
-                    "answer": str(parsed.get("answer", "")).strip(),
+                    "answer": reply,
                     "query": query,
                     "language": language,
                 }
             else:
+                # Search is also the fallback for unreadable output and for a
+                # "reply" that carries no text: no answer is better than none.
                 resolved_query = ""
                 if isinstance(parsed, dict):
                     resolved_query = str(parsed.get("query", "")).strip()
@@ -622,33 +706,28 @@ class SynthesisAgent:
         catches an exception from the search still finds the route in it.
         """
         decision = self._route(query, conversation_history)
-        self._log(f"route → {decision['action']}")
+        # A reply with no text is no reply. _route already turns one into a
+        # search; this keeps a subclass's own _route from reaching the user with
+        # a blank answer.
+        replying = decision["action"] == "reply" and bool(decision.get("answer"))
+        search_query = decision.get("query") or query
+        language = decision.get("language", "")
+        self._log(f"route → {'reply' if replying else 'search'}")
         self.last_run_debug = {
-            "action": decision["action"],
-            "query": decision["query"],
-            "language": decision["language"],
+            "action": "reply" if replying else "search",
+            "query": search_query,
+            "language": language,
             "passages": [],
             "search_queries": [],
         }
 
-        if decision["action"] == "reply":
-            if decision["answer"]:
-                if stream_callback:
-                    stream_callback(decision["answer"])
-                return decision["answer"]
-            # An empty reply falls through to _summarize, which owns the
-            # wording for "nothing to answer from".
-            return self._summarize(
-                query,
-                [],
-                conversation_history=conversation_history,
-                language=decision["language"],
-                output_channel=output_channel,
-                stream_callback=stream_callback,
-            )
+        if replying:
+            if stream_callback:
+                stream_callback(decision["answer"])
+            return decision["answer"]
 
         passages = self._retrieve(
-            decision["query"], max_loops, on_progress, progress_callback
+            search_query, max_loops, on_progress, progress_callback
         )
         if progress_callback:
             progress_callback(3)
@@ -659,10 +738,10 @@ class SynthesisAgent:
             self.librarian, "last_run_debug", {}
         ).get("search_queries", [])
         return self._summarize(
-            decision["query"],
+            search_query,
             passages,
             conversation_history=conversation_history,
-            language=decision["language"],
+            language=language,
             output_channel=output_channel,
             stream_callback=stream_callback,
         )
