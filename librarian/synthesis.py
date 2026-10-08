@@ -49,13 +49,18 @@ _ROUTER_PROMPT_PATH = _PROMPTS_DIR / "router.md"
 _SYNTHESIS_TEMPERATURE = 0.2
 _SYNTHESIS_MAX_TOKENS = 8192
 
-# Routing is a yes/no decision, so it is deterministic, and its JSON is short.
+# Routing is a yes/no decision, so it is deterministic. Its JSON is short for a
+# "search", but a "reply" carries a whole earlier answer with its citation links:
+# too small a budget cuts the JSON off, the parse fails and the agent silently
+# falls back to a search.
 _ROUTER_TEMPERATURE = 0.0
-_ROUTER_MAX_TOKENS = 512
+_ROUTER_MAX_TOKENS = 4096
 
-# How much of the conversation the router and the summarizer get to see.
+# How much of the conversation the router and the summarizer get to see. The
+# per-message limit must fit a full cited answer: the links sit at the end of
+# it, and cutting there loses them.
 _HISTORY_MAX_MESSAGES = 6
-_HISTORY_MAX_CHARS = 2000
+_HISTORY_MAX_CHARS = 8000
 
 _OUTPUT_CHANNEL = "terminal"
 _FORMATTING_GUIDANCE = (
