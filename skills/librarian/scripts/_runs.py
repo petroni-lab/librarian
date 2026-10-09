@@ -139,6 +139,8 @@ def build_judge_items(
                     int(paragraph["word_start"]),
                     str(paragraph.get("text") or "").strip(),
                     registry,
+                    section_title=str(paragraph.get("section_title") or ""),
+                    section_type=str(paragraph.get("section_type") or ""),
                 ),
             }
         )
@@ -222,8 +224,14 @@ def read_manifest(run_dir: Path) -> Dict[str, Any]:
 
 
 def config_from_manifest(manifest: Dict[str, Any]) -> LibrarianRuntimeConfig:
-    """Rebuild the config recorded at step 1, so every step of a run agrees on it."""
-    return LibrarianRuntimeConfig(**manifest["config"])
+    """Rebuild the config recorded at step 1, so every step of a run agrees on it.
+
+    A knob missing from the manifest (a run started before that knob existed)
+    takes its value from the current ``config.toml``.
+    """
+    return LibrarianRuntimeConfig(
+        **{**asdict(load_runtime_config()), **manifest["config"]}
+    )
 
 
 def record_stage(run_dir: Path, stage: str, payload: Dict[str, Any]) -> None:

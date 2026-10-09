@@ -12,8 +12,11 @@ dependencies = [
     "python-dotenv>=1.0", # load LLM_* config from a .env file
     "PyStemmer>=2.2",   # Snowball stemming for BM25 paragraph scoring
     "mashumaro[toml]>=3.22", # dataclass <-> TOML parsing for librarian/config.toml
+    "pypdf>=4.0",       # text from supplementary-material PDFs
+    "python-docx>=1.1", # text from supplementary-material .docx files
     "fastapi>=0.110",   # HTTP orchestrator (orchestrator.py)
     "uvicorn>=0.27",    # ASGI server for the orchestrator
+    "diskcache>=5.6",   # local Europe PMC cache (EPMC_CACHE_DIR)
 ]
 
 # The benchmark harness under evals/Literature deliberately adds nothing here.

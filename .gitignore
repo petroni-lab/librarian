@@ -28,3 +28,7 @@ evals/Literature/ProClaim/data/
 evals/Literature/AstaBench/vendor/
 evals/Literature/AstaBench/data/*/*
 !evals/Literature/AstaBench/data/*/*_ids.txt
+.epmc_cache/
+supp_test
+supp_test2
+runs

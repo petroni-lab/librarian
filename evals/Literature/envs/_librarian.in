@@ -13,3 +13,5 @@ pysbd>=0.3
 python-dotenv>=1.0
 PyStemmer>=2.2
 mashumaro[toml]>=3.22
+pypdf>=4.0
+python-docx>=1.1
