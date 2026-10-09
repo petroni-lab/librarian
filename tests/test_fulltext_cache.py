@@ -270,3 +270,13 @@ def test_agent_uses_the_default_source(tmp_path, monkeypatch):
     agent = LibrarianAgent(load_runtime_config(), llm_client=object())
 
     assert isinstance(agent._source, CachedSource)
+
+
+def test_only_open_access_papers_request_fulltext():
+    """Free-to-read but non-OA records get no fullTextXML request (it answers 500)."""
+    from librarian.agent import _fulltext_pmcid
+
+    free_not_oa = {"inEPMC": True, "isOpenAccess": False, "pmcid": "PMC11041865"}
+    open_access = {"inEPMC": True, "isOpenAccess": True, "pmcid": "PMC7029158"}
+    assert _fulltext_pmcid(free_not_oa) == ""
+    assert _fulltext_pmcid(open_access) == "PMC7029158"

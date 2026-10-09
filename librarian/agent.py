@@ -152,11 +152,15 @@ def _first_affiliation(paper: Dict[str, Any]) -> str:
 def _fulltext_pmcid(paper: Dict[str, Any]) -> str:
     """The PMC id whose full text this paper is worth fetching, or ''.
 
-    Gated on the open-access flags Europe PMC returned with the search, then
-    ``fullTextIds[0]`` with ``pmcid`` as the fallback. Pure, so the batch
-    prefetch and the per-paper lookup derive the same key from the same record.
+    Gated on ``isOpenAccess``, then ``fullTextIds[0]`` with ``pmcid`` as the
+    fallback. Pure, so the batch prefetch and the per-paper lookup derive the
+    same key from the same record.
     """
-    if not (paper.get("inEPMC") or paper.get("hasFreeFullText")):
+    # Europe PMC serves fullTextXML only for its open-access subset (licensing):
+    # free-to-read records (inEPMC=Y, isOpenAccess=N) answer 500 on every call.
+    # A 500 is transient to the cache, so without this gate they are refetched
+    # every run.
+    if not paper.get("isOpenAccess"):
         return ""
     full_text_ids = paper.get("fullTextIds") or []
     raw_id = (full_text_ids[0] if full_text_ids else "") or paper.get("pmcid") or ""
