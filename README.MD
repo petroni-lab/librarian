@@ -452,7 +452,7 @@ to retrieval tuning:
 |---|---|---|
 | `LITERATURE_BM25_STEMMING` | on | Snowball stemming for BM25 (`0` to disable) |
 | `LLM_REASONING_EFFORT` | unset | `reasoning_effort` sent on every chat completion (e.g. `low`, `medium`, `high`); omit for models that don't support it |
-| `LIBRARIAN_CACHE_DIR` | unset | Cache full texts on disk in this directory (needs `pip install librarian[cache]`). Successes live 60 days, confirmed 404s 7; capped at 1 GB |
+| `LIBRARIAN_CACHE_DIR` | unset | Cache full texts on disk in this directory (needs the `cache` extra: `uv sync --extra cache` in a checkout, or `pip install "librarian[cache] @ https://github.com/petroni-lab/librarian/archive/<sha>.tar.gz"`; the agent skill runs without it). Successes live 60 days, confirmed 404s 7; capped at 1 GB |
 
 </details>
 

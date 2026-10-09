@@ -2,7 +2,8 @@
 
 ``CachedSource`` wraps a source and serves cached full-text outcomes before
 asking it for the rest. It stores them in a ``CacheBackend``; ``DiskCacheBackend``
-is the one shipped here (``pip install librarian[cache]``).
+is the one shipped here, behind the ``cache`` extra (``uv sync --extra cache`` in
+a checkout, or ``pip install "librarian[cache] @ <commit tarball URL>"``).
 ``default_literature_source`` is what ``LibrarianAgent`` uses when given no
 source: plain Europe PMC, or Europe PMC behind the disk cache when
 ``LIBRARIAN_CACHE_DIR`` names a directory.
@@ -59,8 +60,9 @@ class DiskCacheBackend:
         # diskcache's `timeout` kwarg is the SQLite busy-timeout, not a TTL;
         # entry lifetime is the expire_seconds passed to set().
         self._cache = diskcache.Cache(directory)
-        # Concurrent SQLite writes from the fetch pool can raise "database is
-        # locked"; serialise only the writes, reads and requests stay parallel.
+        # Sub-query threads write concurrently once their fetches return, and
+        # parallel SQLite writes can raise "database is locked"; serialise only
+        # the writes, reads and requests stay parallel.
         self._write_lock = threading.Lock()
 
     def get(self, key: str) -> Any:
@@ -177,17 +179,24 @@ class CachedSource:
                 misses.append(pmcid)
         if misses:
             for pmcid, result in self.inner.fetch_fulltext_many(misses).items():
-                if result.ok or result.permanent:
+                # An empty 200 is not worth 60 days; let the next read retry it.
+                if (result.ok and result.xml) or result.permanent:
                     self._set(result)
                 results[pmcid] = result
         return results
 
 
 @functools.lru_cache(maxsize=None)
-def _disk_backend(directory: str) -> DiskCacheBackend:
-    # One backend per directory per process: agents built per request (the
-    # orchestrator) share its write lock and SQLite connection.
-    return DiskCacheBackend(directory)
+def _source_for(directory: str) -> LiteratureSource:
+    # Memoised per directory, fallback included: agents built per request (the
+    # orchestrator) share one write lock and SQLite connection, and a broken
+    # cache warns once per process instead of once per request.
+    try:
+        backend = DiskCacheBackend(directory)
+    except Exception as exc:  # the cache is an optimisation, never a hard dependency
+        logger.warning("full-text cache disabled: cannot open %s (%s)", directory, exc)
+        return EuropePmcSource()
+    return CachedSource(EuropePmcSource(), backend)
 
 
 def default_literature_source() -> LiteratureSource:
@@ -202,12 +211,8 @@ def default_literature_source() -> LiteratureSource:
         cache is on.
     :rtype: LiteratureSource
     """
-    directory = os.path.expanduser(os.environ.get("LIBRARIAN_CACHE_DIR", "").strip())
+    directory = os.environ.get("LIBRARIAN_CACHE_DIR", "").strip()
     if not directory:
         return EuropePmcSource()
-    try:
-        backend = _disk_backend(directory)
-    except Exception as exc:  # the cache is an optimisation, never a hard dependency
-        logger.warning("full-text cache disabled: cannot open %s (%s)", directory, exc)
-        return EuropePmcSource()
-    return CachedSource(EuropePmcSource(), backend)
+    # Normalised so /x and /x/ share one backend.
+    return _source_for(os.path.normpath(os.path.expanduser(directory)))

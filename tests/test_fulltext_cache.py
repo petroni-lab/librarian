@@ -64,6 +64,12 @@ def no_confirm_delay(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(literature_search, "_PERMANENT_CONFIRM_DELAY_S", 0)
 
 
+@pytest.fixture(autouse=True)
+def fresh_default_source() -> None:
+    """Forget the per-directory sources memoised by earlier tests."""
+    fulltext_cache._source_for.cache_clear()
+
+
 @pytest.fixture
 def backend() -> _FakeBackend:
     """A fresh in-memory backend per test."""
@@ -166,6 +172,14 @@ def test_mixed_batch_dedupes_and_only_fetches_misses(source, backend, monkeypatc
     assert len(calls) == 1
 
 
+def test_empty_success_is_not_cached(source, backend, monkeypatch):
+    """A 200 with an empty body is returned but not stored."""
+    _stub_get(monkeypatch, [""])
+
+    assert source.fetch_fulltext_many(["PMC9"])["PMC9"].ok
+    assert "epmc:ft:PMC9" not in backend.store
+
+
 def test_raising_backend_degrades_to_live_fetch(monkeypatch):
     """A backend that raises is a miss and a dropped write, never a failed run."""
     calls = _stub_get(monkeypatch, ["<article>body</article>"])
@@ -204,6 +218,7 @@ def test_wraps_any_source():
 
 def test_disk_backend_round_trips(tmp_path):
     """DiskCacheBackend stores and returns a cache entry unchanged."""
+    pytest.importorskip("diskcache")
     disk = DiskCacheBackend(str(tmp_path))
     entry = {"xml": "<a/>", "status": 200, "error": ""}
 
@@ -222,9 +237,10 @@ def test_default_source_is_uncached(monkeypatch):
 
 def test_cache_dir_turns_on_the_disk_cache(tmp_path, monkeypatch):
     """LIBRARIAN_CACHE_DIR gives Europe PMC behind one shared disk backend."""
+    pytest.importorskip("diskcache")
     monkeypatch.setenv("LIBRARIAN_CACHE_DIR", str(tmp_path))
-
     first = fulltext_cache.default_literature_source()
+    monkeypatch.setenv("LIBRARIAN_CACHE_DIR", str(tmp_path) + "/")
     second = fulltext_cache.default_literature_source()
 
     assert isinstance(first, CachedSource)
@@ -234,16 +250,21 @@ def test_cache_dir_turns_on_the_disk_cache(tmp_path, monkeypatch):
 
 
 def test_unopenable_cache_dir_falls_back(tmp_path, monkeypatch):
-    """A cache that cannot be created falls back to uncached, never raises."""
+    """A cache that cannot be created falls back to uncached and warns once."""
     blocker = tmp_path / "a-file"
     blocker.write_text("")
     monkeypatch.setenv("LIBRARIAN_CACHE_DIR", str(blocker / "cache"))
+    warnings: List[Any] = []
+    monkeypatch.setattr(fulltext_cache.logger, "warning", lambda *a: warnings.append(a))
 
-    assert type(fulltext_cache.default_literature_source()) is EuropePmcSource
+    for _ in range(3):
+        assert type(fulltext_cache.default_literature_source()) is EuropePmcSource
+    assert len(warnings) == 1
 
 
 def test_agent_uses_the_default_source(tmp_path, monkeypatch):
     """LibrarianAgent with no source gets default_literature_source()."""
+    pytest.importorskip("diskcache")
     monkeypatch.setenv("LIBRARIAN_CACHE_DIR", str(tmp_path))
 
     agent = LibrarianAgent(load_runtime_config(), llm_client=object())
