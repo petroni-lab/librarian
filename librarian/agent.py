@@ -39,9 +39,9 @@ import bm25s
 import pysbd
 
 from librarian.config import LibrarianRuntimeConfig
+from librarian.fulltext_cache import default_literature_source
 from librarian.jats import extract_body_paragraphs
 from librarian.literature_search import (
-    EuropePmcSource,
     Fulltext,
     LiteratureSource,
     normalize_pmcid,
@@ -152,11 +152,15 @@ def _first_affiliation(paper: Dict[str, Any]) -> str:
 def _fulltext_pmcid(paper: Dict[str, Any]) -> str:
     """The PMC id whose full text this paper is worth fetching, or ''.
 
-    Gated on the open-access flags Europe PMC returned with the search, then
-    ``fullTextIds[0]`` with ``pmcid`` as the fallback. Pure, so the batch
-    prefetch and the per-paper lookup derive the same key from the same record.
+    Gated on ``isOpenAccess``, then ``fullTextIds[0]`` with ``pmcid`` as the
+    fallback. Pure, so the batch prefetch and the per-paper lookup derive the
+    same key from the same record.
     """
-    if not (paper.get("inEPMC") or paper.get("hasFreeFullText")):
+    # Europe PMC serves fullTextXML only for its open-access subset (licensing):
+    # free-to-read records (inEPMC=Y, isOpenAccess=N) answer 500 on every call.
+    # A 500 is transient to the cache, so without this gate they are refetched
+    # every run.
+    if not paper.get("isOpenAccess"):
         return ""
     full_text_ids = paper.get("fullTextIds") or []
     raw_id = (full_text_ids[0] if full_text_ids else "") or paper.get("pmcid") or ""
@@ -540,7 +544,8 @@ class LibrarianAgent:
         :type llm_client: object or None
         :param literature_source: Where papers and full texts come from (see
             ``literature_search.LiteratureSource``). Defaults to
-            ``EuropePmcSource`` (plain Europe PMC REST calls, no cache).
+            ``default_literature_source()``: Europe PMC, with full texts
+            cached on disk when ``LIBRARIAN_CACHE_DIR`` is set.
         :type literature_source: LiteratureSource or None
         """
         # Full text is the default retrieval path; the flag is kept for harness
@@ -580,7 +585,9 @@ class LibrarianAgent:
             )
         )
         self._source: LiteratureSource = (
-            literature_source if literature_source is not None else EuropePmcSource()
+            literature_source
+            if literature_source is not None
+            else default_literature_source()
         )
         self._query_prompt = _QUERY_PROMPT_PATH.read_text(encoding="utf-8")
         self._filter_prompt = _FILTER_PROMPT_PATH.read_text(encoding="utf-8")

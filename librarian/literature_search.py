@@ -2,15 +2,16 @@
 
 ``search_scientific_literature_structured`` runs one Europe PMC REST query and
 returns a list of paper dicts (title, abstract, authors, ids, full-text
-availability, ...). The full agent wrapped this in a LangChain retriever and a
-Redis/diskcache look-aside cache; neither is needed to run the librarian, so
-this version is a single plain ``requests`` call with a small retry loop.
+availability, ...). It is a single plain ``requests`` call with a small retry
+loop.
 
 ``LiteratureSource`` is the port ``LibrarianAgent`` searches and fetches full
 texts through; ``EuropePmcSource`` is the default implementation built on the
 plain functions in this module. An embedding application can pass its own
 source (with a cache, a worker pool, ...) as
 ``LibrarianAgent(literature_source=...)``.
+
+An opt-in full-text cache that wraps any source lives in ``fulltext_cache``.
 """
 
 import threading
