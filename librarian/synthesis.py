@@ -50,17 +50,18 @@ _SYNTHESIS_TEMPERATURE = 0.2
 _SYNTHESIS_MAX_TOKENS = 8192
 
 # Routing is a yes/no decision, so it is deterministic. Its JSON is short for a
-# "search", but a "reply" carries a whole earlier answer with its citation links:
-# too small a budget cuts the JSON off, the parse fails and the agent silently
-# falls back to a search.
+# "search", but a "reply" can restate a whole earlier answer with its citation
+# links, which is at most what the summarizer can write: too small a budget cuts
+# the JSON off, the parse fails and the agent silently falls back to a search.
 _ROUTER_TEMPERATURE = 0.0
-_ROUTER_MAX_TOKENS = 4096
+_ROUTER_MAX_TOKENS = _SYNTHESIS_MAX_TOKENS
 
 # How much of the conversation the router and the summarizer get to see. The
-# per-message limit must fit a full cited answer: the links sit at the end of
-# it, and cutting there loses them.
+# per-message limit must fit a whole cited answer, the longest one the
+# summarizer can write: the links sit at the end of it, and cutting there loses
+# them. About 4 characters per token.
 _HISTORY_MAX_MESSAGES = 6
-_HISTORY_MAX_CHARS = 8000
+_HISTORY_MAX_CHARS = 4 * _SYNTHESIS_MAX_TOKENS
 
 _OUTPUT_CHANNEL = "terminal"
 _FORMATTING_GUIDANCE = (
