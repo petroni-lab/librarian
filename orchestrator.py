@@ -68,8 +68,9 @@ def _run(
         evidence passages (``LibrarianAgent.run``'s output, verbatim).
     """
     # A fresh agent per request. Construction just reads two prompt
-    # files and builds an HTTP client; cache it in a module global if profiling
-    # ever says otherwise.
+    # files and builds an HTTP client (with LIBRARIAN_CACHE_DIR set, every agent
+    # shares one disk cache); cache it in a module global if profiling ever says
+    # otherwise.
     agent = LibrarianAgent(
         runtime_config=RUNTIME_CONFIG,
         full_text_enrichment=request.full_text_enrichment,

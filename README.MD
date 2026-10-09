@@ -239,11 +239,10 @@ plug in your own pieces through the constructor and `run()`:
   pool, ...), implementing `LiteratureSource` in
   [`literature_search.py`](librarian/literature_search.py). The default,
   `EuropePmcSource`, calls Europe PMC directly and fetches full texts concurrently.
-  Unless you pass your own, full texts are cached on disk in `~/.cache/librarian`
-  (failures too, on a shorter TTL; capped at 1 GB). Move it with
-  `LIBRARIAN_CACHE_DIR=/path`, turn it off with `LIBRARIAN_CACHE_DIR=off`, or pass
-  `CachedEuropePmcSource(backend)` with your own `CacheBackend` (anything with
-  `get(key)` and `set(key, value, expire_seconds)`).
+  To cache full texts, wrap any source in `CachedSource(inner, backend)` from
+  [`fulltext_cache.py`](librarian/fulltext_cache.py), with your own `CacheBackend`
+  (anything with `get(key)` and `set(key, value, expire_seconds)`), or set
+  `LIBRARIAN_CACHE_DIR` for the built-in disk cache (see Configuration).
 - `progress_callback=` on `run()` — called with step `0`, `1`, `2` from the calling
   thread; raise from it to cancel the run.
 
@@ -446,13 +445,14 @@ cfg = replace(load_runtime_config(), num_subqueries=3, papers_per_subquery=20)
 agent = LibrarianAgent(runtime_config=cfg)
 ```
 
-Two settings stay outside the config file, since they belong to the process rather than
+Three settings stay outside the config file, since they belong to the process rather than
 to retrieval tuning:
 
 | Env var | Default | Meaning |
 |---|---|---|
 | `LITERATURE_BM25_STEMMING` | on | Snowball stemming for BM25 (`0` to disable) |
 | `LLM_REASONING_EFFORT` | unset | `reasoning_effort` sent on every chat completion (e.g. `low`, `medium`, `high`); omit for models that don't support it |
+| `LIBRARIAN_CACHE_DIR` | unset | Cache full texts on disk in this directory (needs `pip install librarian[cache]`). Successes live 60 days, confirmed 404s 7; capped at 1 GB |
 
 </details>
 
@@ -483,7 +483,8 @@ librarian/
   config.toml                  the tuning knobs themselves
   tracing_port.py              TracingPort protocol + no-op default (optional tracer=)
   llm_client.py                minimal OpenAI-compatible client
-  literature_search.py         Europe PMC search
+  literature_search.py         Europe PMC search and full-text fetch
+  fulltext_cache.py            opt-in full-text cache (CachedSource)
   jats.py                      JATS full-text XML -> body paragraphs
   progress.py                  stdlib terminal spinner for live progress
   prompts/                     query planner, relevance-judge, router, summarizer prompts

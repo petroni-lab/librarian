@@ -1,8 +1,8 @@
-"""Checks for ``CachedEuropePmcSource``'s cache decision.
+"""Checks for ``CachedSource``'s cache decision and the default source.
 
-Which cached outcomes short-circuit the network and which are retried. Every
-test runs against an in-memory backend and a stubbed ``requests.get``, so
-nothing here touches Europe PMC.
+Which outcomes are cached and which are fetched again. Every test runs against
+an in-memory backend and a stubbed ``requests.get``, so nothing here touches
+Europe PMC.
 """
 
 from typing import Any, Dict, List
@@ -10,8 +10,10 @@ from typing import Any, Dict, List
 import pytest
 import requests
 
-from librarian import literature_search
-from librarian.literature_search import CachedEuropePmcSource, DiskCacheBackend
+from librarian import LibrarianAgent, fulltext_cache, literature_search
+from librarian.config import load_runtime_config
+from librarian.fulltext_cache import CachedSource, DiskCacheBackend
+from librarian.literature_search import EuropePmcSource, Fulltext
 
 
 class _FakeBackend:
@@ -27,6 +29,16 @@ class _FakeBackend:
     def set(self, key: str, value: Any, expire_seconds: int) -> None:
         self.store[key] = value
         self.expiries[key] = expire_seconds
+
+
+class _BrokenBackend:
+    """A backend whose store is down: every call raises."""
+
+    def get(self, key: str) -> Any:
+        raise ConnectionError("cache down")
+
+    def set(self, key: str, value: Any, expire_seconds: int) -> None:
+        raise ConnectionError("cache down")
 
 
 class _FakeResponse:
@@ -59,9 +71,9 @@ def backend() -> _FakeBackend:
 
 
 @pytest.fixture
-def source(backend: _FakeBackend) -> CachedEuropePmcSource:
-    """The source under test, on the in-memory backend."""
-    return CachedEuropePmcSource(backend)
+def source(backend: _FakeBackend) -> CachedSource:
+    """The source under test: Europe PMC behind the in-memory backend."""
+    return CachedSource(EuropePmcSource(), backend)
 
 
 def _stub_get(monkeypatch: pytest.MonkeyPatch, outcomes: List[Any]) -> List[str]:
@@ -85,7 +97,7 @@ def test_miss_fetches_and_caches(source, backend, monkeypatch):
 
     result = source.fetch_fulltext_many(["pmc123"])["PMC123"]
 
-    assert result.ok and not result.from_cache
+    assert result.ok
     assert calls == [
         "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC123/fullTextXML"
     ]
@@ -99,7 +111,7 @@ def test_cached_success_skips_the_network(source, monkeypatch):
 
     result = source.fetch_fulltext_many(["PMC123"])["PMC123"]
 
-    assert result.ok and result.from_cache and result.xml == "<article>body</article>"
+    assert result.ok and result.xml == "<article>body</article>"
     assert len(calls) == 1
 
 
@@ -113,54 +125,81 @@ def test_cached_404_is_skipped_not_retried(source, monkeypatch):
 
     second = source.fetch_fulltext_many(["PMC404"])["PMC404"]
 
-    assert not second.ok and second.from_cache
+    assert not second.ok and second.permanent
     assert len(calls) == 2, "a cached 404 must not be re-requested"
 
 
-def test_cached_transient_failure_is_retried(source, monkeypatch):
-    """A 504 is cached only as a breadcrumb: the next read tries again."""
+def test_transient_failure_is_not_cached(source, backend, monkeypatch):
+    """A 504 leaves no entry, so the next read fetches and caches the success."""
     calls = _stub_get(monkeypatch, [_http_error(504), "<article>body</article>"])
 
     first = source.fetch_fulltext_many(["PMC504"])["PMC504"]
     assert not first.ok and not first.permanent
+    assert "epmc:ft:PMC504" not in backend.store
 
     second = source.fetch_fulltext_many(["PMC504"])["PMC504"]
 
-    assert second.ok and second.xml == "<article>body</article>"
-    assert len(calls) == 2
+    assert second.ok and len(calls) == 2
+    assert backend.store["epmc:ft:PMC504"]["xml"] == "<article>body</article>"
 
 
 def test_negative_entries_expire_sooner(source, backend, monkeypatch):
     """Failures use the shorter TTL so a paper turning open access recovers."""
     _stub_get(monkeypatch, [_http_error(404)])
     source.fetch_fulltext_many(["PMC404"])
-    source.set_cached_fulltext(literature_search.Fulltext(pmcid="PMC200", xml="<a/>"))
+    _stub_get(monkeypatch, ["<a/>"])
+    source.fetch_fulltext_many(["PMC200"])
 
     assert backend.expiries["epmc:ft:PMC404"] == 7 * 86400
     assert backend.expiries["epmc:ft:PMC200"] == 60 * 86400
 
 
-def test_legacy_string_entry_reads_as_a_hit(source, backend, monkeypatch):
-    """Entries from before failures were cached are bare XML strings."""
-    calls = _stub_get(monkeypatch, ["<article>live</article>"])
-    backend.store["epmc:ft:PMC777"] = "<article>legacy</article>"
-
-    result = source.fetch_fulltext_many(["PMC777"])["PMC777"]
-
-    assert result.ok and result.xml == "<article>legacy</article>"
-    assert calls == []
-
-
 def test_mixed_batch_dedupes_and_only_fetches_misses(source, backend, monkeypatch):
     """Hits come from the cache, each distinct miss costs one request."""
     calls = _stub_get(monkeypatch, ["<article>body</article>"])
-    backend.store["epmc:ft:PMC1"] = "<article>cached</article>"
+    backend.store["epmc:ft:PMC1"] = {"xml": "<article>cached</article>", "status": 200}
 
     results = source.fetch_fulltext_many(["PMC1", "pmc1", "2", "PMC2", "", None])
 
     assert sorted(results) == ["PMC1", "PMC2"]
-    assert results["PMC1"].from_cache and not results["PMC2"].from_cache
+    assert results["PMC1"].xml == "<article>cached</article>"
     assert len(calls) == 1
+
+
+def test_raising_backend_degrades_to_live_fetch(monkeypatch):
+    """A backend that raises is a miss and a dropped write, never a failed run."""
+    calls = _stub_get(monkeypatch, ["<article>body</article>"])
+    source = CachedSource(EuropePmcSource(), _BrokenBackend())
+
+    result = source.fetch_fulltext_many(["PMC123"])["PMC123"]
+
+    assert result.ok and result.xml == "<article>body</article>"
+    assert len(calls) == 1
+
+
+def test_wraps_any_source():
+    """Misses go to whatever source is wrapped, not to Europe PMC."""
+
+    class _StubSource:
+        def __init__(self) -> None:
+            self.asked: List[List[str]] = []
+
+        def search(self, query: str, page_size: int) -> List[Dict[str, Any]]:
+            return [{"title": query}]
+
+        def fetch_fulltext_many(self, pmcids):
+            ids = list(pmcids)
+            self.asked.append(ids)
+            return {p: Fulltext(pmcid=p, xml="<a/>") for p in ids}
+
+    inner = _StubSource()
+    source = CachedSource(inner, _FakeBackend())
+
+    source.fetch_fulltext_many(["PMC1"])
+    source.fetch_fulltext_many(["PMC1"])
+
+    assert inner.asked == [["PMC1"]]
+    assert source.search("q", 5) == [{"title": "q"}]
 
 
 def test_disk_backend_round_trips(tmp_path):
@@ -174,31 +213,39 @@ def test_disk_backend_round_trips(tmp_path):
     assert disk.get("epmc:ft:PMC2") is None
 
 
-def test_default_source_caches_on_disk(tmp_path, monkeypatch):
-    """With no configuration the agent's default source is the disk cache."""
+def test_default_source_is_uncached(monkeypatch):
+    """With LIBRARIAN_CACHE_DIR unset the default is plain Europe PMC."""
+    monkeypatch.delenv("LIBRARIAN_CACHE_DIR", raising=False)
+
+    assert type(fulltext_cache.default_literature_source()) is EuropePmcSource
+
+
+def test_cache_dir_turns_on_the_disk_cache(tmp_path, monkeypatch):
+    """LIBRARIAN_CACHE_DIR gives Europe PMC behind one shared disk backend."""
     monkeypatch.setenv("LIBRARIAN_CACHE_DIR", str(tmp_path))
 
-    source = literature_search.default_literature_source()
+    first = fulltext_cache.default_literature_source()
+    second = fulltext_cache.default_literature_source()
 
-    assert isinstance(source, CachedEuropePmcSource)
-    assert isinstance(source.backend, DiskCacheBackend)
-
-
-def test_default_source_off_switch(monkeypatch):
-    """LIBRARIAN_CACHE_DIR=off gives plain, uncached Europe PMC requests."""
-    monkeypatch.setenv("LIBRARIAN_CACHE_DIR", "off")
-
-    source = literature_search.default_literature_source()
-
-    assert not isinstance(source, CachedEuropePmcSource)
+    assert isinstance(first, CachedSource)
+    assert isinstance(first.inner, EuropePmcSource)
+    assert isinstance(first.backend, DiskCacheBackend)
+    assert first.backend is second.backend, "one backend per directory per process"
 
 
-def test_default_source_survives_an_unopenable_directory(tmp_path, monkeypatch):
+def test_unopenable_cache_dir_falls_back(tmp_path, monkeypatch):
     """A cache that cannot be created falls back to uncached, never raises."""
     blocker = tmp_path / "a-file"
     blocker.write_text("")
     monkeypatch.setenv("LIBRARIAN_CACHE_DIR", str(blocker / "cache"))
 
-    source = literature_search.default_literature_source()
+    assert type(fulltext_cache.default_literature_source()) is EuropePmcSource
 
-    assert not isinstance(source, CachedEuropePmcSource)
+
+def test_agent_uses_the_default_source(tmp_path, monkeypatch):
+    """LibrarianAgent with no source gets default_literature_source()."""
+    monkeypatch.setenv("LIBRARIAN_CACHE_DIR", str(tmp_path))
+
+    agent = LibrarianAgent(load_runtime_config(), llm_client=object())
+
+    assert isinstance(agent._source, CachedSource)
