@@ -39,8 +39,8 @@ import bm25s
 import pysbd
 
 from librarian.config import LibrarianRuntimeConfig
-from librarian.jats import extract_body_paragraphs
 from librarian.fulltext_cache import default_literature_source
+from librarian.jats import extract_body_paragraphs
 from librarian.literature_search import (
     Fulltext,
     LiteratureSource,
