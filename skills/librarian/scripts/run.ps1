@@ -33,7 +33,7 @@ if (-not $python) {
     $ErrorActionPreference = "Continue"
     $setup = & $uv.Source sync --project $root 2>&1
     $setupCode = $LASTEXITCODE
-    $setupText = ($setup | Out-String)
+    $setupText = ($setup | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
     [Console]::Error.WriteLine($setupText.TrimEnd())
     if ($setupCode -ne 0 -and $setupText -match 'Missing expected target directory for Python minor version link at\s+["'']?([^\r\n"'']+)') {
         $candidate = Join-Path $Matches[1].Trim() "python.exe"

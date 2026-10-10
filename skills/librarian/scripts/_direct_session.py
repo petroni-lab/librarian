@@ -58,21 +58,32 @@ _FALLBACK_PATHS = {
 }
 
 
+def _find_cli(command: str) -> Optional[str]:
+    executable = shutil.which(command)
+    # Python 3.10/3.11 do not apply PATHEXT when given a full path.
+    if executable is None and os.name == "nt" and os.path.dirname(command) and not os.path.splitext(command)[1]:
+        for extension in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";"):
+            executable = shutil.which(command + extension.lower())
+            if executable:
+                break
+    return executable
+
+
 def _require_cli(provider: str) -> str:
     """Return the installed CLI executable or stop with an actionable error."""
     cli = "agy" if provider == "antigravity" else provider
     override = os.environ.get("LIBRARIAN_CLI_PATH", "").strip()
     if override:
-        executable = shutil.which(str(Path(override).expanduser()))
+        executable = _find_cli(str(Path(override).expanduser()))
         if executable:
             return executable
         raise CliSessionError(f"LIBRARIAN_CLI_PATH does not name an executable: {override}")
-    executable = shutil.which(cli)
+    executable = _find_cli(cli)
     if executable is not None:
         return executable
     for candidate in _FALLBACK_PATHS[cli]:
         # which also checks Windows PATHEXT (.exe/.cmd) for full paths.
-        executable = shutil.which(str(Path(candidate).expanduser()))
+        executable = _find_cli(str(Path(candidate).expanduser()))
         if executable:
             return executable
     raise CliSessionError(
