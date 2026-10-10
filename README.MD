@@ -161,7 +161,8 @@ Ask a biomedical question — the skill activates on its own:
 **First run:** the skill sets itself up — the agent installs [uv](https://docs.astral.sh/uv/)
 if it is missing through the host's permission flow, and uv installs the Python
 dependencies. The agent also finds or installs the provider CLI, repairs Python
-setup, and retries the search. Codex desktop's bundled binary is supported. If no provider was explicitly chosen,
+setup, and retries the search. Codex desktop's bundled binary and Claude's
+`CLAUDE_CODE_EXECPATH` are supported. If no provider was explicitly chosen,
 the agent may announce and try one installed alternative.
 
 You only need to intervene for an approval or an interactive sign-in the agent

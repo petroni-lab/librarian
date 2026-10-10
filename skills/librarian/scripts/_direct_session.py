@@ -81,6 +81,12 @@ def _require_cli(provider: str) -> str:
     executable = _find_cli(cli)
     if executable is not None:
         return executable
+    if provider == "claude":
+        bundled = os.environ.get("CLAUDE_CODE_EXECPATH", "").strip()
+        if bundled:
+            executable = _find_cli(bundled)
+            if executable:
+                return executable
     for candidate in _FALLBACK_PATHS[cli]:
         # which also checks Windows PATHEXT (.exe/.cmd) for full paths.
         executable = _find_cli(str(Path(candidate).expanduser()))
@@ -388,6 +394,18 @@ def run_direct_session(provider: str, prompt_path: Path, timeout: float = 180) -
                 if response_path.exists()
                 else ""
             )
+    diagnostics = completed.stderr + "\n" + completed.stdout
+    if provider == "claude" and any(
+        marker in diagnostics.lower()
+        for marker in ("not logged in", "please run /login", "authentication required")
+    ):
+        raise CliSessionError(
+            "The Claude CLI used by Librarian is not signed in. "
+            "Calling agent: apply SKILL.md authentication recovery. If sign-in is "
+            f"required, launch \"{executable}\" in a host terminal when available, "
+            "ask the user only to complete /login, then resume the search. "
+            "The desktop app's login may not authenticate a separate child CLI."
+        )
     if completed.returncode != 0:
         message = completed.stderr.strip() or completed.stdout.strip()
         raise CliSessionError(f"{provider} session failed: {message}")
