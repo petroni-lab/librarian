@@ -20,8 +20,9 @@ after retrieval; it is how every run's final answer is presented.
 
 Use only this pipeline's Europe PMC evidence. Never fall back to web search,
 browser tools, other literature sources, or an answer from memory when the
-script fails. If it fails on a CLI session, stop and report the actual CLI
-error; do not attribute a model startup failure to Europe PMC. For an empty
+script fails. On a setup or authentication failure, apply the recovery steps
+below before reporting a blocker. On other CLI-session failures, stop and
+report the actual CLI error; do not attribute it to Europe PMC. For an empty
 retrieval, follow the retry rule below.
 
 The CLI sessions need network access to their model provider, and the script
@@ -38,7 +39,8 @@ seconds, and the whole run after 540. A failed or timed-out judge session only
 costs that batch (the agent retries it in halves) and prints a `WARNING: ...
 judge call(s) failed` line on stderr: tell the user the evidence may be
 incomplete. If every judge call fails, or query planning fails, the script
-exits non-zero with the CLI error: report it rather than retrying in a loop.
+exits non-zero with the CLI error. Repair a recognized setup failure as described
+below; otherwise report it rather than retrying in a loop.
 
 ## Context boundary
 
@@ -49,11 +51,15 @@ instructions arrive in the script's output.
 
 ## First run: install what is missing
 
-The user may have installed this skill from a desktop app and never opened a
-terminal, so set up missing prerequisites yourself instead of asking them to.
+The calling agent owns setup and recovery. Install missing tools, locate
+executables, set per-command overrides, and retry the requested search yourself;
+do not turn recoverable diagnostics into a list of chores for the user. Use the
+host's normal permission flow for installations or restricted access. Repair each
+identified prerequisite once, then rerun; if the same repair fails again, report
+the remaining blocker. Never remove Python environments or login files.
 Do not check ahead of time — that costs a model round-trip every run. Just run
-step 1; `run.sh` finds `uv` in `~/.local/bin` and installs the Python
-dependencies itself on first call. Only if it exits 127 (`need uv`), install
+step 1; the launcher finds `uv` in `~/.local/bin` and installs the Python
+dependencies itself on first call. Only if it exits 127 or prints `need uv`, install
 `uv` with the official installer through the host's normal approval flow, then
 re-run step 1:
 
@@ -62,14 +68,28 @@ re-run step 1:
 
 The provider CLI is found on PATH, in `~/.local/bin`, or — for Codex — inside
 the ChatGPT/Codex desktop app, so it is usually already there. Only if step 1
-reports `CLI (...) is not installed or not on PATH`, install it and retry once:
+reports `CLI (...) is not installed or not on PATH`, first locate an existing
+executable (including bundled desktop binaries) and set `LIBRARIAN_CLI_PATH`
+for the retry. If none exists and the user did not pin a provider, prefer one
+installed alternative under the provider recovery rule below. Otherwise install
+the selected CLI and retry once:
 
-- claude: `curl -fsSL https://claude.ai/install.sh | bash`
-- codex: `npm install -g @openai/codex` (or `brew install codex`)
+- claude (macOS/Linux): `curl -fsSL https://claude.ai/install.sh | bash`
+- codex: `npm install -g @openai/codex` (or `brew install codex` on macOS)
 
-A freshly installed CLI still needs a one-time sign-in that you cannot do for
-the user. If a step then fails on authentication, tell them to open a terminal,
-run `claude` (or `codex`) once, sign in, and ask again.
+Set `LIBRARIAN_CLI_PATH` to the full provider executable path for a custom
+installation. This does not change the selected provider.
+
+A freshly installed CLI may still need a one-time sign-in. If the user did not
+explicitly choose a provider, you may try one other installed provider; announce
+that choice and rerun with its `--provider` value. Do not carry a
+`LIBRARIAN_CLI_PATH` override from the old provider into that retry. If the user
+chose the provider, or the alternative also fails, launch the relevant CLI in a
+host terminal when available and ask the user only to complete the interactive
+sign-in (`/login` for Claude). Resume the search after sign-in, without requiring
+a new request. Desktop app login may not authenticate a separate CLI child.
+Binary discovery happens before retrieval; authentication is checked by the
+query-planning session, before Europe PMC is contacted.
 
 ## Setup
 
@@ -84,6 +104,24 @@ persist between calls, and `VAR=x cmd "$VAR"` on one line leaves `$VAR` empty:
 bash "<directory containing this SKILL.md>/scripts/run.sh" search --provider <claude|codex|antigravity> "<user question>"
 ```
 
+On Windows use the native PowerShell launcher instead of Bash:
+
+```powershell
+& "<directory containing this SKILL.md>/scripts/run.ps1" search --provider <claude|codex|antigravity> "<user question>"
+```
+
+Both launchers enable UTF-8 for Python and child sessions. If Windows uv reports
+`Missing expected target directory for Python minor version link`, `run.ps1`
+checks the reported directory's `python.exe` and retries setup once with its
+full path, only if it launches successfully. It never deletes managed Python
+files or repeatedly reinstalls them. If recovery fails, find a working Python
+interpreter yourself and rerun with its full path in `UV_PYTHON`, or use
+`LIBRARIAN_PYTHON` with an already provisioned environment (`<repo>/.venv/Scripts/python.exe`
+on Windows, `<repo>/.venv/bin/python` on macOS/Linux). Verify that a reused
+interpreter can import `librarian` with the repo on `PYTHONPATH` before retrying.
+If no working interpreter exists, use uv to install a supported Python version
+once. Report **Python setup** only if this repair also fails.
+
 A run usually takes 1.5-3 min (provider-dependent) and is capped at 540 s, longer than a
 default command timeout (Claude Code's Bash tool stops at 120 s). Run it in the foreground with the host's longest timeout — in
 Claude Code, pass `timeout: 600000` to the Bash tool — and wait for it to finish.
@@ -94,8 +132,11 @@ interpreter that already has Librarian's dependencies if `uv` is unavailable.
 
 Choose `--provider` from `claude`, `codex`, or `antigravity`. Honor an explicit user
 choice; otherwise use the provider matching your host (Antigravity →
-`antigravity`). In other hosts, use an installed, authenticated provider.
-Do not silently switch providers on failure.
+`antigravity`). When that CLI is unavailable or unauthenticated and the user
+has not pinned a provider, you may choose one installed alternative using the
+recovery rule above. The host and child provider can differ (for example,
+`--provider codex` in Antigravity). Honor explicit provider choices and announce
+any automatic provider change.
 
 The Antigravity provider calls the official `agy` CLI, which must be on PATH
 and authenticated once through an interactive `agy` session. It sends one
@@ -108,9 +149,14 @@ the
 The launcher gives Codex child sessions a temporary writable state directory
 automatically, copying authentication and signed workspace-policy caches from
 `CODEX_HOME` (or `~/.codex`). Policies remain enforced by Codex. If policy
-loading still fails, report it and ask the user to run Codex once from their
-normal terminal to refresh authentication and policy caches, then retry the
-skill.
+loading fails, retry once through the host's normal approved-access flow. If
+cache refresh requires an interactive CLI session, open it in a host terminal
+when available and involve the user only for sign-in or a required approval.
+
+If authentication/policy caches cannot be read or copied, request the necessary
+file access through the host's approval flow and retry yourself. Refreshing login
+alone will not fix a sandbox access denial. If access is denied, stop and report
+that blocker.
 
 Claude uses its configured default model. Codex uses `gpt-5.6-luna` at low
 effort because both child tasks are bounded JSON transformations. Override with

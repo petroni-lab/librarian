@@ -159,11 +159,22 @@ Ask a biomedical question — the skill activates on its own:
 > *Find me evidence on whether metformin extends lifespan in mammals.*
 
 **First run:** the skill sets itself up — the agent installs [uv](https://docs.astral.sh/uv/)
-if it is missing (you approve once), and uv installs the Python dependencies. The
-Codex app already ships the `codex` CLI the skill uses. If the `claude` or `agy`
-CLI is not installed, the agent installs it; you then sign in once by running it in
-a terminal. Copying only the `skills/librarian/` folder will not work — the skill
-needs the whole repository.
+if it is missing through the host's permission flow, and uv installs the Python
+dependencies. The agent also finds or installs the provider CLI, repairs Python
+setup, and retries the search. Codex desktop's bundled binary is supported. If no provider was explicitly chosen,
+the agent may announce and try one installed alternative.
+
+You only need to intervene for an approval or an interactive sign-in the agent
+cannot complete. Desktop login may not authenticate child CLIs; the agent will
+open the relevant CLI when possible, ask you to complete sign-in, then resume.
+Copying only `skills/librarian/` will not work — keep the whole repository.
+
+On Windows the skill uses `scripts/run.ps1`, so Bash is not required. Both
+launchers use UTF-8. The PowerShell launcher retries a broken uv managed-Python
+link once using the reported directory's working `python.exe`. If Python setup
+still fails, the agent selects a working interpreter through `UV_PYTHON`, or
+reuses a provisioned environment through `LIBRARIAN_PYTHON`. A `need uv`
+diagnostic tells the agent to install uv, regardless of the host's exit code.
 
 <details>
 <summary><b>Child model and effort controls</b></summary>
@@ -473,7 +484,8 @@ orchestrator.py                minimal FastAPI server (blocking + SSE endpoints)
 .agents/plugins/               Codex marketplace index
 skills/librarian/
   SKILL.md                     the agent skill (Agent Skills spec)
-  scripts/run.sh               launcher: resolves the project root, provisions deps via uv
+  scripts/run.sh               Bash launcher: resolves root, provisions deps via uv
+  scripts/run.ps1              Windows launcher with managed-Python link recovery
   scripts/step*.py             the four pipeline steps, reusing librarian/agent.py
 librarian/
   agent.py                     the retrieval pipeline (start here)
