@@ -140,6 +140,25 @@ def test_explicit_cli_path_recovers_with_stub(sandbox, tmp_path, provider):
     assert json.loads(result.stdout) == {"queries": ["β cells"], "relevant_ids": []}
 
 
+def test_claude_desktop_binary_found_but_not_signed_in(sandbox, tmp_path):
+    executable = make_stub(tmp_path, authenticated=False)
+    result = sandbox(
+        [
+            "/bin/bash",
+            str(SCRIPTS / "run.sh"),
+            "search",
+            "--provider",
+            "claude",
+            "β cells",
+        ],
+        LIBRARIAN_PYTHON=sys.executable,
+        CLAUDE_CODE_EXECPATH=str(executable),
+    )
+    assert result.returncode == 1, result.stderr
+    assert "Claude CLI used by Librarian is not signed in" in result.stderr
+    assert "/login" in result.stderr
+    assert "desktop app's login" in result.stderr
+    assert not result.stdout
 
 
 def test_codex_blocked_credentials_have_actionable_error(sandbox, tmp_path):

@@ -27,7 +27,23 @@ class SessionTests(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
 
+    def test_claude_desktop_binary(self):
+        with (
+            patch.dict(os.environ, {"CLAUDE_CODE_EXECPATH": "/desktop/claude.exe"}),
+            patch.object(
+                shutil,
+                "which",
+                side_effect=lambda p: p if p == "/desktop/claude.exe" else None,
+            ),
+        ):
+            self.assertEqual(sessions._require_cli("claude"), "/desktop/claude.exe")
 
+    def test_path_has_priority_over_desktop(self):
+        with (
+            patch.dict(os.environ, {"CLAUDE_CODE_EXECPATH": "/desktop/claude.exe"}),
+            patch.object(shutil, "which", return_value="/signed-in/claude"),
+        ):
+            self.assertEqual(sessions._require_cli("claude"), "/signed-in/claude")
 
     def test_explicit_path_and_invalid_override(self):
         with patch.dict(os.environ, {"LIBRARIAN_CLI_PATH": "/custom/agy.exe"}):
@@ -64,6 +80,25 @@ class SessionTests(unittest.TestCase):
             ):
                 self.assertEqual(sessions._require_cli("antigravity"), str(executable))
 
+    def test_auth_failure_on_either_stream_and_zero_exit(self):
+        for code, stdout, stderr in [
+            (1, "Not logged in · Please run /login", ""),
+            (1, "", "Not logged in"),
+            (0, "Please run /login", ""),
+        ]:
+            with (
+                self.subTest(code=code, stderr=stderr),
+                patch.object(
+                    sessions, "_require_cli", return_value="/desktop/claude.exe"
+                ),
+                patch.object(
+                    sessions,
+                    "_run_command",
+                    return_value=subprocess.CompletedProcess([], code, stdout, stderr),
+                ),
+                self.assertRaisesRegex(sessions.CliSessionError, "desktop app.*login"),
+            ):
+                sessions.run_direct_session("claude", Path("unused"))
 
     def test_unicode_subprocess_response(self):
         with tempfile.TemporaryDirectory() as tmp:
