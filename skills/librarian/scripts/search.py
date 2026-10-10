@@ -26,8 +26,9 @@ import tempfile
 import time
 from pathlib import Path
 
+from _direct_session import PROVIDERS, CliSessionError, _require_cli, run_direct_session
+
 import librarian
-from _direct_session import PROVIDERS, CliSessionError, run_direct_session
 from librarian import LibrarianAgent, load_runtime_config
 from librarian.citations import render_report
 
@@ -75,6 +76,9 @@ class CliClient:
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--provider", choices=PROVIDERS, required=True)
     parser.add_argument("query", help="the user's research question, verbatim")
@@ -82,6 +86,11 @@ def main() -> int:
     query = args.query.strip()
     if not query:
         parser.error("query must not be empty")
+
+    try:
+        _require_cli(args.provider)
+    except CliSessionError as exc:
+        raise SystemExit(f"[Librarian] Model/CLI setup: {exc}") from None
 
     client = CliClient(args.provider)
     agent = LibrarianAgent(runtime_config=load_runtime_config(), llm_client=client)
