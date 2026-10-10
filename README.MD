@@ -524,11 +524,14 @@ librarian/
   prompts/                     query planner, relevance-judge, router, summarizer prompts
   query_validation/            deterministic Europe PMC query validation
 evals/Literature/              evaluation harness: one locked environment per benchmark suite
-tests/                         unit tests
 assets/                        README images and install GIFs
 ```
 
 </details>
+
+Library and skill regression tests are maintained by downstream consumers and
+run against pinned Librarian revisions, including native Windows launcher and
+macOS sandbox checks.
 
 ---
 
