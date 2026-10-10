@@ -7,8 +7,8 @@ to ``CliClient`` (``search.py``), which hands it to ``LibrarianAgent`` as an LLM
 from __future__ import annotations
 
 import functools
-import os
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -16,7 +16,6 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
 
 PROVIDERS = ("claude", "codex", "antigravity")
 
@@ -62,14 +61,27 @@ _FALLBACK_PATHS = {
 def _require_cli(provider: str) -> str:
     """Return the installed CLI executable or stop with an actionable error."""
     cli = "agy" if provider == "antigravity" else provider
+    override = os.environ.get("LIBRARIAN_CLI_PATH", "").strip()
+    if override:
+        executable = shutil.which(str(Path(override).expanduser()))
+        if executable:
+            return executable
+        raise CliSessionError(f"LIBRARIAN_CLI_PATH does not name an executable: {override}")
     executable = shutil.which(cli)
     if executable is not None:
         return executable
     for candidate in _FALLBACK_PATHS[cli]:
-        path = Path(candidate).expanduser()
-        if os.access(path, os.X_OK):
-            return str(path)
-    raise CliSessionError(f"{provider} CLI ({cli}) is not installed or not on PATH.")
+        # which also checks Windows PATHEXT (.exe/.cmd) for full paths.
+        executable = shutil.which(str(Path(candidate).expanduser()))
+        if executable:
+            return executable
+    raise CliSessionError(
+        f"{provider} CLI ({cli}) is not installed or not on PATH. "
+        "Calling agent: follow SKILL.md setup recovery. Locate or install this CLI "
+        "through the host's normal permission flow, set LIBRARIAN_CLI_PATH if needed, "
+        "and retry. If the user did not choose a provider, you may announce and try "
+        "one installed alternative with --provider."
+    )
 
 
 def _claude_command(executable: str) -> List[str]:
@@ -217,9 +229,16 @@ def _codex_environment(runtime_path: Path) -> Dict[str, str]:
     ):
         source = source_home / filename
         target = codex_home / filename
-        if source.exists() and source.resolve() != target.resolve():
-            shutil.copy2(source, target)
-            target.chmod(0o600)
+        try:
+            if source.exists() and source.resolve() != target.resolve():
+                shutil.copy2(source, target)
+                target.chmod(0o600)
+        except OSError as error:
+            raise CliSessionError(
+                f"Codex authentication/policy cache could not be read or copied: {error}. "
+                "Calling agent: request approved file access through the host's normal "
+                "permission flow, then retry the search."
+            ) from None
     environment = os.environ.copy()
     environment["CODEX_HOME"] = str(codex_home)
     return environment
@@ -249,6 +268,7 @@ def _run_command(
                 capture_output=True,
                 env=environment,
                 text=True,
+                encoding="utf-8",
                 check=False,
                 timeout=timeout,
             )
@@ -259,6 +279,8 @@ def _run_command(
                 "Check model-provider connectivity and retry with approved network "
                 "access. Do not keep waiting or fall back to web search."
             ) from None
+        except OSError as error:
+            raise CliSessionError(f"Could not start provider CLI: {error}") from None
 
 
 def _antigravity_response(raw_output: str) -> str:
