@@ -77,10 +77,15 @@ the selected CLI and retry once:
 - claude (macOS/Linux): `curl -fsSL https://claude.ai/install.sh | bash`
 - claude (Windows PowerShell): `irm https://claude.ai/install.ps1 | iex`
 - codex: `npm install -g @openai/codex` (or `brew install codex` on macOS)
+- antigravity (macOS/Linux): `curl -fsSL https://antigravity.google/cli/install.sh | bash`
+- antigravity (Windows PowerShell): `irm https://antigravity.google/cli/install.ps1 | iex`
 
-The launcher also checks `CLAUDE_CODE_EXECPATH` for Claude desktop.
-Set `LIBRARIAN_CLI_PATH` to the full provider executable path for a custom
-installation. This does not change the selected provider.
+The Antigravity IDE does not necessarily install the standalone `agy` CLI.
+Verify with `agy --version`; see the [official installer and sign-in guide](https://antigravity.google/docs/cli/install/).
+The launcher also checks `CLAUDE_CODE_EXECPATH` for Claude desktop and
+`%LOCALAPPDATA%\agy\bin` on Windows. Set `LIBRARIAN_CLI_PATH` to the full
+provider executable path for a custom installation. This does not change the
+selected provider.
 
 A freshly installed CLI may still need a one-time sign-in. If the user did not
 explicitly choose a provider, you may try one other installed provider; announce
