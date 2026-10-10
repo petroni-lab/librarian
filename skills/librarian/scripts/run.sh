@@ -9,7 +9,7 @@
 # environment on first call, so a fresh install needs no separate setup step.
 set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$HERE/../../.."
 step="${1:?usage: run.sh search --provider <claude|codex|antigravity> \"<question>\"}"
 shift

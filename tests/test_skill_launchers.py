@@ -57,6 +57,13 @@ class SessionTests(unittest.TestCase):
             ):
                 sessions._require_cli("antigravity")
 
+    def test_antigravity_windows_installer_path(self):
+        with patch.dict(os.environ, {"LOCALAPPDATA": "/local app data"}):
+            expected = str(Path("/local app data/agy/bin/agy"))
+            with patch.object(
+                shutil, "which", side_effect=lambda p: p if p == expected else None
+            ):
+                self.assertEqual(sessions._require_cli("antigravity"), expected)
 
     def test_missing_cli_explains_provider_selection(self):
         with (

@@ -94,6 +94,32 @@ def test_missing_cli_stops_before_retrieval(sandbox, provider):
     assert not result.stdout
 
 
+def test_global_skill_symlink_resolves_repository_root(sandbox, tmp_path):
+    link = tmp_path / "global skill"
+    link.symlink_to(SCRIPTS.parent, target_is_directory=True)
+    interpreter = tmp_path / "python-probe"
+    interpreter.write_text(
+        f"#!{sys.executable}\n"
+        "import os\nfrom pathlib import Path\n"
+        "print(Path(os.environ['PYTHONPATH'].split(os.pathsep)[0]).resolve())\n",
+        encoding="utf-8",
+    )
+    interpreter.chmod(0o755)
+    result = sandbox(
+        [
+            "/bin/bash",
+            str(link / "scripts/run.sh"),
+            "search",
+            "--provider",
+            "antigravity",
+            "β cells",
+        ],
+        LIBRARIAN_PYTHON=str(interpreter),
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(ROOT.resolve())
+
+
 def make_stub(tmp_path, authenticated=True):
     executable = tmp_path / "stub-provider"
     executable.write_text(
