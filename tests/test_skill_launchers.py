@@ -18,7 +18,12 @@ import _direct_session as sessions
 
 class SessionTests(unittest.TestCase):
     def setUp(self):
-        self.env = patch.dict(os.environ, {}, clear=True)
+        system_environment = {
+            key: os.environ[key]
+            for key in ("HOME", "USERPROFILE", "SYSTEMROOT", "PATHEXT")
+            if key in os.environ
+        }
+        self.env = patch.dict(os.environ, system_environment, clear=True)
         self.env.start()
         self.addCleanup(self.env.stop)
 
@@ -116,7 +121,7 @@ class PowerShellLauncherTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(prefix="librarian launch ")
         self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
+        self.root = Path(tmp.name).resolve()
         self.scripts = self.root / "skills/librarian/scripts"
         self.scripts.mkdir(parents=True)
         shutil.copy2(SCRIPTS / "run.ps1", self.scripts)
