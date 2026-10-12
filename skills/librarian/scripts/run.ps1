@@ -51,7 +51,9 @@ if (-not $python) {
         [Console]::Error.WriteLine("[Librarian] Python setup failed. Calling agent: find a working interpreter and retry with its full path in UV_PYTHON, or reuse a provisioned environment with LIBRARIAN_PYTHON, following SKILL.md recovery. No managed directories were deleted.")
         exit $setupCode
     }
-    $python = Join-Path $root ".venv/Scripts/python.exe"
+    # uv run reuses the environment just synced, including UV_PROJECT_ENVIRONMENT.
+    & $uv.Source run --no-sync --project $root python (Join-Path $scriptDir "search.py") @scriptArgs
+    exit $LASTEXITCODE
 }
 & $python (Join-Path $scriptDir "search.py") @scriptArgs
 exit $LASTEXITCODE
