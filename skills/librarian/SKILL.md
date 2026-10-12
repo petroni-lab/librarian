@@ -75,8 +75,10 @@ installed alternative under the provider recovery rule below. Otherwise install
 the selected CLI and retry once:
 
 - claude (macOS/Linux): `curl -fsSL https://claude.ai/install.sh | bash`
+- claude (Windows PowerShell): `irm https://claude.ai/install.ps1 | iex`
 - codex: `npm install -g @openai/codex` (or `brew install codex` on macOS)
 
+The launcher also checks `CLAUDE_CODE_EXECPATH` for Claude desktop.
 Set `LIBRARIAN_CLI_PATH` to the full provider executable path for a custom
 installation. This does not change the selected provider.
 
