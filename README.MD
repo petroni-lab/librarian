@@ -18,7 +18,7 @@
 
 [![Paper](https://img.shields.io/badge/arXiv-2607.28229-b31b1b.svg?style=for-the-badge)](https://arxiv.org/abs/2607.28229)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg?style=for-the-badge)](https://www.python.org/)
-![Visitors](https://komarev.com/ghpvc/?username=petroni-lab-librarian&label=visitors&style=for-the-badge&color=brightgreen&base=1253)
+![Visitors](https://komarev.com/ghpvc/?username=petroni-lab-librarian&label=visitors&style=for-the-badge&color=brightgreen&base=1252)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![Europe PMC](https://img.shields.io/badge/Europe_PMC-40M%2B_records-0A5032?style=for-the-badge)](https://europepmc.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=for-the-badge)](#-contributing)
