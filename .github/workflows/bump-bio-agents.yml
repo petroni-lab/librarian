@@ -1,6 +1,8 @@
 # Keeps petroni-lab/bio-agents on librarian main: every push here rewrites the SHA in
 # bio-agents' requirements-librarian.txt on the branch bot/bump-librarian and opens a PR
-# if none is open. This workflow never merges; bio-agents merges the PR once its checks pass.
+# if none is open, or refreshes the open one's title and body: the body lists every librarian
+# commit between bio-agents' current pin and this one, linking each to its PR.
+# This workflow never merges; bio-agents merges the PR once its checks pass.
 name: Bump librarian in bio-agents
 on:
   push:
@@ -13,6 +15,8 @@ permissions: {}
 jobs:
   bump:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # GITHUB_TOKEN reads this repo's commit range for the PR body
     steps:
       # A GitHub App token, not GITHUB_TOKEN: GITHUB_TOKEN can't write to another repo,
       # and PRs it opens don't trigger bio-agents' checks.
@@ -32,6 +36,7 @@ jobs:
         run: |
           f=requirements-librarian.txt
           [ -f "$f" ] || { echo "bio-agents has no $f; nothing to bump"; exit 0; }
+          old=$(grep -oE 'librarian/archive/[0-9a-f]{40}' "$f" | head -1 | cut -d/ -f3)
           sed -i -E "s#(librarian/archive/)[0-9a-f]{40}(\.tar\.gz)#\1${GITHUB_SHA}\2#" "$f"
           grep -q "$GITHUB_SHA" "$f" || { echo "pin line not found in $f"; exit 1; }
           git diff --quiet && { echo "already pinned"; exit 0; }
@@ -41,17 +46,40 @@ jobs:
           git commit -am "chore: bump librarian to ${GITHUB_SHA::7}" \
             -m "https://github.com/petroni-lab/librarian/commit/${GITHUB_SHA}"
           git push --force origin bot/bump-librarian
-          echo "pushed=1" >> "$GITHUB_OUTPUT"
-      - name: Open the PR if none is open
+          { echo "pushed=1"; echo "old=$old"; } >> "$GITHUB_OUTPUT"
+      - name: Open or refresh the PR
         if: steps.pin.outputs.pushed == '1'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          LIBRARIAN_TOKEN: ${{ github.token }}
+          OLD: ${{ steps.pin.outputs.old }}
         run: |
+          # The range starts at bio-agents main's pin, so the list covers every commit the PR
+          # brings in, however many pushes it has absorbed. Squash merges end subjects in (#N).
+          changes=$(GH_TOKEN=$LIBRARIAN_TOKEN gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/compare/$OLD...$GITHUB_SHA" --jq '.commits[]
+              | (.commit.message | split("\n")[0]) as $s
+              | ([$s | capture(" \\(#(?<n>[0-9]+)\\)$")? | .n][0]) as $n
+              | if $n then "- \(env.GITHUB_REPOSITORY)#\($n): \($s | sub(" \\(#[0-9]+\\)$"; "")) (`\(.sha[0:7])`)"
+                else "- \(env.GITHUB_REPOSITORY)@\(.sha[0:7]): \($s)" end')
+          title="chore: bump librarian ${OLD::7} → ${GITHUB_SHA::7}"
+          body=$RUNNER_TEMP/body.md
+          cat > "$body" <<EOF
+          Automated: pins $GITHUB_REPOSITORY to \`${GITHUB_SHA::7}\`. merge-librarian-bump.yml merges it when lint and tests pass.
+
+          **Range:** [\`${OLD::7}...${GITHUB_SHA::7}\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$OLD...$GITHUB_SHA)
+
+          **Included changes:**
+          ${changes:-(none: the new pin is not ahead of the old one)}
+          EOF
           # `gh pr view <branch>` also finds merged/closed PRs, so list open ones explicitly.
           open=$(gh pr list --repo petroni-lab/bio-agents --head bot/bump-librarian \
-            --state open --json number --jq length)
-          if [ "$open" = "0" ]; then
+            --state open --json number --jq '.[0].number // empty')
+          if [ -z "$open" ]; then
             gh pr create --repo petroni-lab/bio-agents --head bot/bump-librarian --base main \
-              --title "chore: bump librarian to latest main" \
-              --body "Automated: pins librarian to the latest commit on petroni-lab/librarian main. merge-librarian-bump.yml merges it when lint and tests pass."
+              --title "$title" --body-file "$body"
+          else
+            # REST rather than `gh pr edit`, which also queries Projects (classic) and fails on some gh versions.
+            gh api -X PATCH "repos/petroni-lab/bio-agents/pulls/$open" \
+              -f title="$title" -F body=@"$body" > /dev/null
           fi
