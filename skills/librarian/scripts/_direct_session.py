@@ -394,7 +394,10 @@ def run_direct_session(provider: str, prompt_path: Path, timeout: float = 180) -
                 if response_path.exists()
                 else ""
             )
-    diagnostics = completed.stderr + "\n" + completed.stdout
+    # Every requested reply is a JSON object, while the CLI's sign-in error is a
+    # plain line, so stdout without "{" is a CLI message, not model output.
+    cli_stdout = "" if "{" in completed.stdout else completed.stdout
+    diagnostics = completed.stderr + "\n" + cli_stdout
     if provider == "claude" and any(
         marker in diagnostics.lower()
         for marker in ("not logged in", "please run /login", "authentication required")
