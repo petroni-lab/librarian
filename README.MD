@@ -278,6 +278,16 @@ plug in your own pieces through the constructor and `run()`:
   `LIBRARIAN_CACHE_DIR` for the built-in disk cache (see Configuration).
 - `progress_callback=` on `run()` — called with step `0`, `1`, `2` from the calling
   thread; raise from it to cancel the run.
+- `scope_guard=` on `SynthesisAgent` — decides, before routing or searching, whether a
+  question is one the agent answers. Anything with `check(query,
+  conversation_history) -> ScopeVerdict`, as defined in
+  [`scope_port.py`](librarian/scope_port.py). The default is none: every question goes
+  on. `ZeroShotScopeGuard(llm_client=...)` is a ready-made guard that asks the model
+  once, with the list of accepted questions in
+  [`prompts/scope.md`](librarian/prompts/scope.md); a question it does not accept gets
+  a one-sentence reply and no search. When only part of a question is accepted (a
+  research question plus a request for a poem, say), the agent answers that part and
+  adds a sentence after the answer saying the rest was not answered.
 
 **HTTP** — [`orchestrator.py`](orchestrator.py) is a minimal FastAPI wrapper:
 
@@ -516,12 +526,13 @@ librarian/
   config.py                    LibrarianRuntimeConfig + config.toml loader
   config.toml                  the tuning knobs themselves
   tracing_port.py              TracingPort protocol + no-op default (optional tracer=)
+  scope_port.py                ScopePort protocol + ZeroShotScopeGuard (optional scope_guard= on SynthesisAgent)
   llm_client.py                minimal OpenAI-compatible client
   literature_search.py         Europe PMC search and full-text fetch
   fulltext_cache.py            opt-in full-text cache (CachedSource)
   jats.py                      JATS full-text XML -> body paragraphs
   progress.py                  stdlib terminal spinner for live progress
-  prompts/                     query planner, relevance-judge, router, summarizer prompts
+  prompts/                     query planner, relevance-judge, router, scope, summarizer prompts
   query_validation/            deterministic Europe PMC query validation
 evals/Literature/              evaluation harness: one locked environment per benchmark suite
 tests/                         unit tests

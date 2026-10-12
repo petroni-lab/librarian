@@ -35,6 +35,7 @@ from librarian.tracing_port import NullTracer, TracingPort
 
 if TYPE_CHECKING:
     from librarian.agent import LibrarianAgent
+    from librarian.scope_port import ScopePort, ScopeVerdict
 
 # Prompts — co-located with the planner and judge prompts. The skill reads the
 # summarizer file (skills/librarian/SKILL.md, Step 2), so the citation discipline
@@ -211,6 +212,11 @@ def _render_history_block(
 class SynthesisAgent:
     """Write a grounded, cited answer to a question about the literature."""
 
+    # No guard unless the constructor is given one. Declared on the class as well, so
+    # an agent put together without ``__init__`` (a test double) screens nothing
+    # instead of failing on a missing attribute.
+    _scope_guard: ScopePort | None = None
+
     def __init__(
         self,
         llm_base_url: str | None = None,
@@ -219,6 +225,7 @@ class SynthesisAgent:
         tracer: TracingPort | None = None,
         llm_client: Any | None = None,
         librarian: LibrarianAgent | None = None,
+        scope_guard: ScopePort | None = None,
     ):
         """Build an agent that answers over passages, or searches for them itself.
 
@@ -245,6 +252,13 @@ class SynthesisAgent:
             dict, like :class:`~librarian.agent.LibrarianAgent`. Not needed when
             every ``run`` call passes its own passages.
         :type librarian: LibrarianAgent or None
+        :param scope_guard: Decides, before anything else runs, whether a question
+            is one this agent answers (see ``scope_port.py``). Anything with
+            ``check(query, conversation_history) -> ScopeVerdict``, like
+            :class:`~librarian.scope_port.ZeroShotScopeGuard`. ``None`` (the
+            default) checks nothing: every question goes on. A guard may accept
+            only part of a question (see ``ScopeVerdict.query``).
+        :type scope_guard: ScopePort or None
         """
         self.verbose = verbose
         self._tracer: TracingPort = tracer if tracer is not None else NullTracer()
@@ -257,6 +271,7 @@ class SynthesisAgent:
             else create_llm_client(base_url=llm_base_url, model_name=llm_model_name)
         )
         self.librarian = librarian
+        self._scope_guard = scope_guard
         # Filled by every run; see ``run``.
         self.last_run_debug: dict[str, Any] = {}
         self._summarizer_prompt = _SUMMARIZER_PROMPT_PATH.read_text(encoding="utf-8")
@@ -292,6 +307,53 @@ class SynthesisAgent:
         :rtype: str or None
         """
         return None
+
+    def _check_scope(
+        self,
+        query: str,
+        conversation_history: list[dict[str, str]] | None,
+    ) -> ScopeVerdict:
+        """Ask the scope guard about ``query``. Only called when there is a guard.
+
+        :param query: The user's question, as given to ``run``.
+        :type query: str
+        :param conversation_history: The earlier turns given to ``run``.
+        :type conversation_history: list[dict[str, str]] or None
+        :return: The guard's verdict.
+        :rtype: ScopeVerdict
+        """
+        with self._tracer.start_span(
+            "synthesis.screen",
+            attributes={
+                "openinference.span.kind": "CHAIN",
+                "input.value": self._trace_json({"query": query}),
+                "input.mime_type": "application/json",
+            },
+        ) as span:
+            try:
+                verdict = self._scope_guard.check(query, conversation_history)
+            except Exception as exc:
+                self._tracer.mark_span_error(span, exc)
+                raise
+            output = {"in_scope": verdict.in_scope, "label": verdict.label}
+            if verdict.query:
+                output["query"] = verdict.query
+            self._tracer.set_span_attributes(
+                span,
+                {
+                    "scope.in_scope": verdict.in_scope,
+                    "scope.label": verdict.label,
+                    "output.value": self._trace_json(output),
+                    "output.mime_type": "application/json",
+                },
+            )
+        if not verdict.in_scope:
+            self._log("scope → not accepted")
+        elif verdict.query:
+            self._log("scope → accepted in part")
+        else:
+            self._log("scope → accepted")
+        return verdict
 
     # ── Step 1: routing ──────────────────────────────────────────────────────
 
@@ -585,14 +647,22 @@ class SynthesisAgent:
         the router says the question needs the literature, and summarizes what
         came back (or returns the router's direct reply).
 
+        If the agent was given a ``scope_guard``, the guard is asked first (after
+        ``_screen_query``): a question it does not accept is answered with the
+        guard's reply and nothing else runs; when it accepts only part of the
+        question, only that part is answered, and a sentence about the rest is added
+        after the answer.
+
         After the call, ``last_run_debug`` holds this run's details, rebuilt on
         every run:
 
         * ``action`` — ``"summarize"`` (passages were given), ``"search"``,
           ``"reply"`` (the router answered directly) or ``"stopped"``
-          (``_screen_query`` returned a text).
+          (``_screen_query`` returned a text, or the scope guard did not accept
+          the question).
         * ``query`` — the query actually used: the router's standalone rewrite
-          on the search path, the question as given otherwise.
+          on the search path, the question as given otherwise (or, when the scope
+          guard accepted only part of it, that part).
         * ``language`` — the language the router reported, ``""`` if none.
         * ``passages`` — the evidence records the answer was written from.
         * ``search_queries`` — the sub-queries the librarian ran, ``[]`` when it
@@ -622,7 +692,9 @@ class SynthesisAgent:
         :param stream_callback: Called with the answer text. This base class
             delivers it in one piece, whichever way the answer was produced
             (summary, direct reply, nothing found, or a text returned by
-            ``_screen_query``); see ``_summarize``.
+            ``_screen_query`` or the scope guard); see ``_summarize``. When the
+            scope guard accepted only part of the question, the sentence about the
+            part left out follows the answer as a second piece.
         :type stream_callback: Callable[[str], None] or None
         :return: The answer text.
         :rtype: str
@@ -640,6 +712,15 @@ class SynthesisAgent:
         ) as run_span:
             try:
                 stop_text = self._screen_query(query, conversation_history)
+                note = ""
+                if stop_text is None and self._scope_guard is not None:
+                    verdict = self._check_scope(query, conversation_history)
+                    if not verdict.in_scope:
+                        stop_text = verdict.reply
+                    elif verdict.query:
+                        # Part of the question is accepted: answer only that part,
+                        # then say what was left out.
+                        query, note = verdict.query, verdict.note
                 if stop_text is not None:
                     self.last_run_debug = {
                         "action": "stopped",
@@ -676,6 +757,10 @@ class SynthesisAgent:
                         output_channel,
                         stream_callback,
                     )
+                if note:
+                    answer = f"{answer}\n\n{note}"
+                    if stream_callback:
+                        stream_callback(f"\n\n{note}")
             except Exception as exc:
                 self._tracer.mark_span_error(run_span, exc)
                 raise
