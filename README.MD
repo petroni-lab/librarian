@@ -129,26 +129,47 @@ Prefer the Claude Code CLI?
 
 <br>
 
-These have no marketplace — they discover skills from a directory, so one clone and
-one symlink covers both. Keep the clone: the skill runs the Python package inside it.
+Keep a full clone: the skill runs the Python package inside it. Antigravity IDE
+uses `~/.gemini/config/skills`, while opencode uses `~/.agents/skills`.
+See [Antigravity's skill locations](https://antigravity.google/docs/skills).
 
-macOS/Linux:
+macOS/Linux (Antigravity IDE):
 ```bash
 git clone https://github.com/petroni-lab/librarian.git && cd librarian
-mkdir -p ~/.agents/skills && ln -s "$PWD/skills/librarian" ~/.agents/skills/librarian
+mkdir -p ~/.gemini/config/skills
+ln -s "$PWD/skills/librarian" ~/.gemini/config/skills/librarian
 ```
 
-Windows (PowerShell, as Administrator or with [Developer Mode](https://learn.microsoft.com/windows/apps/get-started/enable-your-device-for-development) on):
+Windows PowerShell (Antigravity IDE; junctions need no Administrator privileges):
 ```powershell
 git clone https://github.com/petroni-lab/librarian.git; cd librarian
-New-Item -ItemType Directory -Force "$HOME\.agents\skills" | Out-Null
-New-Item -ItemType SymbolicLink -Path "$HOME\.agents\skills\librarian" -Target "$PWD\skills\librarian"
+New-Item -ItemType Directory -Force "$HOME\.gemini\config\skills" | Out-Null
+New-Item -ItemType Junction -Path "$HOME\.gemini\config\skills\librarian" -Target "$PWD\skills\librarian"
 ```
 
-Antigravity also scans the workspace `.agents/skills/` (older builds: `.agent/`);
-opencode also reads `~/.claude/skills/` and `~/.config/opencode/skills/`. Inside a
-clone of this repo no setup is needed — `.agents/skills/librarian` is already there.
-Authenticate the `agy` CLI once interactively before first use.
+For opencode, substitute `.agents/skills` for `.gemini/config/skills` above;
+for the standalone Antigravity CLI, use `.gemini/antigravity-cli/skills`.
+Antigravity also scans workspace `.agents/skills/`. On Windows with
+`core.symlinks=false`, the tracked `.agents/skills/librarian` link becomes a
+text file. The global junction above avoids it; for workspace discovery,
+replace **only that Git link placeholder** with a junction:
+
+```powershell
+# From the repository root, only when this path is a plain text file:
+if (Test-Path .agents/skills/librarian -PathType Leaf) {
+    Remove-Item .agents/skills/librarian
+    New-Item -ItemType Junction -Path "$PWD\.agents\skills\librarian" -Target "$PWD\skills\librarian"
+}
+```
+
+Inspect active skills in Antigravity's Customizations menu and start a fresh
+conversation after registration. The IDE and CLI are separate installations.
+Install `agy` using the [official guide](https://antigravity.google/docs/cli/install/):
+`irm https://antigravity.google/cli/install.ps1 | iex` on Windows, or
+`curl -fsSL https://antigravity.google/cli/install.sh | bash` on macOS/Linux.
+Verify `agy --version`, then run `agy` interactively to sign in once.
+You can explicitly use another installed, signed-in provider such as Codex
+from Antigravity by requesting `--provider codex`.
 
 </details>
 

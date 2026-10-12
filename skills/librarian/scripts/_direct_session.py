@@ -87,6 +87,10 @@ def _require_cli(provider: str) -> str:
             executable = _find_cli(bundled)
             if executable:
                 return executable
+    if provider == "antigravity" and os.environ.get("LOCALAPPDATA"):
+        executable = _find_cli(str(Path(os.environ["LOCALAPPDATA"]) / "agy" / "bin" / "agy"))
+        if executable:
+            return executable
     for candidate in _FALLBACK_PATHS[cli]:
         # which also checks Windows PATHEXT (.exe/.cmd) for full paths.
         executable = _find_cli(str(Path(candidate).expanduser()))
