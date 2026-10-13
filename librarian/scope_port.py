@@ -16,11 +16,13 @@ instead — nothing in this module knows your implementation exists.
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from librarian.llm_client import create_llm_client, parse_json_response
+from librarian.llm_client import create_llm_client
 from librarian.synthesis import _fill, _render_history_block
 
 _SCOPE_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "scope.md"
@@ -44,6 +46,71 @@ DEFAULT_NOTE = (
     "I answered the scientific research part of your message. "
     "I can only help with scientific research questions."
 )
+
+
+# The prompt wraps the question and the earlier turns in these tags, so that what the
+# user wrote is plainly data. A copy of a tag inside that text would end the block
+# early, so any such copy is made inert before the prompt is filled.
+_DELIMITER_RE = re.compile(r"<\s*/?\s*(?:question|conversation)\s*>", re.IGNORECASE)
+
+
+def _neutralize(text: str) -> str:
+    """Make any copy of the prompt's own delimiters inside ``text`` inert.
+
+    :param text: Text written by the user (a question or an earlier turn).
+    :type text: str
+    :return: ``text`` with the angle brackets of a delimiter tag replaced by
+        look-alike characters; everything else is unchanged.
+    :rtype: str
+    """
+    return _DELIMITER_RE.sub(
+        lambda m: m.group(0).replace("<", "‹").replace(">", "›"), text
+    )
+
+
+def _comparable(text: str) -> str:
+    """Reduce ``text`` to its lower-cased words, for comparing two texts.
+
+    Case, punctuation and spacing are set aside, so ``"What is CRISPR?"`` and
+    ``"what is crispr"`` compare equal.
+
+    :param text: Any text.
+    :type text: str
+    :return: The letters and digits of ``text``, lower-cased, words separated by a
+        single space.
+    :rtype: str
+    """
+    return " ".join("".join(c if c.isalnum() else " " for c in text.casefold()).split())
+
+
+def _read_verdict(response: Any) -> dict[str, Any] | None:
+    """Find the verdict in a model answer: its last JSON object with ``in_scope``.
+
+    Reads every JSON object in the answer instead of the span from the first ``{`` to
+    the last ``}``, so reasoning written before the verdict, even reasoning that
+    contains braces, does not hide it. The last such object wins: the answer comes
+    after the reasoning.
+
+    :param response: The model's answer.
+    :type response: object
+    :return: The verdict object, or ``None`` when the answer has none.
+    :rtype: dict or None
+    """
+    if not isinstance(response, str):
+        return None
+    decoder = json.JSONDecoder()
+    found: dict[str, Any] | None = None
+    pos = response.find("{")
+    while pos != -1:
+        try:
+            obj, end = decoder.raw_decode(response, pos)
+        except (ValueError, RecursionError):
+            pos = response.find("{", pos + 1)
+            continue
+        if isinstance(obj, dict) and "in_scope" in obj:
+            found = obj
+        pos = response.find("{", end)
+    return found
 
 
 @dataclass(frozen=True)
@@ -139,6 +206,13 @@ class ZeroShotScopeGuard:
         the label ``"unreadable"``: a guard that blocks on its own malfunction would
         refuse real research questions.
 
+        The verdict is the last JSON object in the answer that has an ``in_scope``
+        key, so reasoning written before it does not hide it. The question is
+        accepted in part only when the model gives both the part (``query``) and the
+        sentence about the rest (``note``), and the part differs from the question
+        once case and punctuation are set aside: a ``query`` that only echoes the
+        question is not a restriction.
+
         :param query: The user's question.
         :type query: str
         :param conversation_history: The earlier turns, oldest first.
@@ -148,30 +222,32 @@ class ZeroShotScopeGuard:
         :rtype: ScopeVerdict
         """
         history = _render_history_block(conversation_history)
-        history_block = f"Conversation so far:\n{history}\n\n" if history else ""
+        history_block = (
+            f"<conversation>\n{_neutralize(history)}\n</conversation>\n\n"
+            if history
+            else ""
+        )
         prompt = _fill(
             self._prompt,
-            {"{history_block}": history_block, "{query}": query},
+            {"{history_block}": history_block, "{query}": _neutralize(query)},
         )
         response = self.llm.chat_completion(
             [{"role": "user", "content": prompt}],
             temperature=_SCOPE_TEMPERATURE,
             max_tokens=_SCOPE_MAX_TOKENS,
         )
-        parsed = parse_json_response(response)
-        flag = parsed.get("in_scope") if isinstance(parsed, dict) else None
+        parsed = _read_verdict(response)
+        flag = parsed.get("in_scope") if parsed is not None else None
         if isinstance(flag, str):
             flag = {"true": True, "false": False}.get(flag.strip().lower())
         if not isinstance(flag, bool):
             return ScopeVerdict(in_scope=True, label="unreadable")
         if flag:
             accepted = str(parsed.get("query") or "").strip()
-            if accepted and " ".join(accepted.split()) != " ".join(query.split()):
+            note = str(parsed.get("note") or "").strip()
+            if note and accepted and _comparable(accepted) != _comparable(query):
                 return ScopeVerdict(
-                    in_scope=True,
-                    label="partial",
-                    query=accepted,
-                    note=str(parsed.get("note") or "").strip(),
+                    in_scope=True, label="partial", query=accepted, note=note
                 )
             return ScopeVerdict(in_scope=True, label="in_scope")
         reply = str(parsed.get("reply") or "").strip()

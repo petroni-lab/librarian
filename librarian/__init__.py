@@ -7,11 +7,13 @@ over those passages.
 
 from librarian.agent import LibrarianAgent
 from librarian.config import LibrarianRuntimeConfig, load_runtime_config
+from librarian.scope_port import ZeroShotScopeGuard
 from librarian.synthesis import SynthesisAgent
 
 __all__ = [
     "LibrarianAgent",
     "LibrarianRuntimeConfig",
     "SynthesisAgent",
+    "ZeroShotScopeGuard",
     "load_runtime_config",
 ]
