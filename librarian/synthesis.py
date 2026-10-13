@@ -739,10 +739,11 @@ class SynthesisAgent:
             progress_callback(3)
         self.last_run_debug["passages"] = passages
         # The sub-queries the librarian actually ran: it stashes them in its own
-        # last_run_debug, cleared at the start of every run.
-        self.last_run_debug["search_queries"] = getattr(
-            self.librarian, "last_run_debug", {}
-        ).get("search_queries", [])
+        # last_run_debug, cleared at the start of every run. Read directly: a
+        # librarian without it breaks the documented contract and must fail loudly.
+        self.last_run_debug["search_queries"] = self.librarian.last_run_debug.get(
+            "search_queries", []
+        )
         return self._summarize(
             search_query,
             passages,
