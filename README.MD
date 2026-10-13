@@ -16,15 +16,22 @@
 -->
 <!-- <img src="assets/PLACEHOLDER-demo.gif" alt="Demo: a natural-language question going in, ranked evidence passages coming out" width="90%"> -->
 
-[![Paper](https://img.shields.io/badge/arXiv-2607.28229-b31b1b.svg)](https://arxiv.org/abs/2607.28229)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
-![visitor badge](https://visitor-badge.laobi.icu/badge?page_id=petroni-lab.librarian&format=true)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Europe PMC](https://img.shields.io/badge/data-Europe%20PMC%20(40M%2B%20records)-0A5032.svg)](https://europepmc.org/)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#-contributing)
-[![Stars](https://img.shields.io/github/stars/petroni-lab/librarian?style=social)](https://github.com/petroni-lab/librarian/stargazers)
+[![Paper](https://img.shields.io/badge/arXiv-2607.28229-b31b1b.svg?style=for-the-badge)](https://arxiv.org/abs/2607.28229)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg?style=for-the-badge)](https://www.python.org/)
+![Visitors](https://komarev.com/ghpvc/?username=petroni-lab-librarian&label=visitors&style=for-the-badge&color=brightgreen&base=1252)
+[![License](https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge)](LICENSE)
+[![Europe PMC](https://img.shields.io/badge/Europe_PMC-40M%2B_records-0A5032?style=for-the-badge)](https://europepmc.org/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=for-the-badge)](#-contributing)
+[![Stars](https://img.shields.io/github/stars/petroni-lab/librarian?logo=github&style=for-the-badge)](https://github.com/petroni-lab/librarian/stargazers)
+
+[![Codex](https://img.shields.io/badge/Codex-install-412991?logo=data:image/svg%2bxml;base64,PHN2ZyByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+T3BlbkFJPC90aXRsZT48cGF0aCBmaWxsPSJ3aGl0ZSIgZD0iTTIyLjI4MTkgOS44MjExYTUuOTg0NyA1Ljk4NDcgMCAwIDAtLjUxNTctNC45MTA4IDYuMDQ2MiA2LjA0NjIgMCAwIDAtNi41MDk4LTIuOUE2LjA2NTEgNi4wNjUxIDAgMCAwIDQuOTgwNyA0LjE4MThhNS45ODQ3IDUuOTg0NyAwIDAgMC0zLjk5NzcgMi45IDYuMDQ2MiA2LjA0NjIgMCAwIDAgLjc0MjcgNy4wOTY2IDUuOTggNS45OCAwIDAgMCAuNTExIDQuOTEwNyA2LjA1MSA2LjA1MSAwIDAgMCA2LjUxNDYgMi45MDAxQTUuOTg0NyA1Ljk4NDcgMCAwIDAgMTMuMjU5OSAyNGE2LjA1NTcgNi4wNTU3IDAgMCAwIDUuNzcxOC00LjIwNTggNS45ODk0IDUuOTg5NCAwIDAgMCAzLjk5NzctMi45MDAxIDYuMDU1NyA2LjA1NTcgMCAwIDAtLjc0NzUtNy4wNzI5em0tOS4wMjIgMTIuNjA4MWE0LjQ3NTUgNC40NzU1IDAgMCAxLTIuODc2NC0xLjA0MDhsLjE0MTktLjA4MDQgNC43NzgzLTIuNzU4MmEuNzk0OC43OTQ4IDAgMCAwIC4zOTI3LS42ODEzdi02LjczNjlsMi4wMiAxLjE2ODZhLjA3MS4wNzEgMCAwIDEgLjAzOC4wNTJ2NS41ODI2YTQuNTA0IDQuNTA0IDAgMCAxLTQuNDk0NSA0LjQ5NDR6bS05LjY2MDctNC4xMjU0YTQuNDcwOCA0LjQ3MDggMCAwIDEtLjUzNDYtMy4wMTM3bC4xNDIuMDg1MiA0Ljc4MyAyLjc1ODJhLjc3MTIuNzcxMiAwIDAgMCAuNzgwNiAwbDUuODQyOC0zLjM2ODV2Mi4zMzI0YS4wODA0LjA4MDQgMCAwIDEtLjAzMzIuMDYxNUw5Ljc0IDE5Ljk1MDJhNC40OTkyIDQuNDk5MiAwIDAgMS02LjE0MDgtMS42NDY0ek0yLjM0MDggNy44OTU2YTQuNDg1IDQuNDg1IDAgMCAxIDIuMzY1NS0xLjk3MjhWMTEuNmEuNzY2NC43NjY0IDAgMCAwIC4zODc5LjY3NjVsNS44MTQ0IDMuMzU0My0yLjAyMDEgMS4xNjg1YS4wNzU3LjA3NTcgMCAwIDEtLjA3MSAwbC00LjgzMDMtMi43ODY1QTQuNTA0IDQuNTA0IDAgMCAxIDIuMzQwOCA3Ljg3MnptMTYuNTk2MyAzLjg1NThMMTMuMTAzOCA4LjM2NCAxNS4xMTkyIDcuMmEuMDc1Ny4wNzU3IDAgMCAxIC4wNzEgMGw0LjgzMDMgMi43OTEzYTQuNDk0NCA0LjQ5NDQgMCAwIDEtLjY3NjUgOC4xMDQydi01LjY3NzJhLjc5Ljc5IDAgMCAwLS40MDctLjY2N3ptMi4wMTA3LTMuMDIzMWwtLjE0Mi0uMDg1Mi00Ljc3MzUtMi43ODE4YS43NzU5Ljc3NTkgMCAwIDAtLjc4NTQgMEw5LjQwOSA5LjIyOTdWNi44OTc0YS4wNjYyLjA2NjIgMCAwIDEgLjAyODQtLjA2MTVsNC44MzAzLTIuNzg2NmE0LjQ5OTIgNC40OTkyIDAgMCAxIDYuNjgwMiA0LjY2ek04LjMwNjUgMTIuODYzbC0yLjAyLTEuMTYzOGEuMDgwNC4wODA0IDAgMCAxLS4wMzgtLjA1NjdWNi4wNzQyYTQuNDk5MiA0LjQ5OTIgMCAwIDEgNy4zNzU3LTMuNDUzN2wtLjE0Mi4wODA1TDguNzA0IDUuNDU5YS43OTQ4Ljc5NDggMCAwIDAtLjM5MjcuNjgxM3ptMS4wOTc2LTIuMzY1NGwyLjYwMi0xLjQ5OTggMi42MDY5IDEuNDk5OHYyLjk5OTRsLTIuNTk3NCAxLjQ5OTctMi42MDY3LTEuNDk5N1oiLz48L3N2Zz4=&style=for-the-badge)](#install-codex)
+[![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?logo=claude&logoColor=white&style=for-the-badge)](#install-claude)
+[![Antigravity](https://img.shields.io/badge/Antigravity-install-4285F4?logo=google&logoColor=white&style=for-the-badge)](#install-antigravity-opencode)
+[![opencode](https://img.shields.io/badge/opencode-install-1A1A1A?logo=opencode&logoColor=white&style=for-the-badge)](#install-antigravity-opencode)
 
 </div>
+
+<div align="center"><img src="assets/benchmark_summary.png" alt="Benchmark results: Librarian vs. baselines on ScholarQA-Bench, ProClaim-eval, open-form LitQA2, and LAB-Bench" width="80%"></div>
 
 **EMBL AI Librarian** is a knowledge layer that upgrades Europe PMC for AI agents. Its
 40M+ records were built for people: they expect keywords and fielded query syntax, and
@@ -75,19 +82,11 @@ Librarian improves results over strong published baselines and over web search.
 
 ## 🛠️ Install as an agent skill
 
-<div align="center">
-
-![Codex](https://img.shields.io/badge/Codex-install-412991?style=for-the-badge)
-![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?style=for-the-badge&logo=claude&logoColor=white)
-![Antigravity](https://img.shields.io/badge/Antigravity-install-4285F4?style=for-the-badge&logo=google&logoColor=white)
-![opencode](https://img.shields.io/badge/opencode-install-1A1A1A?style=for-the-badge&logo=opencode&logoColor=white)
-
-</div>
-
 Open the section for your agent for a one-minute install. No API key needed: Librarian runs on your agent's own model access.
 
+<a id="install-codex"></a>
 <details>
-<summary><b>Codex / ChatGPT (desktop app)</b> — no terminal needed</summary>
+<summary><img src="https://github.com/openai.png?size=32" width="16" height="16" alt=""> <b>Codex / ChatGPT (desktop app)</b> — no terminal needed</summary>
 
 <br>
 
@@ -105,8 +104,9 @@ codex plugin add librarian@librarian
 
 </details>
 
+<a id="install-claude"></a>
 <details>
-<summary><b>Claude (desktop app)</b> — no terminal needed</summary>
+<summary><img src="https://cdn.simpleicons.org/claude/D97757" width="16" height="16" alt=""> <b>Claude (desktop app)</b> — no terminal needed</summary>
 
 <br>
 
@@ -124,8 +124,9 @@ Prefer the Claude Code CLI?
 
 </details>
 
+<a id="install-antigravity-opencode"></a>
 <details>
-<summary><b>Antigravity / opencode</b></summary>
+<summary><img src="https://cdn.jsdelivr.net/gh/selfhst/icons/png/google-antigravity.png" width="16" height="16" alt=""> <img src="https://cdn.simpleicons.org/opencode/888888" width="16" height="16" alt=""> <b>Antigravity / opencode</b></summary>
 
 <br>
 
@@ -330,8 +331,6 @@ suites we evaluate:
 | ProClaim-eval | Agreement w/ expert consensus | 0.75 | **0.80** |
 | Open-form LitQA2 | Accuracy | 70.3 (GPT-5.4 + web search) | **78.9** |
 | LAB-Bench | Macro accuracy (GPT-5.4) | 50.5 | **54.6** (+11.3 on SeqQA) |
-
-<div align="center"><img src="assets/benchmark_summary.png" alt="Benchmark results: Librarian vs. baselines on ScholarQA-Bench, ProClaim-eval, open-form LitQA2, and LAB-Bench" width="80%"></div>
 
 Two comparisons matter and they answer different questions. Against **strong published
 baselines**, Librarian is more than **+16 Citation F1** on ScholarQA-Bench — but part of
