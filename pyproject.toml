@@ -24,7 +24,7 @@ cache = ["diskcache>=5.6"]  # opt-in on-disk full-text cache (LIBRARIAN_CACHE_DI
 
 # A real build backend so `pip install <github tarball>` builds a usable wheel
 # (how downstream projects install it). Only the library package ships:
-# main.py, orchestrator.py, skills/, evals/ and tests/ stay in the checkout.
+# main.py, orchestrator.py, skills/ and evals/ stay in the checkout.
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
