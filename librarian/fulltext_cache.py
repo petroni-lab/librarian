@@ -87,8 +87,9 @@ class CachedSource:
     and permanent failures (400/403/404/410, already confirmed by
     ``fetch_fulltext``) are cached; permanent failures too, because ~15% of the
     papers Europe PMC flags as open access have no fetchable full text.
-    Transient failures (429/5xx, timeout, connection error) are not cached, so
-    the next read fetches them again.
+    Transient failures (429/5xx, timeout, connection error) and empty 200
+    bodies are not cached, so the next read fetches them again; if the backend
+    holds one anyway (written by another program), it is read as a miss.
 
     Failures expire on a shorter clock than successes, so a paper that becomes
     open access later is not skipped for the full success TTL.
@@ -129,21 +130,28 @@ class CachedSource:
         return self.inner.search(query, page_size)
 
     def _get(self, pmcid: str) -> Optional[Fulltext]:
-        # The cached outcome, or None on a miss or a broken backend.
+        # The cached outcome if it can answer without a request, else None.
         try:
             entry = self.backend.get(_fulltext_cache_key(pmcid))
         except Exception as exc:  # down/corrupt backend -> treat as a miss
             self._warn_once(exc)
             return None
-        logger.debug("full-text cache %s pmcid=%s", "hit" if entry else "miss", pmcid)
         if not isinstance(entry, dict):
+            logger.debug("full-text cache miss pmcid=%s", pmcid)
             return None
-        return Fulltext(
+        cached = Fulltext(
             pmcid=pmcid,
             xml=str(entry.get("xml") or ""),
             error=str(entry.get("error") or ""),
             status=entry.get("status"),
+            from_cache=True,
         )
+        # Only what _set would store is a hit. Another writer sharing the
+        # backend may have stored a transient failure or an empty 200; those
+        # are fetched again rather than served until they expire.
+        usable = (cached.ok and bool(cached.xml)) or cached.permanent
+        logger.debug("full-text cache %s pmcid=%s", "hit" if usable else "stale", pmcid)
+        return cached if usable else None
 
     def _set(self, result: Fulltext) -> None:
         # Best-effort write under the outcome's TTL; a failed write is dropped.
@@ -161,7 +169,8 @@ class CachedSource:
 
         :param pmcids: PMC ids in any form; blanks are dropped.
         :type pmcids: Iterable[str]
-        :return: One ``Fulltext`` per distinct id, successes and failures alike.
+        :return: One ``Fulltext`` per distinct id, successes and failures
+            alike, in first-seen order; cached ones have ``from_cache`` set.
         :rtype: Dict[str, Fulltext]
         """
         unique = list(
@@ -183,7 +192,8 @@ class CachedSource:
                 if (result.ok and result.xml) or result.permanent:
                     self._set(result)
                 results[pmcid] = result
-        return results
+        # First-seen input order, cached and fetched ids interleaved as given.
+        return {pmcid: results[pmcid] for pmcid in unique}
 
 
 @functools.lru_cache(maxsize=None)
