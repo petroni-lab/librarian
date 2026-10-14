@@ -124,16 +124,40 @@ def _parse_result(result: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+class LiteratureSearchError(RuntimeError):
+    """Europe PMC could not complete a search (network, HTTP or malformed response).
+
+    Raised instead of returning ``[]`` so a caller can tell "the search broke"
+    from "no literature found".
+    """
+
+
 def search_scientific_literature_structured(
-    query: str, page_size: int = 100
+    query: str, page_size: int = 100, synonym: bool = False
 ) -> List[Dict[str, Any]]:
-    """Search Europe PMC and return up to ``page_size`` structured paper dicts."""
+    """Search Europe PMC and return up to ``page_size`` structured paper dicts.
+
+    :param query: Europe PMC query string.
+    :type query: str
+    :param page_size: Maximum number of papers to return.
+    :type page_size: int
+    :param synonym: Ask Europe PMC to expand MeSH/UniProt synonyms (e.g.
+        leukolysin and MMP25). Broadens recall; Europe PMC's default is off.
+    :type synonym: bool
+    :return: One paper dict per result; a missing abstract is ``""``.
+    :rtype: List[Dict[str, Any]]
+    :raises LiteratureSearchError: The request failed after retries, or the
+        response could not be parsed.
+    """
     params = {
         "query": query,
         "format": "json",
         "pageSize": page_size,
         "resultType": "core",
     }
+    if synonym:
+        # Europe PMC expects a lowercase string literal here.
+        params["synonym"] = "true"
 
     max_attempts = 4
     for attempt in range(max_attempts):
@@ -149,10 +173,16 @@ def search_scientific_literature_structured(
             if attempt < max_attempts - 1 and retryable:
                 time.sleep(2**attempt)
                 continue
-            raise Exception(f"Error performing literature search: {exc}") from exc
+            raise LiteratureSearchError(f"Europe PMC request failed: {exc}") from exc
 
-    results = response.json().get("resultList", {}).get("result", [])
-    return [_parse_result(r) for r in results]
+    try:
+        results = response.json().get("resultList", {}).get("result", [])
+        return [_parse_result(r) for r in results]
+    except (ValueError, KeyError, AttributeError, TypeError) as exc:
+        # A malformed response is an upstream failure, not an empty result set.
+        raise LiteratureSearchError(
+            f"Europe PMC response could not be parsed: {exc}"
+        ) from exc
 
 
 @dataclass
@@ -164,6 +194,8 @@ class Fulltext:
     error: str = ""
     # Last, so a positional Fulltext(pmcid, xml, error) still lands in error.
     status: "int | None" = None
+    # True when a ``CachedSource`` served this outcome instead of a request.
+    from_cache: bool = False
 
     @property
     def ok(self) -> bool:
@@ -269,7 +301,8 @@ class LiteratureSource(Protocol):
     ``journal``, ``year``, ``url``, ``abstract`` and
     ``authorsWithAffiliations``. It must raise on failure, never return ``[]``
     for an outage: the agent lets the exception fail the run, so a caller can
-    tell "the search broke" from "no literature found".
+    tell "the search broke" from "no literature found"; raise
+    ``LiteratureSearchError`` for that.
 
     ``fetch_fulltext_many`` is called once per sub-query with one id per paper,
     already normalised (``normalize_pmcid``), or ``""`` for a paper that is not
