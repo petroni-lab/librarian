@@ -32,3 +32,4 @@ evals/Literature/AstaBench/data/*/*
 supp_test
 supp_test2
 runs
+.DS_Store

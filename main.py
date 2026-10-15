@@ -34,6 +34,16 @@ load_dotenv()
 
 DEFAULT_QUERY = "What is the role of telomere shortening in cellular senescence?"
 
+# Shown whenever supplementary retrieval is on. The figures are from a 23-query
+# LAB-Bench SuppQA comparison against the default (main-text-only) pipeline.
+SUPPLEMENTARY_WARNING = """\
+WARNING: supplementary material retrieval is EXPERIMENTAL.
+  In our tests it made a query ~15x slower (median ~25 min vs ~2 min): every
+  paper's supplementary ZIP is downloaded from Europe PMC, whose servers are
+  slow and often fail (HTTP 500s, timeouts). The larger evidence pool can also
+  make the relevance-judge LLM time out and drop evidence. Use at your own risk.
+"""
+
 
 def _parse_args() -> argparse.Namespace:
     """Read the query and the one mode flag off the command line."""
@@ -58,8 +68,9 @@ def _parse_args() -> argparse.Namespace:
         "--supplementary",
         action="store_true",
         help=(
-            "also retrieve from papers' supplementary PDF/Word files "
-            "(overrides supplementary_enrichment in config.toml for this run)"
+            "EXPERIMENTAL, off by default: also retrieve from papers' "
+            "supplementary PDF/Word files (much slower; overrides "
+            "supplementary_enrichment in config.toml for this run)"
         ),
     )
     parser.add_argument(
@@ -206,6 +217,8 @@ def main() -> None:
     config = load_runtime_config()
     if args.supplementary:
         config = replace(config, supplementary_enrichment=True)
+    if config.supplementary_enrichment:
+        print(SUPPLEMENTARY_WARNING, file=sys.stderr)
     librarian = LibrarianAgent(runtime_config=config, verbose=not interactive)
 
     # Spinner disables itself off a TTY and update() is then inert, so both

@@ -299,8 +299,10 @@ class InstrumentedAgent(LibrarianAgent):
         finally:
             self.stage1_seconds = time.perf_counter() - start
 
-    def _paragraph_records_for_paper(self, paper, fulltexts):
-        records = super()._paragraph_records_for_paper(paper, fulltexts)
+    def _paragraph_records_for_paper(self, paper, fulltexts, supplementaries=None):
+        records = super()._paragraph_records_for_paper(
+            paper, fulltexts, supplementaries
+        )
         self._note("pool", paper, records)
         return records
 
@@ -313,14 +315,15 @@ class InstrumentedAgent(LibrarianAgent):
             self._note("bm25", records[0]["paper"], records)
         return top
 
-    def _supplementary_paragraphs(self, pmcid, fulltext):
-        with self._stats_lock:
-            self.counts["supp_fetches"] += 1
-            if getattr(fulltext, "supplementary_error", ""):
-                self.counts["supp_fetch_errors"] += 1
-            if getattr(fulltext, "supplementary", None):
-                self.counts["supp_fetches_with_files"] += 1
-        return super()._supplementary_paragraphs(pmcid, fulltext)
+    def _supplementary_paragraphs(self, pmcid, fulltext, supplementary):
+        if supplementary is not None:
+            with self._stats_lock:
+                self.counts["supp_fetches"] += 1
+                if not supplementary.ok:
+                    self.counts["supp_fetch_errors"] += 1
+                if supplementary.files:
+                    self.counts["supp_fetches_with_files"] += 1
+        return super()._supplementary_paragraphs(pmcid, fulltext, supplementary)
 
 
 def retrieval_stats(agent: InstrumentedAgent, budget: int) -> dict[str, Any]:

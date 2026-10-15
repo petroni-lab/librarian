@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Run one Librarian pipeline step with the project's Python environment.
+# Run a Librarian script with the project's Python environment.
 #
-#   run.sh step1_query_prompt --provider claude "<question>"
-#   run.sh step2_retrieve --run "<RUN_DIR>"
+#   run.sh search --provider claude "<question>"
 #
 # The project root is derived from this script's location, so the skill works
 # from a plugin cache, a clone, or a vendored copy — no cwd or git root needed.
@@ -10,9 +9,14 @@
 # environment on first call, so a fresh install needs no separate setup step.
 set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-step="${1:?usage: run.sh <step_name> [args...]}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+ROOT="$HERE/../../.."
+step="${1:?usage: run.sh search --provider <claude|codex|antigravity> \"<question>\"}"
 shift
+# pyproject sets [tool.uv] package = false, so neither path below installs the
+# librarian package itself; the scripts import it from the checkout.
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 
 if [ -n "${LIBRARIAN_PYTHON:-}" ]; then
     exec "$LIBRARIAN_PYTHON" "$HERE/$step.py" "$@"
@@ -21,7 +25,7 @@ fi
 # (a desktop app, an agent session) may not have on PATH yet.
 PATH="$PATH:$HOME/.local/bin:$HOME/.cargo/bin"
 command -v uv >/dev/null || {
-    echo "run.sh: need uv (https://astral.sh/uv) or LIBRARIAN_PYTHON set to a Python with Librarian's dependencies." >&2
+    echo "run.sh: need uv. Calling agent: install uv using SKILL.md through the host's normal permission flow and retry, or reuse a provisioned interpreter with LIBRARIAN_PYTHON." >&2
     exit 127
 }
-exec uv run --project "$HERE/../../.." python "$HERE/$step.py" "$@"
+exec uv run --project "$ROOT" python "$HERE/$step.py" "$@"

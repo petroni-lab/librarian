@@ -40,11 +40,13 @@ import bm25s
 import pysbd
 
 from librarian.config import LibrarianRuntimeConfig
+from librarian.fulltext_cache import default_literature_source
 from librarian.jats import extract_body_paragraphs, extract_supplementary_captions
 from librarian.literature_search import (
-    EuropePmcSource,
     Fulltext,
     LiteratureSource,
+    Supplementary,
+    declares_supplementary,
     normalize_pmcid,
 )
 from librarian.llm_client import create_llm_client, parse_json_response
@@ -157,11 +159,15 @@ def _first_affiliation(paper: Dict[str, Any]) -> str:
 def _fulltext_pmcid(paper: Dict[str, Any]) -> str:
     """The PMC id whose full text this paper is worth fetching, or ''.
 
-    Gated on the open-access flags Europe PMC returned with the search, then
-    ``fullTextIds[0]`` with ``pmcid`` as the fallback. Pure, so the batch
-    prefetch and the per-paper lookup derive the same key from the same record.
+    Gated on ``isOpenAccess``, then ``fullTextIds[0]`` with ``pmcid`` as the
+    fallback. Pure, so the batch prefetch and the per-paper lookup derive the
+    same key from the same record.
     """
-    if not (paper.get("inEPMC") or paper.get("hasFreeFullText")):
+    # Europe PMC serves fullTextXML only for its open-access subset (licensing):
+    # free-to-read records (inEPMC=Y, isOpenAccess=N) answer 500 on every call.
+    # A 500 is transient to the cache, so without this gate they are refetched
+    # every run.
+    if not paper.get("isOpenAccess"):
         return ""
     full_text_ids = paper.get("fullTextIds") or []
     raw_id = (full_text_ids[0] if full_text_ids else "") or paper.get("pmcid") or ""
@@ -511,7 +517,12 @@ def _contiguous_runs(sentences: List[_Sentence]) -> List[List[_Sentence]]:
 
 
 class LibrarianAgent:
-    """Retrieves and ranks evidence for a research question."""
+    """Retrieves and ranks evidence for a research question.
+
+    The librarian skill drives this class with a CLI-session LLM client; see
+    ``skills/librarian/scripts/search.py`` for what it relies on before changing
+    prompts, reply keys or ``last_run_debug``.
+    """
 
     def __init__(
         self,
@@ -552,7 +563,8 @@ class LibrarianAgent:
         :type llm_client: object or None
         :param literature_source: Where papers and full texts come from (see
             ``literature_search.LiteratureSource``). Defaults to
-            ``EuropePmcSource`` (plain Europe PMC REST calls, no cache).
+            ``default_literature_source()``: Europe PMC, with full texts
+            cached on disk when ``LIBRARIAN_CACHE_DIR`` is set.
         :type literature_source: LiteratureSource or None
         """
         # Full text is the default retrieval path; the flag is kept for harness
@@ -583,6 +595,7 @@ class LibrarianAgent:
         self._filter_temperature = runtime_config.filter_temperature
         self._filter_max_tokens = runtime_config.filter_max_tokens
         self._supplementary_enrichment = runtime_config.supplementary_enrichment
+        self._max_supplementary_bytes = runtime_config.max_supplementary_bytes
         self._max_supplementary_records = (
             runtime_config.max_supplementary_records_per_paper
         )
@@ -598,10 +611,7 @@ class LibrarianAgent:
         self._source: LiteratureSource = (
             literature_source
             if literature_source is not None
-            else EuropePmcSource(
-                include_supplementary=self._supplementary_enrichment,
-                max_supplementary_bytes=runtime_config.max_supplementary_bytes,
-            )
+            else default_literature_source()
         )
         self._query_prompt = _QUERY_PROMPT_PATH.read_text(encoding="utf-8")
         self._filter_prompt = _FILTER_PROMPT_PATH.read_text(encoding="utf-8")
@@ -754,7 +764,10 @@ class LibrarianAgent:
     # ── Stage 2: per-sub-query retrieval + paragraph ranking ─────────────────
 
     def _paragraph_records_for_paper(
-        self, paper: Dict[str, Any], fulltexts: Dict[str, Fulltext]
+        self,
+        paper: Dict[str, Any],
+        fulltexts: Dict[str, Fulltext],
+        supplementaries: Optional[Dict[str, Supplementary]] = None,
     ) -> List[Dict[str, Any]]:
         """One paper → its paragraph records: abstract + full-text body chunks
         (+ supplementary-document chunks, see ``_body_paragraphs``).
@@ -762,7 +775,8 @@ class LibrarianAgent:
         Abstract and body paragraphs share one pool with no distinction. Each
         record carries a ``paper`` reference so its metadata is reachable later.
 
-        ``fulltexts`` is the batch this sub-query already fetched, keyed by
+        ``fulltexts`` (and ``supplementaries``, when supplementary enrichment
+        is on) are the batches this sub-query already fetched, keyed by
         normalised PMC id; this method only looks its paper up, never fetches.
         """
         records: List[Dict[str, Any]] = []
@@ -780,7 +794,7 @@ class LibrarianAgent:
 
         if self.full_text_enrichment:
             body_metadata = _bm25_metadata(paper, _BODY_BM25_FIELDS)
-            for record in self._body_paragraphs(paper, fulltexts):
+            for record in self._body_paragraphs(paper, fulltexts, supplementaries):
                 record["bm25_metadata"] = body_metadata
                 records.append(record)
 
@@ -854,17 +868,40 @@ class LibrarianAgent:
                     )
                     self._tracer.set_span_attributes(
                         fulltext_span,
-                        {
-                            "fulltext.count": sum(
-                                1 for f in fulltexts.values() if f.ok
-                            ),
-                            "fulltext.supplementary.count": sum(
-                                1
-                                for f in fulltexts.values()
-                                if getattr(f, "supplementary", None)
-                            ),
-                        },
+                        {"fulltext.count": sum(1 for f in fulltexts.values() if f.ok)},
                     )
+
+            # Supplementary files, only when enrichment is on, only for papers
+            # whose JATS declares any, and only if the source can fetch them.
+            supplementaries: Dict[str, Supplementary] = {}
+            fetch_supplementary = getattr(
+                self._source, "fetch_supplementary_many", None
+            )
+            if self._supplementary_enrichment and fetch_supplementary is not None:
+                wanted = [
+                    pmcid
+                    for pmcid, f in fulltexts.items()
+                    if f.ok and declares_supplementary(f.xml)
+                ]
+                if wanted:
+                    with self._tracer.start_span(
+                        "librarian.epmc_supplementary",
+                        attributes={
+                            "openinference.span.kind": "RETRIEVER",
+                            "paper.count": len(wanted),
+                        },
+                    ) as supplementary_span:
+                        supplementaries = fetch_supplementary(
+                            wanted, self._max_supplementary_bytes
+                        )
+                        self._tracer.set_span_attributes(
+                            supplementary_span,
+                            {
+                                "supplementary.count": sum(
+                                    1 for r in supplementaries.values() if r.files
+                                )
+                            },
+                        )
 
             # Paragraph decomposition is counted here with BM25: both are local
             # CPU on already-fetched bytes.
@@ -878,7 +915,11 @@ class LibrarianAgent:
             ) as rank_span:
                 pool: List[Dict[str, Any]] = []
                 for paper in papers:
-                    pool.extend(self._paragraph_records_for_paper(paper, fulltexts))
+                    pool.extend(
+                        self._paragraph_records_for_paper(
+                            paper, fulltexts, supplementaries
+                        )
+                    )
 
                 top = _rank_paragraphs_for_subquery(
                     subquery, pool, self._paragraphs_per_subquery
@@ -953,7 +994,10 @@ class LibrarianAgent:
     # ── Body extraction from the prefetched full text ────────────────────────
 
     def _body_paragraphs(
-        self, paper: Dict[str, Any], fulltexts: Dict[str, Fulltext]
+        self,
+        paper: Dict[str, Any],
+        fulltexts: Dict[str, Fulltext],
+        supplementaries: Optional[Dict[str, Supplementary]] = None,
     ) -> List[Dict[str, str]]:
         """Body paragraph records for one paper from the prefetched batch (or []).
 
@@ -977,17 +1021,25 @@ class LibrarianAgent:
             return []
         records = extract_body_paragraphs(fulltext.xml)
         if self._supplementary_enrichment:
-            records.extend(self._supplementary_paragraphs(pmcid, fulltext))
+            supplementary = (supplementaries or {}).get(pmcid)
+            records.extend(
+                self._supplementary_paragraphs(pmcid, fulltext, supplementary)
+            )
         return records
 
     def _supplementary_paragraphs(
-        self, pmcid: str, fulltext: Fulltext
+        self,
+        pmcid: str,
+        fulltext: Fulltext,
+        supplementary: Optional[Supplementary],
     ) -> List[Dict[str, str]]:
         """Paragraph records from one paper's prefetched supplementary files (or [])."""
-        supplementary_error = getattr(fulltext, "supplementary_error", "")
-        if supplementary_error:
-            self._log(f"supplementary unavailable for {pmcid}: {supplementary_error}")
-        files = getattr(fulltext, "supplementary", None) or {}
+        if supplementary is None:
+            return []
+        if not supplementary.ok:
+            self._log(f"supplementary unavailable for {pmcid}: {supplementary.error}")
+            return []
+        files = supplementary.files
         if not files:
             return []
         records = extract_supplementary_records(

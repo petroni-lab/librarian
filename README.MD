@@ -16,15 +16,22 @@
 -->
 <!-- <img src="assets/PLACEHOLDER-demo.gif" alt="Demo: a natural-language question going in, ranked evidence passages coming out" width="90%"> -->
 
-[![Paper](https://img.shields.io/badge/arXiv-2607.28229-b31b1b.svg)](https://arxiv.org/abs/2607.28229)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
-![visitor badge](https://visitor-badge.laobi.icu/badge?page_id=petroni-lab.librarian&format=true)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Europe PMC](https://img.shields.io/badge/data-Europe%20PMC%20(40M%2B%20records)-0A5032.svg)](https://europepmc.org/)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#-contributing)
-[![Stars](https://img.shields.io/github/stars/petroni-lab/librarian?style=social)](https://github.com/petroni-lab/librarian/stargazers)
+[![Paper](https://img.shields.io/badge/arXiv-2607.28229-b31b1b.svg?style=for-the-badge)](https://arxiv.org/abs/2607.28229)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg?style=for-the-badge)](https://www.python.org/)
+![Visitors](https://hits.sh/github.com/petroni-lab/librarian.svg?style=for-the-badge&label=visitors&color=44cc11)
+[![License](https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge)](LICENSE)
+[![Europe PMC](https://img.shields.io/badge/Europe_PMC-40M%2B_records-0A5032?style=for-the-badge)](https://europepmc.org/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=for-the-badge)](#-contributing)
+[![Stars](https://img.shields.io/github/stars/petroni-lab/librarian?logo=github&style=for-the-badge)](https://github.com/petroni-lab/librarian/stargazers)
+
+[![Codex](https://img.shields.io/badge/Codex-install-412991?logo=data:image/svg%2bxml;base64,PHN2ZyByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+T3BlbkFJPC90aXRsZT48cGF0aCBmaWxsPSJ3aGl0ZSIgZD0iTTIyLjI4MTkgOS44MjExYTUuOTg0NyA1Ljk4NDcgMCAwIDAtLjUxNTctNC45MTA4IDYuMDQ2MiA2LjA0NjIgMCAwIDAtNi41MDk4LTIuOUE2LjA2NTEgNi4wNjUxIDAgMCAwIDQuOTgwNyA0LjE4MThhNS45ODQ3IDUuOTg0NyAwIDAgMC0zLjk5NzcgMi45IDYuMDQ2MiA2LjA0NjIgMCAwIDAgLjc0MjcgNy4wOTY2IDUuOTggNS45OCAwIDAgMCAuNTExIDQuOTEwNyA2LjA1MSA2LjA1MSAwIDAgMCA2LjUxNDYgMi45MDAxQTUuOTg0NyA1Ljk4NDcgMCAwIDAgMTMuMjU5OSAyNGE2LjA1NTcgNi4wNTU3IDAgMCAwIDUuNzcxOC00LjIwNTggNS45ODk0IDUuOTg5NCAwIDAgMCAzLjk5NzctMi45MDAxIDYuMDU1NyA2LjA1NTcgMCAwIDAtLjc0NzUtNy4wNzI5em0tOS4wMjIgMTIuNjA4MWE0LjQ3NTUgNC40NzU1IDAgMCAxLTIuODc2NC0xLjA0MDhsLjE0MTktLjA4MDQgNC43NzgzLTIuNzU4MmEuNzk0OC43OTQ4IDAgMCAwIC4zOTI3LS42ODEzdi02LjczNjlsMi4wMiAxLjE2ODZhLjA3MS4wNzEgMCAwIDEgLjAzOC4wNTJ2NS41ODI2YTQuNTA0IDQuNTA0IDAgMCAxLTQuNDk0NSA0LjQ5NDR6bS05LjY2MDctNC4xMjU0YTQuNDcwOCA0LjQ3MDggMCAwIDEtLjUzNDYtMy4wMTM3bC4xNDIuMDg1MiA0Ljc4MyAyLjc1ODJhLjc3MTIuNzcxMiAwIDAgMCAuNzgwNiAwbDUuODQyOC0zLjM2ODV2Mi4zMzI0YS4wODA0LjA4MDQgMCAwIDEtLjAzMzIuMDYxNUw5Ljc0IDE5Ljk1MDJhNC40OTkyIDQuNDk5MiAwIDAgMS02LjE0MDgtMS42NDY0ek0yLjM0MDggNy44OTU2YTQuNDg1IDQuNDg1IDAgMCAxIDIuMzY1NS0xLjk3MjhWMTEuNmEuNzY2NC43NjY0IDAgMCAwIC4zODc5LjY3NjVsNS44MTQ0IDMuMzU0My0yLjAyMDEgMS4xNjg1YS4wNzU3LjA3NTcgMCAwIDEtLjA3MSAwbC00LjgzMDMtMi43ODY1QTQuNTA0IDQuNTA0IDAgMCAxIDIuMzQwOCA3Ljg3MnptMTYuNTk2MyAzLjg1NThMMTMuMTAzOCA4LjM2NCAxNS4xMTkyIDcuMmEuMDc1Ny4wNzU3IDAgMCAxIC4wNzEgMGw0LjgzMDMgMi43OTEzYTQuNDk0NCA0LjQ5NDQgMCAwIDEtLjY3NjUgOC4xMDQydi01LjY3NzJhLjc5Ljc5IDAgMCAwLS40MDctLjY2N3ptMi4wMTA3LTMuMDIzMWwtLjE0Mi0uMDg1Mi00Ljc3MzUtMi43ODE4YS43NzU5Ljc3NTkgMCAwIDAtLjc4NTQgMEw5LjQwOSA5LjIyOTdWNi44OTc0YS4wNjYyLjA2NjIgMCAwIDEgLjAyODQtLjA2MTVsNC44MzAzLTIuNzg2NmE0LjQ5OTIgNC40OTkyIDAgMCAxIDYuNjgwMiA0LjY2ek04LjMwNjUgMTIuODYzbC0yLjAyLTEuMTYzOGEuMDgwNC4wODA0IDAgMCAxLS4wMzgtLjA1NjdWNi4wNzQyYTQuNDk5MiA0LjQ5OTIgMCAwIDEgNy4zNzU3LTMuNDUzN2wtLjE0Mi4wODA1TDguNzA0IDUuNDU5YS43OTQ4Ljc5NDggMCAwIDAtLjM5MjcuNjgxM3ptMS4wOTc2LTIuMzY1NGwyLjYwMi0xLjQ5OTggMi42MDY5IDEuNDk5OHYyLjk5OTRsLTIuNTk3NCAxLjQ5OTctMi42MDY3LTEuNDk5N1oiLz48L3N2Zz4=&style=for-the-badge)](#install-codex)
+[![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?logo=claude&logoColor=white&style=for-the-badge)](#install-claude)
+[![Antigravity](https://img.shields.io/badge/Antigravity-install-4285F4?logo=google&logoColor=white&style=for-the-badge)](#install-antigravity-opencode)
+[![opencode](https://img.shields.io/badge/opencode-install-1A1A1A?logo=opencode&logoColor=white&style=for-the-badge)](#install-antigravity-opencode)
 
 </div>
+
+<div align="center"><img src="assets/benchmark_summary.png" alt="Benchmark results: Librarian vs. baselines on ScholarQA-Bench, ProClaim-eval, open-form LitQA2, and LAB-Bench" width="80%"></div>
 
 **EMBL AI Librarian** is a knowledge layer that upgrades Europe PMC for AI agents. Its
 40M+ records were built for people: they expect keywords and fielded query syntax, and
@@ -75,19 +82,11 @@ Librarian improves results over strong published baselines and over web search.
 
 ## 🛠️ Install as an agent skill
 
-<div align="center">
-
-![Codex](https://img.shields.io/badge/Codex-install-412991?style=for-the-badge)
-![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?style=for-the-badge&logo=claude&logoColor=white)
-![Antigravity](https://img.shields.io/badge/Antigravity-install-4285F4?style=for-the-badge&logo=google&logoColor=white)
-![opencode](https://img.shields.io/badge/opencode-install-1A1A1A?style=for-the-badge&logo=opencode&logoColor=white)
-
-</div>
-
 Open the section for your agent for a one-minute install. No API key needed: Librarian runs on your agent's own model access.
 
+<a id="install-codex"></a>
 <details>
-<summary><b>Codex / ChatGPT (desktop app)</b> — no terminal needed</summary>
+<summary><img src="https://github.com/openai.png?size=32" width="16" height="16" alt=""> <b>Codex / ChatGPT (desktop app)</b> — no terminal needed</summary>
 
 <br>
 
@@ -105,8 +104,9 @@ codex plugin add librarian@librarian
 
 </details>
 
+<a id="install-claude"></a>
 <details>
-<summary><b>Claude (desktop app)</b> — no terminal needed</summary>
+<summary><img src="https://cdn.simpleicons.org/claude/D97757" width="16" height="16" alt=""> <b>Claude (desktop app)</b> — no terminal needed</summary>
 
 <br>
 
@@ -124,31 +124,53 @@ Prefer the Claude Code CLI?
 
 </details>
 
+<a id="install-antigravity-opencode"></a>
 <details>
-<summary><b>Antigravity / opencode</b></summary>
+<summary><img src="https://cdn.jsdelivr.net/gh/selfhst/icons/png/google-antigravity.png" width="16" height="16" alt=""> <img src="https://cdn.simpleicons.org/opencode/888888" width="16" height="16" alt=""> <b>Antigravity / opencode</b></summary>
 
 <br>
 
-These have no marketplace — they discover skills from a directory, so one clone and
-one symlink covers both. Keep the clone: the skill runs the Python package inside it.
+Keep a full clone: the skill runs the Python package inside it. Antigravity IDE
+uses `~/.gemini/config/skills`, while opencode uses `~/.agents/skills`.
+See [Antigravity's skill locations](https://antigravity.google/docs/skills).
 
-macOS/Linux:
+macOS/Linux (Antigravity IDE):
 ```bash
 git clone https://github.com/petroni-lab/librarian.git && cd librarian
-mkdir -p ~/.agents/skills && ln -s "$PWD/skills/librarian" ~/.agents/skills/librarian
+mkdir -p ~/.gemini/config/skills
+ln -s "$PWD/skills/librarian" ~/.gemini/config/skills/librarian
 ```
 
-Windows (PowerShell, as Administrator or with [Developer Mode](https://learn.microsoft.com/windows/apps/get-started/enable-your-device-for-development) on):
+Windows PowerShell (Antigravity IDE; junctions need no Administrator privileges):
 ```powershell
 git clone https://github.com/petroni-lab/librarian.git; cd librarian
-New-Item -ItemType Directory -Force "$HOME\.agents\skills" | Out-Null
-New-Item -ItemType SymbolicLink -Path "$HOME\.agents\skills\librarian" -Target "$PWD\skills\librarian"
+New-Item -ItemType Directory -Force "$HOME\.gemini\config\skills" | Out-Null
+New-Item -ItemType Junction -Path "$HOME\.gemini\config\skills\librarian" -Target "$PWD\skills\librarian"
 ```
 
-Antigravity also scans the workspace `.agents/skills/` (older builds: `.agent/`);
-opencode also reads `~/.claude/skills/` and `~/.config/opencode/skills/`. Inside a
-clone of this repo no setup is needed — `.agents/skills/librarian` is already there.
-Authenticate the `agy` CLI once interactively before first use.
+For opencode, substitute `.agents/skills` for `.gemini/config/skills` above;
+for the standalone Antigravity CLI, use `.gemini/antigravity-cli/skills`.
+Antigravity also scans workspace `.agents/skills/`. On Windows with
+`core.symlinks=false`, the tracked `.agents/skills/librarian` link becomes a
+text file. The global junction above avoids it; for workspace discovery,
+replace **only that Git link placeholder** with a junction:
+
+```powershell
+# From the repository root, only when this path is a plain text file:
+if (Test-Path .agents/skills/librarian -PathType Leaf) {
+    Remove-Item .agents/skills/librarian
+    New-Item -ItemType Junction -Path "$PWD\.agents\skills\librarian" -Target "$PWD\skills\librarian"
+}
+```
+
+Inspect active skills in Antigravity's Customizations menu and start a fresh
+conversation after registration. The IDE and CLI are separate installations.
+Install `agy` using the [official guide](https://antigravity.google/docs/cli/install/):
+`irm https://antigravity.google/cli/install.ps1 | iex` on Windows, or
+`curl -fsSL https://antigravity.google/cli/install.sh | bash` on macOS/Linux.
+Verify `agy --version`, then run `agy` interactively to sign in once.
+You can explicitly use another installed, signed-in provider such as Codex
+from Antigravity by requesting `--provider codex`.
 
 </details>
 
@@ -159,11 +181,23 @@ Ask a biomedical question — the skill activates on its own:
 > *Find me evidence on whether metformin extends lifespan in mammals.*
 
 **First run:** the skill sets itself up — the agent installs [uv](https://docs.astral.sh/uv/)
-if it is missing (you approve once), and uv installs the Python dependencies. The
-Codex app already ships the `codex` CLI the skill uses. If the `claude` or `agy`
-CLI is not installed, the agent installs it; you then sign in once by running it in
-a terminal. Copying only the `skills/librarian/` folder will not work — the skill
-needs the whole repository.
+if it is missing through the host's permission flow, and uv installs the Python
+dependencies. The agent also finds or installs the provider CLI, repairs Python
+setup, and retries the search. Codex desktop's bundled binary and Claude's
+`CLAUDE_CODE_EXECPATH` are supported. If no provider was explicitly chosen,
+the agent may announce and try one installed alternative.
+
+You only need to intervene for an approval or an interactive sign-in the agent
+cannot complete. Desktop login may not authenticate child CLIs; the agent will
+open the relevant CLI when possible, ask you to complete sign-in, then resume.
+Copying only `skills/librarian/` will not work — keep the whole repository.
+
+On Windows the skill uses `scripts/run.ps1`, so Bash is not required. Both
+launchers use UTF-8. The PowerShell launcher retries a broken uv managed-Python
+link once using the reported directory's working `python.exe`. If Python setup
+still fails, the agent selects a working interpreter through `UV_PYTHON`, or
+reuses a provisioned environment through `LIBRARIAN_PYTHON`. A `need uv`
+diagnostic tells the agent to install uv, regardless of the host's exit code.
 
 <details>
 <summary><b>Child model and effort controls</b></summary>
@@ -238,9 +272,23 @@ plug in your own pieces through the constructor and `run()`:
 - `literature_source=` — your search and full-text backend (a cache, a worker
   pool, ...), implementing `LiteratureSource` in
   [`literature_search.py`](librarian/literature_search.py). The default,
-  `EuropePmcSource`, calls Europe PMC directly and fetches full texts one by one.
+  `EuropePmcSource`, calls Europe PMC directly and fetches full texts concurrently.
+  To cache full texts, wrap any source in `CachedSource(inner, backend)` from
+  [`fulltext_cache.py`](librarian/fulltext_cache.py), with your own `CacheBackend`
+  (anything with `get(key)` and `set(key, value, expire_seconds)`), or set
+  `LIBRARIAN_CACHE_DIR` for the built-in disk cache (see Configuration).
 - `progress_callback=` on `run()` — called with step `0`, `1`, `2` from the calling
   thread; raise from it to cancel the run.
+- `scope_guard=` on `SynthesisAgent` — decides, before routing or searching, whether a
+  question is one the agent answers. Anything with `check(query,
+  conversation_history) -> ScopeVerdict`, as defined in
+  [`scope_port.py`](librarian/scope_port.py). The default is none: every question goes
+  on. `ZeroShotScopeGuard(llm_client=...)` is a ready-made guard that asks the model
+  once, with the list of accepted questions in
+  [`prompts/scope.md`](librarian/prompts/scope.md); a question it does not accept gets
+  a one-sentence reply and no search. When only part of a question is accepted (a
+  research question plus a request for a poem, say), the agent answers that part and
+  adds a sentence after the answer saying the rest was not answered.
 
 **HTTP** — [`orchestrator.py`](orchestrator.py) is a minimal FastAPI wrapper:
 
@@ -293,8 +341,6 @@ suites we evaluate:
 | ProClaim-eval | Agreement w/ expert consensus | 0.75 | **0.80** |
 | Open-form LitQA2 | Accuracy | 70.3 (GPT-5.4 + web search) | **78.9** |
 | LAB-Bench | Macro accuracy (GPT-5.4) | 50.5 | **54.6** (+11.3 on SeqQA) |
-
-<div align="center"><img src="assets/benchmark_summary.png" alt="Benchmark results: Librarian vs. baselines on ScholarQA-Bench, ProClaim-eval, open-form LitQA2, and LAB-Bench" width="80%"></div>
 
 Two comparisons matter and they answer different questions. Against **strong published
 baselines**, Librarian is more than **+16 Citation F1** on ScholarQA-Bench — but part of
@@ -441,13 +487,14 @@ cfg = replace(load_runtime_config(), num_subqueries=3, papers_per_subquery=20)
 agent = LibrarianAgent(runtime_config=cfg)
 ```
 
-Two settings stay outside the config file, since they belong to the process rather than
+Three settings stay outside the config file, since they belong to the process rather than
 to retrieval tuning:
 
 | Env var | Default | Meaning |
 |---|---|---|
 | `LITERATURE_BM25_STEMMING` | on | Snowball stemming for BM25 (`0` to disable) |
 | `LLM_REASONING_EFFORT` | unset | `reasoning_effort` sent on every chat completion (e.g. `low`, `medium`, `high`); omit for models that don't support it |
+| `LIBRARIAN_CACHE_DIR` | unset | Cache full texts on disk in this directory (needs the `cache` extra: `uv sync --extra cache` in a checkout, or `pip install "librarian[cache] @ https://github.com/petroni-lab/librarian/archive/<sha>.tar.gz"`; the agent skill runs without it). Successes live 60 days, confirmed 404s 7; capped at 1 GB |
 
 </details>
 
@@ -468,27 +515,33 @@ orchestrator.py                minimal FastAPI server (blocking + SSE endpoints)
 .agents/plugins/               Codex marketplace index
 skills/librarian/
   SKILL.md                     the agent skill (Agent Skills spec)
-  scripts/run.sh               launcher: resolves the project root, provisions deps via uv
+  scripts/run.sh               Bash launcher: resolves root, provisions deps via uv
+  scripts/run.ps1              Windows launcher with managed-Python link recovery
   scripts/step*.py             the four pipeline steps, reusing librarian/agent.py
 librarian/
   agent.py                     the retrieval pipeline (start here)
-  synthesis.py                 SynthesisAgent: cited answer over the evidence
+  synthesis.py                 SynthesisAgent: cited answer over the evidence; with a librarian it also routes, searches and reads the conversation history
   citations.py                 author-year citation keys + the summarizer's paper blocks
   config.py                    LibrarianRuntimeConfig + config.toml loader
   config.toml                  the tuning knobs themselves
   tracing_port.py              TracingPort protocol + no-op default (optional tracer=)
+  scope_port.py                ScopePort protocol + ZeroShotScopeGuard (optional scope_guard= on SynthesisAgent)
   llm_client.py                minimal OpenAI-compatible client
-  literature_search.py         Europe PMC search
+  literature_search.py         Europe PMC search and full-text fetch
+  fulltext_cache.py            opt-in full-text cache (CachedSource)
   jats.py                      JATS full-text XML -> body paragraphs
   progress.py                  stdlib terminal spinner for live progress
-  prompts/                     query planner, relevance-judge, summarizer prompts
+  prompts/                     query planner, relevance-judge, router, scope, summarizer prompts
   query_validation/            deterministic Europe PMC query validation
 evals/Literature/              evaluation harness: one locked environment per benchmark suite
-tests/                         unit tests
 assets/                        README images and install GIFs
 ```
 
 </details>
+
+Library and skill regression tests are maintained by downstream consumers and
+run against pinned Librarian revisions, including native Windows launcher and
+macOS sandbox checks.
 
 ---
 
