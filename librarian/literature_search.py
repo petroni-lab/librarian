@@ -26,6 +26,7 @@ import io
 import threading
 import time
 import zipfile
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Protocol
@@ -331,16 +332,17 @@ def fetch_supplementary(pmcid: str, max_bytes: int) -> Dict[str, bytes]:
 
     Only entries ending in ``SUPPLEMENTARY_EXTENSIONS`` are kept, keyed by
     their base filename. A ZIP larger than ``max_bytes`` is abandoned mid-
-    download, and an entry whose uncompressed size exceeds ``max_bytes`` is
-    skipped, so one huge supplement cannot stall or exhaust a run.
+    download, and entries are kept only while their combined uncompressed size
+    stays within ``max_bytes``, so one huge supplement cannot stall or exhaust
+    a run.
 
     :param pmcid: A PMC id in any form (see ``normalize_pmcid``).
-    :param max_bytes: Size cap for the ZIP and for each file inside it.
+    :param max_bytes: Size cap for the ZIP and for the files kept from it.
     :return: Document files by filename (empty when there are none).
     :rtype: Dict[str, bytes]
     :raises requests.exceptions.RequestException: on a failed request.
     :raises SupplementaryTooLarge: when the ZIP exceeds ``max_bytes``.
-    :raises ValueError: when the download is not a ZIP.
+    :raises ValueError: when the download is not a readable ZIP.
     """
     pmcid = normalize_pmcid(pmcid)
     with requests.get(
@@ -359,20 +361,29 @@ def fetch_supplementary(pmcid: str, max_bytes: int) -> Dict[str, bytes]:
                 raise SupplementaryTooLarge(
                     f"supplementary ZIP exceeds cap of {max_bytes} bytes"
                 )
-    try:
-        archive = zipfile.ZipFile(buffer)
-    except zipfile.BadZipFile as exc:
-        raise ValueError(f"supplementary download is not a ZIP: {exc}") from exc
-
     files: Dict[str, bytes] = {}
-    with archive:
-        for info in archive.infolist():
-            name = info.filename.rsplit("/", 1)[-1]
-            if info.is_dir() or not name.lower().endswith(SUPPLEMENTARY_EXTENSIONS):
-                continue
-            if info.file_size > max_bytes:
-                continue
-            files[name] = archive.read(info)
+    # Uncompressed bytes kept so far: a tiny ZIP can expand far past max_bytes.
+    kept = 0
+    try:
+        with zipfile.ZipFile(buffer) as archive:
+            for info in archive.infolist():
+                name = info.filename.rsplit("/", 1)[-1]
+                if info.is_dir() or not name.lower().endswith(SUPPLEMENTARY_EXTENSIONS):
+                    continue
+                if kept + info.file_size > max_bytes:
+                    continue
+                files[name] = archive.read(info)
+                kept += info.file_size
+    # A corrupt or unsupported member (bad CRC, truncated, encrypted) fails only
+    # this paper's supplement, never the run.
+    except (
+        zipfile.BadZipFile,
+        zlib.error,
+        EOFError,
+        NotImplementedError,
+        RuntimeError,
+    ) as exc:
+        raise ValueError(f"unreadable supplementary ZIP: {exc}") from exc
     return files
 
 

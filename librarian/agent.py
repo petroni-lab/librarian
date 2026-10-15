@@ -53,6 +53,7 @@ from librarian.llm_client import create_llm_client, parse_json_response
 from librarian.supplementary import (
     SUPPLEMENTARY_SECTION_TYPE,
     extract_supplementary_records,
+    require_extraction_dependencies,
 )
 from librarian.tracing_port import NullTracer, TracingPort
 
@@ -613,6 +614,14 @@ class LibrarianAgent:
             if literature_source is not None
             else default_literature_source()
         )
+        if self._supplementary_enrichment:
+            require_extraction_dependencies()
+            if getattr(self._source, "fetch_supplementary_many", None) is None:
+                logger.warning(
+                    "supplementary_enrichment is on but %s has no "
+                    "fetch_supplementary_many; no supplementary text will be retrieved",
+                    type(self._source).__name__,
+                )
         self._query_prompt = _QUERY_PROMPT_PATH.read_text(encoding="utf-8")
         self._filter_prompt = _FILTER_PROMPT_PATH.read_text(encoding="utf-8")
 

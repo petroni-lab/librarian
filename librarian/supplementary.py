@@ -141,6 +141,24 @@ def _file_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, str]
         }
 
 
+def require_extraction_dependencies() -> None:
+    """Raise a clear ``ImportError`` when the ``supplementary`` extra is missing.
+
+    The PDF/Word readers are imported lazily inside a per-file ``except
+    Exception``, which would otherwise turn a missing package into silently
+    empty supplements.
+    """
+    try:
+        import docx  # noqa: F401
+        import pypdf  # noqa: F401
+    except ImportError as exc:
+        raise ImportError(
+            "supplementary_enrichment needs the `supplementary` extra: "
+            "`uv sync --extra supplementary` or "
+            '`pip install "librarian[supplementary]"`'
+        ) from exc
+
+
 def extract_supplementary_records(
     files: Dict[str, bytes],
     captions: Dict[str, str],

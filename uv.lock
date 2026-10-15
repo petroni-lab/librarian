@@ -221,10 +221,8 @@ dependencies = [
     { name = "bm25s" },
     { name = "fastapi" },
     { name = "mashumaro", extra = ["toml"] },
-    { name = "pypdf" },
     { name = "pysbd" },
     { name = "pystemmer" },
-    { name = "python-docx" },
     { name = "python-dotenv" },
     { name = "requests" },
     { name = "uvicorn" },
@@ -234,6 +232,10 @@ dependencies = [
 cache = [
     { name = "diskcache" },
 ]
+supplementary = [
+    { name = "pypdf" },
+    { name = "python-docx" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -241,15 +243,15 @@ requires-dist = [
     { name = "diskcache", marker = "extra == 'cache'", specifier = ">=5.6" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "mashumaro", extras = ["toml"], specifier = ">=3.22" },
-    { name = "pypdf", specifier = ">=4.0" },
+    { name = "pypdf", marker = "extra == 'supplementary'", specifier = ">=4.0" },
     { name = "pysbd", specifier = ">=0.3" },
     { name = "pystemmer", specifier = ">=2.2" },
-    { name = "python-docx", specifier = ">=1.1" },
+    { name = "python-docx", marker = "extra == 'supplementary'", specifier = ">=1.1" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "requests", specifier = ">=2.31" },
     { name = "uvicorn", specifier = ">=0.27" },
 ]
-provides-extras = ["cache"]
+provides-extras = ["cache", "supplementary"]
 
 [[package]]
 name = "lxml"
