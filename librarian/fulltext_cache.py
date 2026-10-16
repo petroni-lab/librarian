@@ -1,7 +1,8 @@
 """Opt-in look-aside full-text cache in front of any ``LiteratureSource``.
 
 ``CachedSource`` wraps a source and serves cached full-text outcomes before
-asking it for the rest. It stores them in a ``CacheBackend``; ``DiskCacheBackend``
+asking it for the rest; supplementary-file downloads (only made when
+``supplementary_enrichment`` is on) are cached the same way, under their own key. It stores them in a ``CacheBackend``; ``DiskCacheBackend``
 is the one shipped here, behind the ``cache`` extra (``uv sync --extra cache`` in
 a checkout, or ``pip install "librarian[cache] @ <commit tarball URL>"``).
 ``default_literature_source`` is what ``LibrarianAgent`` uses when given no
@@ -9,6 +10,7 @@ source: plain Europe PMC, or Europe PMC behind the disk cache when
 ``LIBRARIAN_CACHE_DIR`` names a directory.
 """
 
+import dataclasses
 import functools
 import logging
 import os
@@ -19,8 +21,11 @@ from librarian.literature_search import (
     EuropePmcSource,
     Fulltext,
     LiteratureSource,
+    Supplementary,
+    SupplementaryOptions,
     normalize_pmcid,
 )
+from librarian.supplementary import EXTRACTOR_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +85,16 @@ def _fulltext_cache_key(pmcid: str) -> str:
     return "epmc:ft:" + normalize_pmcid(pmcid)
 
 
+def _made_under(options: SupplementaryOptions) -> Dict[str, Any]:
+    # What a cached supplementary entry is valid for.
+    return {**dataclasses.asdict(options), "extractor_version": EXTRACTOR_VERSION}
+
+
+def _supplementary_cache_key(pmcid: str) -> str:
+    # Same scheme as full texts, separate namespace.
+    return "epmc:supp:" + normalize_pmcid(pmcid)
+
+
 class CachedSource:
     """A ``LiteratureSource`` that puts a look-aside cache in front of another.
 
@@ -93,6 +108,14 @@ class CachedSource:
 
     Failures expire on a shorter clock than successes, so a paper that becomes
     open access later is not skipped for the full success TTL.
+
+    Supplementary outcomes follow the same rules: a success (even one with no
+    readable documents) and a permanent failure (400/403/404/410, or a ZIP over
+    the size cap) are cached; transient ones are not. What is cached is the
+    extracted records, not the files: about 1.5% of their size, and no
+    re-parsing on a hit. Each entry records the ``SupplementaryOptions`` and
+    ``supplementary.EXTRACTOR_VERSION`` it was made under, and is a miss under
+    any other, so changing a setting or the extractors never serves stale records.
     """
 
     def __init__(
@@ -195,6 +218,90 @@ class CachedSource:
         # First-seen input order, cached and fetched ids interleaved as given.
         return {pmcid: results[pmcid] for pmcid in unique}
 
+    def _get_supplementary(
+        self, pmcid: str, options: SupplementaryOptions
+    ) -> Optional[Supplementary]:
+        # The cached outcome if it can answer without a request, else None.
+        try:
+            entry = self.backend.get(_supplementary_cache_key(pmcid))
+        except Exception as exc:  # down/corrupt backend -> treat as a miss
+            self._warn_once(exc)
+            return None
+        if not isinstance(entry, dict) or entry.get("made_under") != _made_under(
+            options
+        ):
+            logger.debug("supplementary cache miss pmcid=%s", pmcid)
+            return None
+        cached = Supplementary(
+            pmcid=pmcid,
+            records=list(entry.get("records") or []),
+            error=str(entry.get("error") or ""),
+            status=entry.get("status"),
+            too_large=bool(entry.get("too_large")),
+            from_cache=True,
+        )
+        # As for full texts: only what _set_supplementary would store is a hit.
+        usable = cached.ok or cached.permanent
+        logger.debug(
+            "supplementary cache %s pmcid=%s", "hit" if usable else "stale", pmcid
+        )
+        return cached if usable else None
+
+    def _set_supplementary(
+        self, result: Supplementary, options: SupplementaryOptions
+    ) -> None:
+        # Best-effort write under the outcome's TTL; a failed write is dropped.
+        ttl_days = self.ttl_days if result.ok else self.negative_ttl_days
+        entry = {
+            "records": result.records,
+            "status": result.status,
+            "error": result.error,
+            "too_large": result.too_large,
+            "made_under": _made_under(options),
+        }
+        try:
+            self.backend.set(
+                _supplementary_cache_key(result.pmcid), entry, int(ttl_days * 86400)
+            )
+        except Exception as exc:  # never break retrieval over a cache write
+            self._warn_once(exc)
+
+    def fetch_supplementary_many(
+        self, pmcids: Iterable[str], options: SupplementaryOptions
+    ) -> Dict[str, Supplementary]:
+        """Serve cached supplementary outcomes, fetch the rest from the wrapped source.
+
+        A wrapped source without ``fetch_supplementary_many`` contributes
+        nothing, so its misses are simply left out of the result.
+
+        :param pmcids: PMC ids in any form; blanks are dropped.
+        :type pmcids: Iterable[str]
+        :param options: Size budget, record cap and PDF extractor, passed to
+            the source and checked against cached entries.
+        :type options: SupplementaryOptions
+        :return: One ``Supplementary`` per distinct id the cache or source
+            answered, in first-seen order; cached ones have ``from_cache`` set.
+        :rtype: Dict[str, Supplementary]
+        """
+        unique = list(
+            dict.fromkeys(normalize_pmcid(p) for p in pmcids if str(p or "").strip())
+        )
+        results: Dict[str, Supplementary] = {}
+        misses: List[str] = []
+        for pmcid in unique:
+            cached = self._get_supplementary(pmcid, options)
+            if cached is not None:
+                results[pmcid] = cached
+            else:
+                misses.append(pmcid)
+        fetch = getattr(self.inner, "fetch_supplementary_many", None)
+        if misses and fetch is not None:
+            for pmcid, result in fetch(misses, options).items():
+                if result.ok or result.permanent:
+                    self._set_supplementary(result, options)
+                results[pmcid] = result
+        return {pmcid: results[pmcid] for pmcid in unique if pmcid in results}
+
 
 @functools.lru_cache(maxsize=None)
 def _source_for(directory: str) -> LiteratureSource:
@@ -213,7 +320,8 @@ def default_literature_source() -> LiteratureSource:
     """The source ``LibrarianAgent`` uses when the caller passes none.
 
     Plain Europe PMC requests, unless ``LIBRARIAN_CACHE_DIR`` names a
-    directory: then full texts are cached on disk there. A cache that cannot
+    directory: then full texts (and supplementary files, when requested) are
+    cached on disk there. A cache that cannot
     be opened (read-only directory, ``diskcache`` not installed, ...) is
     logged and skipped, never fatal.
 
