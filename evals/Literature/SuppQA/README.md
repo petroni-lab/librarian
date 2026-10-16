@@ -50,7 +50,7 @@ Keep `--max-workers` the same for both arms, or the timings are not comparable.
 - **Accuracy:** accuracy, precision and coverage per arm, over the questions every arm
   answered. Also main→supp flips with an exact McNemar p-value.
 - **Retrieval time:** seconds per question for Stage 2 + 3, with a per-span breakdown
-  (supplementary downloads fall under `fulltext`, their parsing under `bm25`) and the
+  (supplementary downloads and their text extraction have their own column) and the
   number of supplementary fetch errors.
 - **Evidence by source:** main-text vs supplementary paragraphs in the candidate pool,
   kept by BM25, sent to the judge, cited, and shown to the answering model.

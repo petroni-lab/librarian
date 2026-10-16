@@ -110,7 +110,8 @@ def timing_report(arms: dict[str, dict[str, dict]], ids: set[str]) -> str:
     """Retrieval seconds per question; Stage 1 is left out of the headline since
     a run with --queries-from skips the query-planning LLM call."""
     spans = ["librarian.stage2_paragraphs", "librarian.epmc_search",
-             "librarian.epmc_fulltext", "librarian.bm25_rank", "librarian.filter_relevance"]
+             "librarian.epmc_fulltext", "librarian.epmc_supplementary",
+             "librarian.bm25_rank", "librarian.filter_relevance"]
     rows = []
     for arm, by_id in arms.items():
         stats = [by_id[i]["retrieval"] for i in ids if by_id[i].get("retrieval")]
@@ -129,11 +130,11 @@ def timing_report(arms: dict[str, dict[str, dict]], ids: set[str]) -> str:
     return (
         "## Retrieval time per question, seconds (Stage 2 + 3)\n\n"
         "Sub-query spans (search, fulltext, bm25) are summed over the parallel "
-        "sub-query threads, so they are thread-seconds, not wall-clock. fulltext "
-        "includes the supplementary downloads; bm25 includes parsing them.\n\n"
+        "sub-query threads, so they are thread-seconds, not wall-clock. supp "
+        "download includes extracting the files' text (none on a cache hit).\n\n"
         + _table(
             ["arm", "median", "p90", "mean", "stage 2 wall", "search Σ", "fulltext Σ",
-             "bm25+parse Σ", "judge", "supp fetch errors"],
+             "supp download+parse Σ", "bm25 Σ", "judge", "supp fetch errors"],
             rows,
         )
     )
@@ -212,6 +213,47 @@ def target_report(arms: dict[str, dict[str, dict]], ids: set[str]) -> str:
     return out
 
 
+def judge_report(arms: dict[str, dict[str, dict]], ids: set[str]) -> str:
+    """Stage-3 request sizes and failures: what the judge was sent, and whether
+    a failed request's split-and-retry halves recovered it."""
+    rows = []
+    for arm, by_id in arms.items():
+        stats = [by_id[i]["retrieval"] for i in ids if by_id[i].get("retrieval")]
+        requests = [r for s in stats for r in s.get("judge_requests", [])]
+        if not requests:
+            continue
+        failed = [r for r in requests if r["error"]]
+        rows.append([
+            arm, len(requests), len(failed),
+            sum(r["depth"] > 0 for r in requests),
+            sum(any(r["error"] for r in s.get("judge_requests", [])) for s in stats),
+            f"{statistics.median(r['sentences'] for r in requests):.0f}",
+            max(r["sentences"] for r in requests),
+            max(r["prompt_chars"] for r in requests),
+            max(s.get("longest_passage_chars", 0) for s in stats),
+            f"{statistics.median(r['seconds'] for r in requests):.1f}",
+            max(r["seconds"] for r in requests),
+        ])
+    errors = Counter(
+        r["error"].split(":", 1)[0]
+        for by_id in arms.values() for i in ids if by_id[i].get("retrieval")
+        for r in by_id[i]["retrieval"].get("judge_requests", []) if r["error"]
+    )
+    return (
+        "## Stage-3 judge requests\n\n"
+        "One row per arm, over every judge LLM call; a failed or unparseable "
+        "request is retried as two halves (depth > 0).\n\n"
+        + _table(
+            ["arm", "requests", "failed", "split retries", "questions with a failure",
+             "median sentences", "max sentences", "max prompt chars",
+             "longest passage chars", "median s", "max s"],
+            rows,
+        )
+        + ("\n\nFailure causes: " + ", ".join(f"{k} {v}" for k, v in errors.most_common())
+           if errors else "")
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_dirs", nargs="+")
@@ -236,6 +278,7 @@ def main(argv: list[str] | None = None) -> None:
         if retrieval_arms:
             sections += [
                 timing_report(retrieval_arms, ids),
+                judge_report(retrieval_arms, ids),
                 evidence_report(retrieval_arms, ids),
                 target_report(retrieval_arms, ids),
             ]

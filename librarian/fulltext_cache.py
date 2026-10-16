@@ -10,7 +10,7 @@ source: plain Europe PMC, or Europe PMC behind the disk cache when
 ``LIBRARIAN_CACHE_DIR`` names a directory.
 """
 
-import base64
+import dataclasses
 import functools
 import logging
 import os
@@ -22,8 +22,10 @@ from librarian.literature_search import (
     Fulltext,
     LiteratureSource,
     Supplementary,
+    SupplementaryOptions,
     normalize_pmcid,
 )
+from librarian.supplementary import EXTRACTOR_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +85,11 @@ def _fulltext_cache_key(pmcid: str) -> str:
     return "epmc:ft:" + normalize_pmcid(pmcid)
 
 
+def _made_under(options: SupplementaryOptions) -> Dict[str, Any]:
+    # What a cached supplementary entry is valid for.
+    return {**dataclasses.asdict(options), "extractor_version": EXTRACTOR_VERSION}
+
+
 def _supplementary_cache_key(pmcid: str) -> str:
     # Same scheme as full texts, separate namespace.
     return "epmc:supp:" + normalize_pmcid(pmcid)
@@ -102,12 +109,13 @@ class CachedSource:
     Failures expire on a shorter clock than successes, so a paper that becomes
     open access later is not skipped for the full success TTL.
 
-    Supplementary downloads follow the same rules: a success (even a ZIP with no
+    Supplementary outcomes follow the same rules: a success (even one with no
     readable documents) and a permanent failure (400/403/404/410, or a ZIP over
-    the size cap) are cached; transient ones are not. Each entry records the
-    ``max_bytes`` it was fetched under, and is a miss under a different cap,
-    since the cap decides which files were kept and whether the ZIP was too large.
-    Files are stored base64-encoded so entries stay JSON-able.
+    the size cap) are cached; transient ones are not. What is cached is the
+    extracted records, not the files: about 1.5% of their size, and no
+    re-parsing on a hit. Each entry records the ``SupplementaryOptions`` and
+    ``supplementary.EXTRACTOR_VERSION`` it was made under, and is a miss under
+    any other, so changing a setting or the extractors never serves stale records.
     """
 
     def __init__(
@@ -210,26 +218,23 @@ class CachedSource:
         # First-seen input order, cached and fetched ids interleaved as given.
         return {pmcid: results[pmcid] for pmcid in unique}
 
-    def _get_supplementary(self, pmcid: str, max_bytes: int) -> Optional[Supplementary]:
+    def _get_supplementary(
+        self, pmcid: str, options: SupplementaryOptions
+    ) -> Optional[Supplementary]:
         # The cached outcome if it can answer without a request, else None.
         try:
             entry = self.backend.get(_supplementary_cache_key(pmcid))
         except Exception as exc:  # down/corrupt backend -> treat as a miss
             self._warn_once(exc)
             return None
-        if not isinstance(entry, dict) or entry.get("max_bytes") != max_bytes:
+        if not isinstance(entry, dict) or entry.get("made_under") != _made_under(
+            options
+        ):
             logger.debug("supplementary cache miss pmcid=%s", pmcid)
-            return None
-        try:
-            files = {
-                name: base64.b64decode(data)
-                for name, data in (entry.get("files") or {}).items()
-            }
-        except (ValueError, TypeError, AttributeError):  # corrupt entry -> miss
             return None
         cached = Supplementary(
             pmcid=pmcid,
-            files=files,
+            records=list(entry.get("records") or []),
             error=str(entry.get("error") or ""),
             status=entry.get("status"),
             too_large=bool(entry.get("too_large")),
@@ -242,18 +247,17 @@ class CachedSource:
         )
         return cached if usable else None
 
-    def _set_supplementary(self, result: Supplementary, max_bytes: int) -> None:
+    def _set_supplementary(
+        self, result: Supplementary, options: SupplementaryOptions
+    ) -> None:
         # Best-effort write under the outcome's TTL; a failed write is dropped.
         ttl_days = self.ttl_days if result.ok else self.negative_ttl_days
         entry = {
-            "files": {
-                name: base64.b64encode(data).decode("ascii")
-                for name, data in result.files.items()
-            },
+            "records": result.records,
             "status": result.status,
             "error": result.error,
             "too_large": result.too_large,
-            "max_bytes": max_bytes,
+            "made_under": _made_under(options),
         }
         try:
             self.backend.set(
@@ -263,7 +267,7 @@ class CachedSource:
             self._warn_once(exc)
 
     def fetch_supplementary_many(
-        self, pmcids: Iterable[str], max_bytes: int
+        self, pmcids: Iterable[str], options: SupplementaryOptions
     ) -> Dict[str, Supplementary]:
         """Serve cached supplementary outcomes, fetch the rest from the wrapped source.
 
@@ -272,8 +276,9 @@ class CachedSource:
 
         :param pmcids: PMC ids in any form; blanks are dropped.
         :type pmcids: Iterable[str]
-        :param max_bytes: Size cap per ZIP and per file, passed to the source.
-        :type max_bytes: int
+        :param options: Size budget, record cap and PDF extractor, passed to
+            the source and checked against cached entries.
+        :type options: SupplementaryOptions
         :return: One ``Supplementary`` per distinct id the cache or source
             answered, in first-seen order; cached ones have ``from_cache`` set.
         :rtype: Dict[str, Supplementary]
@@ -284,16 +289,16 @@ class CachedSource:
         results: Dict[str, Supplementary] = {}
         misses: List[str] = []
         for pmcid in unique:
-            cached = self._get_supplementary(pmcid, max_bytes)
+            cached = self._get_supplementary(pmcid, options)
             if cached is not None:
                 results[pmcid] = cached
             else:
                 misses.append(pmcid)
         fetch = getattr(self.inner, "fetch_supplementary_many", None)
         if misses and fetch is not None:
-            for pmcid, result in fetch(misses, max_bytes).items():
+            for pmcid, result in fetch(misses, options).items():
                 if result.ok or result.permanent:
-                    self._set_supplementary(result, max_bytes)
+                    self._set_supplementary(result, options)
                 results[pmcid] = result
         return {pmcid: results[pmcid] for pmcid in unique if pmcid in results}
 

@@ -321,7 +321,7 @@ class InstrumentedAgent(LibrarianAgent):
                 self.counts["supp_fetches"] += 1
                 if not supplementary.ok:
                     self.counts["supp_fetch_errors"] += 1
-                if supplementary.files:
+                if supplementary.records:
                     self.counts["supp_fetches_with_files"] += 1
         return super()._supplementary_paragraphs(pmcid, fulltext, supplementary)
 
@@ -364,6 +364,8 @@ def retrieval_stats(agent: InstrumentedAgent, budget: int) -> dict[str, Any]:
         "counts": dict(counts),
         "target_cited": target is not None,
         "key": {k: round(v, 3) for k, v in key.items()},
+        "longest_passage_chars": debug.get("longest_passage_chars", 0),
+        "judge_requests": debug.get("judge_requests", []),
     }
 
 
