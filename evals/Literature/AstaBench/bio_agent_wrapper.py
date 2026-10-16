@@ -876,9 +876,8 @@ class BioAgentAstaWrapper:
         # No usage_callback: the shipped client discards the response's usage
         # block, so the librarian's own token counts are not recoverable here.
         # See compat.build_llm_client.
-        passages = await asyncio.to_thread(librarian.run, query)
-        dbg = getattr(librarian, "last_run_debug", {}) or {}
-        return self._shape_librarian_result(passages, dbg)
+        result = await asyncio.to_thread(librarian.run, query)
+        return self._shape_librarian_result(result.papers, result.debug)
 
     async def _run_librarian_via_api(self, query: str) -> dict[str, Any]:
         """Same contract as :meth:`_run_librarian_agent`, retrieved remotely.
@@ -887,7 +886,7 @@ class BioAgentAstaWrapper:
         shaping below is shared with the in-process path. Two things are thinner
         here and deliberately so: there is no ``usage_callback``, because token
         counts are per-pod rather than per-call (they remain recoverable from
-        Phoenix via the run's user label), and ``last_run_debug`` is limited to
+        Phoenix via the run's user label), and the exposed debug data is limited to
         ``search_queries`` -- the payload carries no ``final_pmids`` or per-stage
         counts. Enabled by LITERATURE_VIA_API=true.
         """
@@ -913,9 +912,9 @@ class BioAgentAstaWrapper:
     ) -> dict[str, Any]:
         """Adapt librarian records into the {papers_raw, evidence} LitQA2 contract.
 
-        :param passages: Per-paper records from ``LibrarianAgent.run`` (or the
+        :param passages: Per-paper records from ``LibrarianAgent.run(...).papers`` (or the
             identical records the orchestrator returns).
-        :param dbg: The agent's ``last_run_debug``, or the subset the API exposes.
+        :param dbg: The retrieval result's ``debug``, or the subset the API exposes.
         """
         papers_raw: list[dict[str, Any]] = []
         evidence: list[dict[str, Any]] = []
@@ -950,7 +949,7 @@ class BioAgentAstaWrapper:
             )
         # Surface librarian diagnostics so eval debug shows retrieval activity
         # (query count, candidates retrieved, final pmids) for parity analysis.
-        # LibrarianAgent.last_run_debug carries search_queries, query_count,
+        # RunResult.debug carries search_queries, query_count,
         # paragraph_count, relevant_count and final_pmids. It has never carried
         # "candidate_pmids"; reading that key reported raw_search_pmid_count=0
         # on every run, which reads as "Europe PMC returned nothing". Pass the

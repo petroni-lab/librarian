@@ -3,15 +3,15 @@
 Two ways in, both through ``run``:
 
 * ``run(query, passages)`` — the caller already has the evidence: the records
-  :class:`~librarian.agent.LibrarianAgent`'s ``run`` returns, live or
+  :class:`~librarian.agent.LibrarianAgent`'s ``run(...).papers`` returns, live or
   round-tripped through a run's ``04_evidence.json``. The agent writes the
   grounded answer and nothing else.
 * ``run(query)`` on an agent built with ``librarian=...`` — the full path: route
   the question, search the literature when it needs it, then answer.
 
-Either way ``run`` returns the answer text. Everything else that happened (the
-route taken, the standalone query, the passages, the sub-queries) is left in
-``last_run_debug`` for the caller to read.
+Either way ``run`` returns a ``SynthesisResult`` with the answer text and
+per-call debug details (route, standalone query, passages and sub-queries).
+An instance can serve concurrent calls when its injected collaborators can too.
 
 ``run`` is a thin sequence of small methods — ``_screen_query``, ``_route``,
 ``_retrieve``, ``_output_formatting``, ``_build_prompt``, ``_summarize`` — and
@@ -26,9 +26,11 @@ import datetime
 import json
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from librarian.agent import RunResult
 from librarian.citations import render_papers
 from librarian.llm_client import create_llm_client, parse_json_response
 from librarian.tracing_port import NullTracer, TracingPort
@@ -209,6 +211,14 @@ def _render_history_block(
     )
 
 
+@dataclass
+class SynthesisResult:
+    """Answer text and debug details belonging to one synthesis call."""
+
+    answer: str
+    debug: dict[str, Any]
+
+
 class SynthesisAgent:
     """Write a grounded, cited answer to a question about the literature."""
 
@@ -248,9 +258,9 @@ class SynthesisAgent:
         :type llm_client: object or None
         :param librarian: The retrieval agent to search with when ``run`` is
             called without passages. Anything with ``run(query, max_loops=...,
-            progress_callback=...) -> list[dict]`` and a ``last_run_debug``
-            dict, like :class:`~librarian.agent.LibrarianAgent`. Not needed when
-            every ``run`` call passes its own passages.
+            progress_callback=...) -> RunResult``, like
+            :class:`~librarian.agent.LibrarianAgent`. Not needed when every
+            ``run`` call passes its own passages.
         :type librarian: LibrarianAgent or None
         :param scope_guard: Decides, before anything else runs, whether a question
             is one this agent answers (see ``scope_port.py``). Anything with
@@ -272,8 +282,6 @@ class SynthesisAgent:
         )
         self.librarian = librarian
         self._scope_guard = scope_guard
-        # Filled by every run; see ``run``.
-        self.last_run_debug: dict[str, Any] = {}
         self._summarizer_prompt = _SUMMARIZER_PROMPT_PATH.read_text(encoding="utf-8")
         self._router_prompt = _ROUTER_PROMPT_PATH.read_text(encoding="utf-8")
 
@@ -449,7 +457,7 @@ class SynthesisAgent:
         max_loops: int = 1,
         on_progress: Callable[[str], None] | None = None,
         progress_callback: Callable[[int], None] | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> RunResult:
         """Search the literature for ``query`` with the librarian given at construction.
 
         :param query: The standalone search query.
@@ -462,9 +470,8 @@ class SynthesisAgent:
         :param progress_callback: Passed to the librarian: called with the
             retrieval step number.
         :type progress_callback: Callable[[int], None] or None
-        :return: The ranked evidence records, as ``LibrarianAgent.run`` returns
-            them.
-        :rtype: list[dict[str, Any]]
+        :return: Ranked evidence records and retrieval debug details.
+        :rtype: RunResult
         :raises ValueError: If the agent was built without a ``librarian``.
         """
         if self.librarian is None:
@@ -639,7 +646,7 @@ class SynthesisAgent:
         progress_callback: Callable[[int], None] | None = None,
         output_channel: str | None = None,
         stream_callback: Callable[[str], None] | None = None,
-    ) -> str:
+    ) -> SynthesisResult:
         """Answer ``query``, from ``passages`` if given, else by searching first.
 
         With ``passages`` the agent only summarizes them: no routing, no search.
@@ -653,8 +660,7 @@ class SynthesisAgent:
         question, only that part is answered, and a sentence about the rest is added
         after the answer.
 
-        After the call, ``last_run_debug`` holds this run's details, rebuilt on
-        every run:
+        ``SynthesisResult.debug`` holds this run's details:
 
         * ``action`` — ``"summarize"`` (passages were given), ``"search"``,
           ``"reply"`` (the router answered directly) or ``"stopped"``
@@ -670,8 +676,8 @@ class SynthesisAgent:
 
         :param query: The user's question.
         :type query: str
-        :param passages: Evidence records, as ``LibrarianAgent.run`` returns
-            them; their order is the citation order. When given (even empty),
+        :param passages: Evidence records from ``LibrarianAgent.run(...).papers``;
+            their order is the citation order. When given (even empty),
             the router and the search are skipped.
         :type passages: list[dict[str, Any]] or None
         :param conversation_history: Earlier turns, oldest first, as
@@ -696,12 +702,12 @@ class SynthesisAgent:
             scope guard accepted only part of the question, the sentence about the
             part left out follows the answer as a second piece.
         :type stream_callback: Callable[[str], None] or None
-        :return: The answer text.
-        :rtype: str
+        :return: The answer text and this call's debug details.
+        :rtype: SynthesisResult
         :raises ValueError: If the question has to be searched and the agent
             was built without a ``librarian``.
         """
-        self.last_run_debug = {}
+        debug: dict[str, Any] = {}
         with self._tracer.start_span(
             "synthesis.run",
             attributes={
@@ -722,7 +728,7 @@ class SynthesisAgent:
                         # then say what was left out.
                         query, note = verdict.query, verdict.note
                 if stop_text is not None:
-                    self.last_run_debug = {
+                    debug = {
                         "action": "stopped",
                         "query": query,
                         "language": "",
@@ -733,7 +739,7 @@ class SynthesisAgent:
                         stream_callback(stop_text)
                     answer = stop_text
                 elif passages is not None:
-                    self.last_run_debug = {
+                    debug = {
                         "action": "summarize",
                         "query": query,
                         "language": "",
@@ -750,6 +756,7 @@ class SynthesisAgent:
                 else:
                     answer = self._route_retrieve_summarize(
                         query,
+                        debug,
                         conversation_history,
                         max_loops,
                         on_progress,
@@ -767,23 +774,24 @@ class SynthesisAgent:
             self._tracer.set_span_attributes(
                 run_span,
                 {
-                    "route.action": self.last_run_debug["action"],
-                    "retrieval.passage_count": len(self.last_run_debug["passages"]),
+                    "route.action": debug["action"],
+                    "retrieval.passage_count": len(debug["passages"]),
                     "output.value": self._trace_json(
                         {
-                            "action": self.last_run_debug["action"],
-                            "passage_count": len(self.last_run_debug["passages"]),
+                            "action": debug["action"],
+                            "passage_count": len(debug["passages"]),
                             "summary_preview": answer[:500],
                         }
                     ),
                     "output.mime_type": "application/json",
                 },
             )
-        return answer
+        return SynthesisResult(answer, debug)
 
     def _route_retrieve_summarize(
         self,
         query: str,
+        debug: dict[str, Any],
         conversation_history: list[dict[str, str]] | None,
         max_loops: int,
         on_progress: Callable[[str], None] | None,
@@ -791,11 +799,7 @@ class SynthesisAgent:
         output_channel: str | None,
         stream_callback: Callable[[str], None] | None,
     ) -> str:
-        """The full path of ``run``: route, then reply directly or search + summarize.
-
-        ``last_run_debug`` is filled as each step completes, so a caller that
-        catches an exception from the search still finds the route in it.
-        """
+        """Route, then reply directly or search + summarize, filling call-local debug."""
         decision = self._route(query, conversation_history)
         # A reply with no text is no reply. _route already turns one into a
         # search; this keeps a subclass's own _route from reaching the user with
@@ -804,31 +808,29 @@ class SynthesisAgent:
         search_query = decision.get("query") or query
         language = decision.get("language", "")
         self._log(f"route → {'reply' if replying else 'search'}")
-        self.last_run_debug = {
-            "action": "reply" if replying else "search",
-            "query": search_query,
-            "language": language,
-            "passages": [],
-            "search_queries": [],
-        }
+        debug.update(
+            {
+                "action": "reply" if replying else "search",
+                "query": search_query,
+                "language": language,
+                "passages": [],
+                "search_queries": [],
+            }
+        )
 
         if replying:
             if stream_callback:
                 stream_callback(decision["answer"])
             return decision["answer"]
 
-        passages = self._retrieve(
+        retrieval = self._retrieve(
             search_query, max_loops, on_progress, progress_callback
         )
+        passages = retrieval.papers
         if progress_callback:
             progress_callback(3)
-        self.last_run_debug["passages"] = passages
-        # The sub-queries the librarian actually ran: it stashes them in its own
-        # last_run_debug, cleared at the start of every run. Read directly: a
-        # librarian without it breaks the documented contract and must fail loudly.
-        self.last_run_debug["search_queries"] = self.librarian.last_run_debug.get(
-            "search_queries", []
-        )
+        debug["passages"] = passages
+        debug["search_queries"] = retrieval.debug.get("search_queries", [])
         return self._summarize(
             search_query,
             passages,

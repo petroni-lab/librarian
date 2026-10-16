@@ -31,7 +31,7 @@ import os
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -497,12 +497,41 @@ def _group_contiguous_spans(sentences: List[_Sentence]) -> List[str]:
 # ── Agent ────────────────────────────────────────────────────────────────────
 
 
+@dataclass
+class RunResult:
+    """Ranked evidence and debug details belonging to one retrieval call."""
+
+    papers: List[Dict[str, Any]]
+    debug: Dict[str, Any]
+
+
+@dataclass
+class _RunState:
+    on_progress: Optional[Callable[[str], None]] = None
+    filter_done: int = 0
+    filter_total: int = 0
+    filter_lock: Any = field(default_factory=threading.Lock)
+
+    def progress(self, message: str) -> None:
+        if self.on_progress is not None:
+            self.on_progress(message)
+
+    def on_filter_batch_done(self, _future) -> None:
+        with self.filter_lock:
+            self.filter_done += 1
+            done, total = self.filter_done, self.filter_total
+        self.progress(f"Judging paragraph relevance · {done}/{total} batches")
+
+
 class LibrarianAgent:
     """Retrieves and ranks evidence for a research question.
 
     The librarian skill drives this class with a CLI-session LLM client; see
     ``skills/librarian/scripts/search.py`` for what it relies on before changing
-    prompts, reply keys or ``last_run_debug``.
+    prompts, reply keys or ``RunResult``.
+
+    Per-call state is local, so an instance can serve concurrent runs. Injected
+    clients, literature sources and tracers must also support concurrent calls.
     """
 
     def __init__(
@@ -554,14 +583,6 @@ class LibrarianAgent:
         self.verbose = verbose
         self._tracer: TracingPort = tracer if tracer is not None else NullTracer()
 
-        # Progress reporting: set per-run in run(); _progress() no-ops when unset.
-        self._on_progress: Optional[Callable[[str], None]] = None
-        # Shared counters so the Stage-3 judge batches report one "N/M
-        # batches" figure to the progress callback.
-        self._filter_lock = threading.Lock()
-        self._filter_done = 0
-        self._filter_total = 0
-
         # Tuning knobs come from the caller-supplied config (see config.py —
         # load_runtime_config() for the shipped config.toml, or a
         # dataclasses.replace() of it for a one-off override).
@@ -596,21 +617,9 @@ class LibrarianAgent:
         if self.verbose:
             print(f"[Librarian] {message}")
 
-    def _progress(self, message: str) -> None:
-        """Report the current pipeline stage to the run's progress callback (if any)."""
-        if self._on_progress is not None:
-            self._on_progress(message)
-
     def _trace_json(self, payload: Any) -> str:
         """Serialize compact trace payloads safely for span attributes."""
         return json.dumps(payload, default=str, ensure_ascii=True)
-
-    def _on_filter_batch_done(self, _future) -> None:
-        """Bump the shared filter-batch counter and report N/M to the callback."""
-        with self._filter_lock:
-            self._filter_done += 1
-            done, total = self._filter_done, self._filter_total
-        self._progress(f"Judging paragraph relevance · {done}/{total} batches")
 
     # ── Step 1: query generation ─────────────────────────────────────────────
 
@@ -1026,7 +1035,7 @@ class LibrarianAgent:
         return []
 
     def _relevance_filter(
-        self, query: str, paragraphs: List[Dict[str, Any]]
+        self, query: str, paragraphs: List[Dict[str, Any]], state: _RunState
     ) -> List[Dict[str, Any]]:
         """Stage 3: judge the paragraph pool → relevant papers, ranked.
 
@@ -1073,11 +1082,11 @@ class LibrarianAgent:
                 }
             )
 
-        ranked_ids = self._judge_items_in_batches(query, template, items)
+        ranked_ids = self._judge_items_in_batches(query, template, items, state)
         return self._papers_from_cited_sentences(ranked_ids, registry, paper_by_id)
 
     def _judge_items_in_batches(
-        self, query: str, template: str, items: List[Dict[str, Any]]
+        self, query: str, template: str, items: List[Dict[str, Any]], state: _RunState
     ) -> List[str]:
         """Send items to the judge in batches of ``paragraphs_per_judge_batch`` → sentence ids.
 
@@ -1088,8 +1097,8 @@ class LibrarianAgent:
         """
         batch_size = self._paragraphs_per_judge_batch
         batches = [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
-        with self._filter_lock:
-            self._filter_total += len(batches)
+        with state.filter_lock:
+            state.filter_total += len(batches)
         ranked_ids: List[str] = []
         bound_evaluate = self._tracer.bind_current_trace_context(self._evaluate_batch)
         # Judge batches only wait on the LLM (network I/O) — size to
@@ -1098,7 +1107,7 @@ class LibrarianAgent:
             futures = []
             for batch in batches:
                 future = pool.submit(bound_evaluate, query, batch, template)
-                future.add_done_callback(self._on_filter_batch_done)
+                future.add_done_callback(state.on_filter_batch_done)
                 futures.append(future)
             for future in futures:  # submission order == batch order
                 ranked_ids.extend(future.result())
@@ -1163,11 +1172,11 @@ class LibrarianAgent:
         max_loops: int = 1,
         on_progress: Optional[Callable[[str], None]] = None,
         progress_callback: Optional[Callable[[int], None]] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> RunResult:
         """Single-pass retrieval: Stage 1 (generate + validate sub-queries) →
         Stage 2 (per-sub-query paragraph BM25 ranking) → Stage 3 (relevance
         judge over the paragraphs, regrouped to papers). Returns every paper
-        the judge keeps — the result is variable-size, with no final top_k cap.
+        the judge keeps in ``RunResult.papers``, with no final top_k cap.
 
         ``on_progress`` (optional) is called with a short human-readable
         status string at each pipeline stage — wire it to a spinner for live
@@ -1179,7 +1188,7 @@ class LibrarianAgent:
         exception it raises propagates out of ``run``, so a caller can use it
         as a cancellation checkpoint.
 
-        After the call, ``last_run_debug`` describes this run: at least
+        ``RunResult.debug`` describes this run: at least
         ``search_queries`` once Stage 1 is done, plus ``query_count``,
         ``paragraph_count``, ``relevant_count`` and ``final_pmids`` when
         Stage 3 ran.
@@ -1188,7 +1197,7 @@ class LibrarianAgent:
             raise NotImplementedError(
                 "LibrarianAgent only supports max_loops=1 (single pass)."
             )
-        self._on_progress = on_progress
+        state = _RunState(on_progress=on_progress)
 
         with self._tracer.start_span(
             "librarian.run",
@@ -1199,7 +1208,8 @@ class LibrarianAgent:
             },
         ) as run_span:
             try:
-                evidence_items = self._run(query, progress_callback)
+                result = self._run(query, state, progress_callback)
+                evidence_items = result.papers
             except Exception as exc:
                 self._tracer.mark_span_error(run_span, exc)
                 raise
@@ -1223,27 +1233,23 @@ class LibrarianAgent:
                     "output.mime_type": "application/json",
                 },
             )
-        return evidence_items
+        return result
 
     def _run(
         self,
         query: str,
+        state: _RunState,
         progress_callback: Optional[Callable[[int], None]] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> RunResult:
         """Internal implementation of the single-pass retrieval pipeline."""
-        # Cleared first: every return below, including the early one and an
-        # exception, must describe this run and not leave the previous one's
-        # numbers behind.
-        self.last_run_debug: Dict[str, Any] = {}
+        debug: Dict[str, Any] = {}
         if progress_callback:
             progress_callback(0)
-        self._filter_done = 0  # reset so a reused agent reports fresh counts
-        self._filter_total = 0
-        self._progress("Generating search queries")
+        state.progress("Generating search queries")
         generated = self._generate_queries(query)
-        self._progress("Validating queries")
+        state.progress("Validating queries")
         queries = self._validate_queries(generated)
-        self.last_run_debug["search_queries"] = queries
+        debug["search_queries"] = queries
         if progress_callback:
             progress_callback(1)
 
@@ -1252,7 +1258,7 @@ class LibrarianAgent:
         # paragraphs. Concatenate every sub-query's paragraphs into one flat
         # pool, merging duplicate/overlapping selections. This flat paragraph
         # pool is what Stage 3 judges.
-        self._progress(f"Searching Europe PMC · {len(queries)} sub-queries")
+        state.progress(f"Searching Europe PMC · {len(queries)} sub-queries")
         with self._tracer.start_span(
             "librarian.stage2_paragraphs",
             attributes={
@@ -1285,11 +1291,11 @@ class LibrarianAgent:
                 },
             )
         self._log(f"{len(paragraphs)} paragraphs after Stage 2")
-        self._progress(f"Found {len(paragraphs)} candidate paragraphs")
+        state.progress(f"Found {len(paragraphs)} candidate paragraphs")
         if progress_callback:
             progress_callback(2)
         if not paragraphs:
-            return []
+            return RunResult([], debug)
 
         # Stage 3 — the relevance judge reads the paragraphs (batched by
         # paragraphs_per_judge_batch paragraphs per call; a paper's
@@ -1297,7 +1303,7 @@ class LibrarianAgent:
         # those regroup by paper. Returns the cited papers, most→least
         # relevant. Stage 3's output IS the final set — variable size, with
         # no final top_k cap applied on top of the judge's decision.
-        self._progress("Judging paragraph relevance")
+        state.progress("Judging paragraph relevance")
         with self._tracer.start_span(
             "librarian.filter_relevance",
             attributes={
@@ -1307,7 +1313,7 @@ class LibrarianAgent:
                 "input.mime_type": "application/json",
             },
         ) as filter_span:
-            relevant_papers = self._relevance_filter(query, paragraphs)
+            relevant_papers = self._relevance_filter(query, paragraphs, state)
             self._tracer.set_span_attributes(
                 filter_span,
                 {
@@ -1319,7 +1325,7 @@ class LibrarianAgent:
                 },
             )
 
-        self.last_run_debug.update(
+        debug.update(
             {
                 "query_count": len(queries),
                 "paragraph_count": len(paragraphs),
@@ -1334,4 +1340,4 @@ class LibrarianAgent:
             len(relevant_papers),
         )
 
-        return [self._passage_from_paper(p) for p in relevant_papers]
+        return RunResult([self._passage_from_paper(p) for p in relevant_papers], debug)

@@ -253,7 +253,8 @@ from librarian.agent import LibrarianAgent
 from librarian.config import load_runtime_config
 
 agent = LibrarianAgent(runtime_config=load_runtime_config())
-for paper in agent.run("does metformin extend lifespan in mammals?"):
+result = agent.run("does metformin extend lifespan in mammals?")
+for paper in result.papers:
     print(paper["title"], paper["year"], paper["pmid"])
     for snippet in paper["evidence_snippets"]:
         print("  ", snippet)
@@ -352,6 +353,14 @@ gives **+6.8 Bio / +10.9 Neu**. See the paper for the full evaluation and ablati
 ---
 
 ## 🔄 Pipeline Overview
+
+`LibrarianAgent.run()` returns `RunResult(papers, debug)`. Use `.papers` for the
+ranked evidence and `.debug` for sub-queries and retrieval counts.
+`SynthesisAgent.run()` returns `SynthesisResult(answer, debug)`; use `.answer`
+for the generated text. These replace the previous list/string returns and
+`last_run_debug` attribute. Results belong to each call, including concurrent
+calls on one agent. Injected clients, sources, scope guards, and tracers must
+also support concurrent calls; configure agents before sharing them.
 
 `LibrarianAgent.run(query)` is a single pass (`librarian/agent.py`):
 

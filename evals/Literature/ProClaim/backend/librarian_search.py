@@ -23,7 +23,7 @@ Design notes
       LIBRARIAN_LLM_BASE_URL — OpenAI-compatible base URL of the vLLM service
                                (e.g. http://localhost:8000/v1)
       LIBRARIAN_LLM_MODEL    — model id served by that endpoint
-* ``LibrarianAgent.run()`` returns a list of passage dicts, each carrying the
+* ``LibrarianAgent.run().papers`` is a list of passage dicts, each carrying the
   compact ``evidence_snippets`` (~250-word cited passage as contiguous spans) for a
   paper together with pmid, title, authors, and filter-cited sentences.  ProClaim
   still runs its own fact extraction over ``PaperRecord.full_text``.
@@ -52,9 +52,7 @@ logger = logging.getLogger(__name__)
 # Librarian agent construction
 # ---------------------------------------------------------------------------
 
-# Cached per-thread librarian agent. LibrarianAgent keeps per-run mutable
-# state (last_run_debug), so parallel retrieval calls should not share one
-# instance.
+# Reuse each thread's configured librarian across retrieval calls.
 _LIBRARIAN_AGENT_LOCAL = threading.local()
 
 
@@ -198,7 +196,7 @@ def _add_librarian_papers(
 def _fetch_librarian_passages(query: str) -> list:
     """Run one librarian search for *query* and return passage dicts.
 
-    ``LibrarianAgent.run()`` returns a list of passage dicts (one per relevant
+    ``LibrarianAgent.run().papers`` is a list of passage dicts (one per relevant
     paper).  Import/runtime failures raise so evaluation runs do not confuse
     infrastructure errors with successful searches that found no papers.
     """
@@ -210,7 +208,7 @@ def _fetch_librarian_passages(query: str) -> list:
         raise RuntimeError(message) from exc
 
     try:
-        passages = agent.run(query=query)
+        passages = agent.run(query=query).papers
     except Exception as exc:
         message = f"Librarian search failed for query {query!r}: {exc}"
         logger.warning(message)
