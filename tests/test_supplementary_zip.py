@@ -105,10 +105,10 @@ class SupplementaryAwsTest(unittest.TestCase):
                 "PMC1.2/fig1.jpg": 10,
                 "PMC1.2/a.docx": 600,
                 "PMC1.2/b.pdf": 600,  # would exceed the 1000-byte budget
-                "PMC1.2/c.xlsx": 300,  # not a readable document type
+                "PMC1.2/c.xlsx": 300,
             }
         )
-        responses = {"a.docx": b"a" * 600}
+        responses = {"a.docx": b"a" * 600, "c.xlsx": b"c" * 300}
 
         def get(url, **kwargs):
             if url.endswith("/"):
@@ -117,8 +117,8 @@ class SupplementaryAwsTest(unittest.TestCase):
 
         with mock.patch("requests.get", side_effect=get) as calls:
             files = fetch_supplementary("PMC1", max_bytes=1000)
-        self.assertEqual(sorted(files), ["a.docx"])
-        self.assertEqual(calls.call_count, 2)  # listing + one download
+        self.assertEqual(sorted(files), ["a.docx", "c.xlsx"])
+        self.assertEqual(calls.call_count, 3)  # listing + two downloads
 
 
 class SupplementaryAwsListingTest(unittest.TestCase):
