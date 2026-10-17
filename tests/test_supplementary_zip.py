@@ -17,6 +17,7 @@ from librarian.literature_search import (
     EuropePmcSource,
     _fetch_supplementary_zip,
     fetch_supplementary,
+    SupplementaryOptions,
     fetch_supplementary_outcome,
 )
 
@@ -91,9 +92,11 @@ class SupplementaryZipTest(unittest.TestCase):
         body[body.index(b"A" * 1000)] ^= 0xFF  # break the member's CRC
         listing = _listing({})  # not in the PMC bucket: falls back to the ZIP
         with mock.patch("requests.get", side_effect=[listing, _response(bytes(body))]):
-            result = fetch_supplementary_outcome("PMC1", max_bytes=1_000_000)
+            result = fetch_supplementary_outcome(
+                "PMC1", SupplementaryOptions(max_bytes=1_000_000, max_records=40)
+            )
         self.assertFalse(result.ok)
-        self.assertEqual(result.files, {})
+        self.assertEqual(result.records, [])
 
 
 class SupplementaryAwsTest(unittest.TestCase):
@@ -145,11 +148,12 @@ class SupplementaryAwsListingTest(unittest.TestCase):
             return _not_found() if url.endswith("b.txt") else _response(b"alpha")
 
         source = CachedSource(EuropePmcSource(), DictBackend())
+        options = SupplementaryOptions(max_bytes=1000, max_records=40)
         with mock.patch("requests.get", side_effect=get) as calls:
-            first = source.fetch_supplementary_many(["PMC1"], 1000)["PMC1"]
-            second = source.fetch_supplementary_many(["PMC1"], 1000)["PMC1"]
+            first = source.fetch_supplementary_many(["PMC1"], options)["PMC1"]
+            second = source.fetch_supplementary_many(["PMC1"], options)["PMC1"]
         self.assertTrue(first.ok)
-        self.assertEqual(first.files, {"a.txt": b"alpha"})
+        self.assertEqual([r["supplementary_file"] for r in first.records], ["a.txt"])
         self.assertEqual(first.failed, ["b.txt"])
         self.assertFalse(second.from_cache)  # incomplete: fetched again, not cached
         self.assertEqual(source.backend.store, {})

@@ -46,6 +46,9 @@ logger = logging.getLogger(__name__)
 logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 SUPPLEMENTARY_SECTION_TYPE = "supplementary"
+# Part of every cached supplementary entry's validity: bump it whenever the
+# records these extractors produce change, so cached records are re-extracted.
+EXTRACTOR_VERSION = 1
 
 # Consecutive short paragraphs (headings, list items, one-line captions) are
 # merged until a block reaches this many words, so BM25 does not score a bare
@@ -371,6 +374,26 @@ def require_extraction_dependencies() -> None:
         ) from exc
 
 
+def apply_captions(
+    records: List[Dict[str, str]], captions: Dict[str, str]
+) -> List[Dict[str, str]]:
+    """Records relabelled ``Supplementary: <caption> [<file>]`` where the paper's
+    JATS captions their file; extraction labels them by file name alone, so
+    records can be cached independently of the article XML.
+    """
+    labelled = []
+    for record in records:
+        name = record["supplementary_file"]
+        caption = captions.get(name)
+        if caption:
+            title = record["section_title"].replace(
+                f"Supplementary: {name}", f"Supplementary: {caption} [{name}]", 1
+            )
+            record = {**record, "section_title": title}
+        labelled.append(record)
+    return labelled
+
+
 def extract_supplementary_records(
     files: Dict[str, bytes],
     captions: Dict[str, str],
@@ -396,15 +419,9 @@ def extract_supplementary_records(
     per_file: List[List[Dict[str, str]]] = []
     seen: set = set()
     for name in sorted(files):
-        caption = captions.get(name)
-        label = (
-            f"Supplementary: {caption} [{name}]"
-            if caption
-            else f"Supplementary: {name}"
-        )
         records: List[Dict[str, str]] = []
         try:
-            for record in _file_records(name, files[name], label):
+            for record in _file_records(name, files[name], f"Supplementary: {name}"):
                 if record["text"] in seen:
                     continue
                 seen.add(record["text"])
@@ -425,4 +442,4 @@ def extract_supplementary_records(
     # position, and reading order keeps adjacent cited pages adjacent.
     kept = interleaved[:max_records]
     order = {id(r): i for i, r in enumerate(r for records in per_file for r in records)}
-    return sorted(kept, key=lambda r: order[id(r)])
+    return apply_captions(sorted(kept, key=lambda r: order[id(r)]), captions)
