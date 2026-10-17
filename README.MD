@@ -354,13 +354,16 @@ gives **+6.8 Bio / +10.9 Neu**. See the paper for the full evaluation and ablati
 
 ## 🔄 Pipeline Overview
 
-`LibrarianAgent.run()` returns `RunResult(papers, debug)`. Use `.papers` for the
-ranked evidence and `.debug` for sub-queries and retrieval counts.
+Migration to 2.0: `LibrarianAgent.run()` returns `RunResult(papers, debug)`.
+Use `.papers` for the ranked evidence and `.debug` for sub-queries and
+retrieval counts.
 `SynthesisAgent.run()` returns `SynthesisResult(answer, debug)`; use `.answer`
 for the generated text. These replace the previous list/string returns and
 `last_run_debug` attribute. Results belong to each call, including concurrent
 calls on one agent. Injected clients, sources, scope guards, and tracers must
-also support concurrent calls; configure agents before sharing them.
+also support concurrent calls; configure agents before sharing them. If a
+pipeline fails, the re-raised exception carries partial details in `run_debug`
+(including attempted sub-queries and, for synthesis, the route and query).
 
 `LibrarianAgent.run(query)` is a single pass (`librarian/agent.py`):
 

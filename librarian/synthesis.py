@@ -660,6 +660,10 @@ class SynthesisAgent:
         question, only that part is answered, and a sentence about the rest is added
         after the answer.
 
+        Pipeline failures are re-raised with partial debug details on the
+        exception's ``run_debug`` attribute, including retrieval sub-queries
+        when a literature search fails.
+
         ``SynthesisResult.debug`` holds this run's details:
 
         * ``action`` — ``"summarize"`` (passages were given), ``"search"``,
@@ -769,6 +773,10 @@ class SynthesisAgent:
                     if stream_callback:
                         stream_callback(f"\n\n{note}")
             except Exception as exc:
+                retrieval_debug = getattr(exc, "run_debug", {})
+                if "search_queries" in retrieval_debug:
+                    debug["search_queries"] = retrieval_debug["search_queries"]
+                exc.run_debug = debug
                 self._tracer.mark_span_error(run_span, exc)
                 raise
             self._tracer.set_span_attributes(

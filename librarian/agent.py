@@ -507,16 +507,21 @@ class RunResult:
 
 @dataclass
 class _RunState:
+    """Mutable state owned by one retrieval call, including its judge workers."""
+
+    debug: Dict[str, Any] = field(default_factory=dict)
     on_progress: Optional[Callable[[str], None]] = None
     filter_done: int = 0
     filter_total: int = 0
-    filter_lock: Any = field(default_factory=threading.Lock)
+    filter_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def progress(self, message: str) -> None:
+        """Send a status message to this call's progress callback."""
         if self.on_progress is not None:
             self.on_progress(message)
 
     def on_filter_batch_done(self, _future) -> None:
+        """Count judge completions under a lock: callbacks run on pool threads."""
         with self.filter_lock:
             self.filter_done += 1
             done, total = self.filter_done, self.filter_total
@@ -1191,7 +1196,8 @@ class LibrarianAgent:
         ``RunResult.debug`` describes this run: at least
         ``search_queries`` once Stage 1 is done, plus ``query_count``,
         ``paragraph_count``, ``relevant_count`` and ``final_pmids`` when
-        Stage 3 ran.
+        Stage 3 ran. Pipeline failures are re-raised with partial debug details
+        on the exception's ``run_debug`` attribute.
         """
         if max_loops != 1:
             raise NotImplementedError(
@@ -1211,6 +1217,7 @@ class LibrarianAgent:
                 result = self._run(query, state, progress_callback)
                 evidence_items = result.papers
             except Exception as exc:
+                exc.run_debug = state.debug
                 self._tracer.mark_span_error(run_span, exc)
                 raise
             self._tracer.set_span_attributes(
@@ -1242,7 +1249,7 @@ class LibrarianAgent:
         progress_callback: Optional[Callable[[int], None]] = None,
     ) -> RunResult:
         """Internal implementation of the single-pass retrieval pipeline."""
-        debug: Dict[str, Any] = {}
+        debug = state.debug
         if progress_callback:
             progress_callback(0)
         state.progress("Generating search queries")

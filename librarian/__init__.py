@@ -13,8 +13,8 @@ from librarian.synthesis import SynthesisAgent, SynthesisResult
 __all__ = [
     "LibrarianAgent",
     "LibrarianRuntimeConfig",
-    "SynthesisAgent",
     "RunResult",
+    "SynthesisAgent",
     "SynthesisResult",
     "ZeroShotScopeGuard",
     "load_runtime_config",

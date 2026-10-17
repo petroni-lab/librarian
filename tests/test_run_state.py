@@ -13,6 +13,7 @@ from librarian import (
     SynthesisResult,
     load_runtime_config,
 )
+from librarian.literature_search import LiteratureSearchError
 from librarian.scope_port import ScopeVerdict
 
 
@@ -110,6 +111,40 @@ class RunStateTests(unittest.TestCase):
         self.assertEqual(first.debug["search_queries"], ["alpha"])
         self.assertEqual(agent.run("beta").debug["relevant_count"], 2)
         self.assertFalse(hasattr(agent, "last_run_debug"))
+
+    def test_failed_search_preserves_partial_debug(self):
+        agent = retrieval_agent()
+        error = LiteratureSearchError("search unavailable")
+        with patch.object(agent, "_paragraphs_for_subquery", side_effect=error):
+            with self.assertRaises(LiteratureSearchError) as caught:
+                agent.run("alpha")
+        self.assertIs(caught.exception, error)
+        self.assertEqual(error.run_debug, {"search_queries": ["alpha"]})
+        agent.run("beta")
+        self.assertEqual(error.run_debug, {"search_queries": ["alpha"]})
+
+    def test_failed_synthesis_search_preserves_route_and_subqueries(self):
+        librarian = retrieval_agent()
+        agent = SynthesisAgent(llm_client=object(), librarian=librarian)
+        error = LiteratureSearchError("search unavailable")
+        decision = {"action": "search", "query": "rewritten", "language": "English"}
+        with (
+            patch.object(agent, "_route", return_value=decision),
+            patch.object(librarian, "_paragraphs_for_subquery", side_effect=error),
+        ):
+            with self.assertRaises(LiteratureSearchError) as caught:
+                agent.run("original")
+        self.assertIs(caught.exception, error)
+        self.assertEqual(
+            error.run_debug,
+            {
+                "action": "search",
+                "query": "rewritten",
+                "language": "English",
+                "passages": [],
+                "search_queries": ["rewritten"],
+            },
+        )
 
     def test_concurrent_synthesis_with_shared_librarian(self):
         agent = SynthesisAgent(
