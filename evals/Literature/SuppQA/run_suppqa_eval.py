@@ -323,7 +323,7 @@ class InstrumentedAgent(LibrarianAgent):
                 self.counts["supp_fetches"] += 1
                 if not supplementary.ok:
                     self.counts["supp_fetch_errors"] += 1
-                if supplementary.files:
+                if supplementary.records:
                     self.counts["supp_fetches_with_files"] += 1
         return super()._supplementary_paragraphs(pmcid, fulltext, supplementary)
 

@@ -47,13 +47,14 @@ from librarian.literature_search import (
     Fulltext,
     LiteratureSource,
     Supplementary,
+    SupplementaryOptions,
     declares_supplementary,
     normalize_pmcid,
 )
 from librarian.llm_client import create_llm_client, parse_json_response
 from librarian.supplementary import (
     SUPPLEMENTARY_SECTION_TYPE,
-    extract_supplementary_records,
+    apply_captions,
     require_extraction_dependencies,
 )
 from librarian.tracing_port import NullTracer, TracingPort
@@ -765,9 +766,9 @@ class LibrarianAgent:
         self._filter_temperature = runtime_config.filter_temperature
         self._filter_max_tokens = runtime_config.filter_max_tokens
         self._supplementary_enrichment = runtime_config.supplementary_enrichment
-        self._max_supplementary_bytes = runtime_config.max_supplementary_bytes
-        self._max_supplementary_records = (
-            runtime_config.max_supplementary_records_per_paper
+        self._supplementary_options = SupplementaryOptions(
+            max_bytes=runtime_config.max_supplementary_bytes,
+            max_records=runtime_config.max_supplementary_records_per_paper,
         )
 
         self.llm = (
@@ -1059,13 +1060,13 @@ class LibrarianAgent:
                         },
                     ) as supplementary_span:
                         supplementaries = fetch_supplementary(
-                            wanted, self._max_supplementary_bytes
+                            wanted, self._supplementary_options
                         )
                         self._tracer.set_span_attributes(
                             supplementary_span,
                             {
                                 "supplementary.count": sum(
-                                    1 for r in supplementaries.values() if r.files
+                                    1 for r in supplementaries.values() if r.records
                                 )
                             },
                         )
@@ -1200,23 +1201,25 @@ class LibrarianAgent:
         fulltext: Fulltext,
         supplementary: Optional[Supplementary],
     ) -> List[Dict[str, str]]:
-        """Paragraph records from one paper's prefetched supplementary files (or [])."""
+        """Paragraph records from one paper's prefetched supplementary outcome (or []).
+
+        The records come extracted (and possibly cached) from the source; only
+        the captions from this paper's JATS are applied here.
+        """
         if supplementary is None:
             return []
         if not supplementary.ok:
             self._log(f"supplementary unavailable for {pmcid}: {supplementary.error}")
             return []
-        files = supplementary.files
-        if not files:
+        if not supplementary.records:
             return []
-        records = extract_supplementary_records(
-            files,
-            extract_supplementary_captions(fulltext.xml),
-            self._max_supplementary_records,
+        records = apply_captions(
+            supplementary.records, extract_supplementary_captions(fulltext.xml)
         )
+        files = sorted({r["supplementary_file"] for r in records})
         self._log(
             f"{pmcid}: {len(records)} supplementary paragraphs from "
-            f"{len(files)} file(s) {sorted(files)}"
+            f"{len(files)} file(s) {files}"
         )
         return records
 
