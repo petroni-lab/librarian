@@ -354,7 +354,7 @@ gives **+6.8 Bio / +10.9 Neu**. See the paper for the full evaluation and ablati
 
 ## 🔄 Pipeline Overview
 
-Migration to 2.0: `LibrarianAgent.run()` returns `RunResult(papers, debug)`.
+Migration to 1.0.1: `LibrarianAgent.run()` returns `RunResult(papers, debug)`.
 Use `.papers` for the ranked evidence and `.debug` for sub-queries and
 retrieval counts.
 `SynthesisAgent.run()` returns `SynthesisResult(answer, debug)`; use `.answer`
