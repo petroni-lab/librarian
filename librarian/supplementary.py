@@ -1,18 +1,23 @@
 """Supplementary document files → paragraph records.
 
 ``extract_supplementary_records`` turns the files ``literature_search``
-downloaded for one paper (``.pdf``, ``.docx``, ``.doc``, ``.txt``, ``.md``) into
-the same ``{text, section_title, section_type}`` records
-``jats.extract_body_paragraphs`` produces for the body, so they join the paper's
-paragraph pool and go through chunking, BM25 and the Stage-3 judge unchanged.
+downloaded for one paper (``.pdf``, ``.docx``, ``.doc``, ``.txt``, ``.md``, and
+``.csv``, ``.tsv``, ``.xlsx``, ``.xls`` tables) into the same
+``{text, section_title, section_type}`` records ``jats.extract_body_paragraphs``
+produces for the body, so they join the paper's paragraph pool and go through
+chunking, BM25 and the Stage-3 judge unchanged.
 
 Every record has ``section_type = "supplementary"`` and a ``section_title``
 naming the file (``"Supplementary: <caption or file name>"``, plus the page for
-a PDF), which is how a cited snippet is traced back to its supplement.
+a PDF or the sheet for a workbook), which is how a cited snippet is traced back
+to its supplement. Table rows are rendered like ``jats`` renders article tables
+(``a | b ; c | d``), with the header row repeated in every record so a matched
+record is readable on its own.
 """
 
 from __future__ import annotations
 
+import csv
 import io
 import logging
 import os
@@ -21,7 +26,7 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
-from typing import Callable, Dict, Iterator, List, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 # pypdf warns on every slightly malformed PDF; those are routine here.
@@ -140,6 +145,82 @@ def _text_paragraphs(data: bytes) -> List[str]:
     return re.split(r"\n\s*\n", data.decode("utf-8-sig", errors="replace"))
 
 
+def _cell(value: Any) -> str:
+    """One spreadsheet cell as text: empty for None, 3 not 3.0 for whole numbers."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return _norm(str(value))
+
+
+def _delimited_sheets(data: bytes, delimiter: str) -> List[Tuple[str, List[List[Any]]]]:
+    """The one unnamed sheet of a CSV/TSV file."""
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = data.decode("latin-1")
+    return [("", list(csv.reader(io.StringIO(text), delimiter=delimiter)))]
+
+
+def _xlsx_sheets(data: bytes) -> List[Tuple[str, List[List[Any]]]]:
+    """Every worksheet of an .xlsx, as (name, rows) with computed cell values."""
+    import openpyxl
+
+    workbook = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    try:
+        return [
+            (sheet.title, list(sheet.iter_rows(values_only=True))) for sheet in workbook
+        ]
+    finally:
+        workbook.close()
+
+
+def _xls_sheets(data: bytes) -> List[Tuple[str, List[List[Any]]]]:
+    """Every worksheet of a legacy .xls, as (name, rows)."""
+    import xlrd
+
+    workbook = xlrd.open_workbook(file_contents=data)
+    return [
+        (sheet.name, [sheet.row_values(i) for i in range(sheet.nrows)])
+        for sheet in workbook.sheets()
+    ]
+
+
+_SHEET_READERS: Dict[str, Callable[[bytes], List[Tuple[str, List[List[Any]]]]]] = {
+    ".csv": lambda data: _delimited_sheets(data, ","),
+    ".tsv": lambda data: _delimited_sheets(data, "\t"),
+    ".xlsx": _xlsx_sheets,
+    ".xls": _xls_sheets,
+}
+
+
+def _sheet_blocks(rows: List[List[Any]]) -> Iterator[str]:
+    """Rows as ``header ; row ; row`` blocks of about ``_MIN_BLOCK_WORDS`` words.
+
+    The first non-empty row is taken as the header and starts every block, so a
+    block BM25 or the judge picks out still says what its columns are.
+    """
+    header: Optional[str] = None
+    pending: List[str] = []
+    words = 0
+    for row in rows:
+        cells = [c for c in (_cell(v) for v in row) if c]
+        if not cells:
+            continue
+        line = " | ".join(cells)
+        if header is None:
+            header = line
+            continue
+        pending.append(line)
+        words += len(line.split())
+        if words >= _MIN_BLOCK_WORDS:
+            yield " ; ".join([header] + pending)
+            pending, words = [], 0
+    if pending:
+        yield " ; ".join([header] + pending)
+
+
 _PARAGRAPH_EXTRACTORS: Dict[str, Callable[[bytes], List[str]]] = {
     ".docx": _docx_paragraphs,
     ".doc": _doc_paragraphs,
@@ -160,6 +241,18 @@ def _file_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, str]
                 "supplementary_file": name,
             }
         return
+    reader = _SHEET_READERS.get(extension)
+    if reader is not None:
+        for sheet, rows in reader(data):
+            title = f'{label}, sheet "{sheet}"' if sheet else label
+            for block in _sheet_blocks(rows):
+                yield {
+                    "text": block,
+                    "section_title": title,
+                    "section_type": SUPPLEMENTARY_SECTION_TYPE,
+                    "supplementary_file": name,
+                }
+        return
     extractor = _PARAGRAPH_EXTRACTORS.get(extension)
     if extractor is None:
         return
@@ -175,13 +268,15 @@ def _file_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, str]
 def require_extraction_dependencies() -> None:
     """Raise a clear ``ImportError`` when the ``supplementary`` extra is missing.
 
-    The PDF/Word readers are imported lazily inside a per-file ``except
+    The PDF/Word/spreadsheet readers are imported lazily inside a per-file ``except
     Exception``, which would otherwise turn a missing package into silently
     empty supplements.
     """
     try:
         import docx  # noqa: F401
+        import openpyxl  # noqa: F401
         import pypdf  # noqa: F401
+        import xlrd  # noqa: F401
     except ImportError as exc:
         raise ImportError(
             "supplementary_enrichment needs the `supplementary` extra: "

@@ -18,7 +18,12 @@ dependencies = [
 
 [project.optional-dependencies]
 cache = ["diskcache>=5.6"]  # opt-in on-disk full-text + supplementary cache (LIBRARIAN_CACHE_DIR)
-supplementary = ["pypdf>=4.0", "python-docx>=1.1"]  # opt-in supplementary PDF/Word text (--supplementary)
+supplementary = [    # opt-in supplementary PDF/Word/spreadsheet text (--supplementary)
+    "pypdf>=4.0",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",    # .xlsx
+    "xlrd>=2.0",        # legacy .xls
+]
 
 # The benchmark harness under evals/Literature deliberately adds nothing here.
 # Each bench builds its own locked virtualenv on first use.
