@@ -14,7 +14,7 @@ What this relies on from ``librarian`` (run.sh puts the repo root on
 - the client contract ``chat_completion(messages, temperature, max_tokens) -> str``;
 - the reply keys the agent parses, ``queries`` and ``relevant_ids``, which the
   Codex/AGY schema in ``_direct_session.py`` hard-codes;
-- ``last_run_debug["search_queries"]`` and ``["paragraph_count"]``;
+- ``RunResult.debug["search_queries"]`` and ``["paragraph_count"]``;
 - ``citations.render_report`` and ``prompts/summarizer.md``.
 """
 
@@ -95,12 +95,13 @@ def main() -> int:
     client = CliClient(args.provider)
     agent = LibrarianAgent(runtime_config=load_runtime_config(), llm_client=client)
     try:
-        evidence = agent.run(
+        result = agent.run(
             query, on_progress=lambda m: print(f"[Librarian] {m}", file=sys.stderr)
         )
     except CliSessionError as exc:
         # Query planning has no fallback, so its CLI failure ends the run.
         raise SystemExit(f"[Librarian] {exc}") from None
+    evidence = result.papers
     if client.errors:
         failed = f"{len(client.errors)} judge call(s) failed: " + " | ".join(
             dict.fromkeys(client.errors)
@@ -109,7 +110,7 @@ def main() -> int:
             # Every judge call failed: an empty report would read as "no papers".
             raise SystemExit(f"[Librarian] {failed}")
         print(f"[Librarian] WARNING: {failed} Evidence may be incomplete.", file=sys.stderr)
-    debug = agent.last_run_debug
+    debug = result.debug
     # paragraph_count is absent when the agent returns early on no paragraphs.
     queries, paragraphs = len(debug["search_queries"]), debug.get("paragraph_count", 0)
     print(f"[Librarian] queries={queries} paragraphs={paragraphs} relevant={len(evidence)}")

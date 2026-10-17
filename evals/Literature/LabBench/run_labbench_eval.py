@@ -177,10 +177,10 @@ def build_search_fn(args: argparse.Namespace):
     def search(query: str) -> dict[str, Any]:
         """Adapt LibrarianAgent's output to the ``search_fn`` result-dict contract.
 
-        ``LibrarianAgent.run`` returns a flat list of per-paper passages;
+        ``LibrarianAgent.run(...).papers`` is a flat list of per-paper passages;
         ``format_evidence`` wants ``{"evidence": [...]}``.
         """
-        return {"evidence": _evidence_entries(agent.run(query))}
+        return {"evidence": _evidence_entries(agent.run(query).papers)}
 
     return search
 
