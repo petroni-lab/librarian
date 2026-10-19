@@ -86,7 +86,7 @@ def _pdf_texts(data: bytes) -> Iterator[Tuple[int, str]]:
             yield number, text
 
 
-# Most bytes an Office document (.docx, and .xlsx later) may unpack to. These
+# Most bytes an Office document (.docx, .xlsx) may unpack to. These
 # files are ZIPs themselves, so the download budget only bounds their compressed
 # size: a 40 KB .docx can hold millions of characters, all loaded at once.
 _MAX_PACKAGE_BYTES = 25_000_000
@@ -193,6 +193,7 @@ def _xlsx_sheets(data: bytes) -> Iterator[_Sheets]:
     """
     import openpyxl
 
+    _check_package_size(data)
     workbook = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     try:
         yield [(sheet.title, sheet.iter_rows(values_only=True)) for sheet in workbook]
@@ -232,8 +233,8 @@ def _row(row: Sequence[Any]) -> Tuple[str, int]:
     return " | ".join(cells), sum(1 for c in cells if c)
 
 
-def _sheet_blocks(rows: Iterable[Sequence[Any]]) -> Iterator[str]:
-    """Rows as ``header ; row ; row`` blocks of about ``_MIN_BLOCK_WORDS`` words.
+def _sheet_blocks(rows: Iterable[Sequence[Any]]) -> Iterator[Tuple[str, List[str]]]:
+    """Rows as ``(header, [row, row, ...])`` blocks of about ``_MIN_BLOCK_WORDS`` words.
 
     The header is the first row with two or more filled cells, so a title row
     above the table ("Table S1. DE genes") is not taken for it; such rows are
@@ -267,10 +268,27 @@ def _sheet_blocks(rows: Iterable[Sequence[Any]]) -> Iterator[str]:
         pending.append(line)
         words += len(line.split())
         if words >= _MIN_BLOCK_WORDS:
-            yield " ; ".join([prefix] + pending)
+            yield prefix, pending
             pending, words = [], 0
     if pending:
-        yield " ; ".join([prefix] + pending)
+        yield prefix, pending
+
+
+def _table_record(
+    header: str, rows: List[str], title: str, name: str
+) -> Dict[str, Any]:
+    """One table block as a record: ``header ; row ; row``, rendered like
+    ``jats`` tables. ``table_header``/``table_rows`` let the agent re-cut a block
+    that is still too long by rows, keeping the header in every piece.
+    """
+    return {
+        "text": " ; ".join([header] + rows),
+        "section_title": title,
+        "section_type": SUPPLEMENTARY_SECTION_TYPE,
+        "supplementary_file": name,
+        "table_header": header,
+        "table_rows": rows,
+    }
 
 
 _PARAGRAPH_EXTRACTORS: Dict[str, Callable[[bytes], List[str]]] = {
@@ -309,12 +327,7 @@ def _file_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, str]
                     if block is None:
                         streams.remove(stream)
                         continue
-                    yield {
-                        "text": block,
-                        "section_title": title,
-                        "section_type": SUPPLEMENTARY_SECTION_TYPE,
-                        "supplementary_file": name,
-                    }
+                    yield _table_record(*block, title, name)
         return
     extractor = _PARAGRAPH_EXTRACTORS.get(extension)
     if extractor is None:
