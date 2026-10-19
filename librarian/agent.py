@@ -367,6 +367,54 @@ def _rank_paragraphs_for_subquery(
     return [records[i] for i in order[:k]]
 
 
+def _split_table_records(
+    records: List[Dict[str, Any]], max_words: int
+) -> List[Dict[str, Any]]:
+    """Re-cut table records longer than ``max_words`` by rows, header in every piece.
+
+    ``_chunk_paragraphs`` would split a table like prose, so only its first
+    window would keep the column names. Here each piece is the header plus as
+    many whole rows as fit; a single row longer than that is split into pieces
+    that each repeat the header and the row's first cell (its identity, e.g. the
+    gene). Every piece then becomes its own paragraph. Other records, and tables
+    whose header alone exceeds ``max_words``, pass through unchanged.
+    """
+    out: List[Dict[str, Any]] = []
+    for record in records:
+        header = record.get("table_header")
+        rows = record.get("table_rows") or []
+        base = {
+            k: v for k, v in record.items() if k not in ("table_header", "table_rows")
+        }
+        budget = max_words - len(str(header or "").split())
+        if not header or budget <= 0 or len(record["text"].split()) <= max_words:
+            out.append(base)
+            continue
+        pieces: List[str] = []
+        for row in rows:
+            words = row.split()
+            if len(words) <= budget:
+                pieces.append(row)
+                continue
+            identity = row.split(" | ", 1)[0]
+            step = budget - len(identity.split()) - 1  # room after "identity |"
+            pieces.append(" ".join(words[:budget]))
+            for start in range(budget, len(words), max(step, 1)):
+                pieces.append(f"{identity} | " + " ".join(words[start : start + step]))
+        chunk: List[str] = []
+        size = 0
+        for piece in pieces:
+            words = len(piece.split())
+            if chunk and size + words > budget:
+                out.append({**base, "text": " ; ".join([header] + chunk)})
+                chunk, size = [], 0
+            chunk.append(piece)
+            size += words
+        if chunk:
+            out.append({**base, "text": " ; ".join([header] + chunk)})
+    return out
+
+
 def _chunk_paragraphs(
     records: List[Dict[str, Any]], max_words: int, overlap: int
 ) -> List[Dict[str, Any]]:
@@ -824,6 +872,7 @@ class LibrarianAgent:
                 record["bm25_metadata"] = body_metadata
                 records.append(record)
 
+        records = _split_table_records(records, self._max_paragraph_words)
         for source_index, record in enumerate(records):
             record["source_paragraph_index"] = source_index
         chunked = _chunk_paragraphs(

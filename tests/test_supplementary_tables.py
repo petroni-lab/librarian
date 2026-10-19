@@ -102,3 +102,72 @@ class SupplementaryTableTest(unittest.TestCase):
                 {"big.xlsx": b""}, {}, max_records=3
             )
         self.assertEqual(len(records), 3)
+
+
+class TableChunkingTest(unittest.TestCase):
+    """Extraction through the agent's Stage-2 chunking, not just the extractor."""
+
+    def test_every_chunk_of_a_long_row_keeps_header_and_row_identity(self):
+        from dataclasses import replace
+
+        from librarian import LibrarianAgent, load_runtime_config
+        from librarian.literature_search import EuropePmcSource, Fulltext
+
+        description = " ".join(f"word{i}" for i in range(600))
+        csv_bytes = f"gene,description\nSOX2,{description}\n".encode()
+        xml = (
+            "<article><body><p>Unrelated body text.</p></body><back>"
+            '<supplementary-material><media href="s1.csv"/></supplementary-material>'
+            "</back></article>"
+        )
+        paper = {
+            "title": "T",
+            "isOpenAccess": True,
+            "pmcid": "PMC1",
+            "fullTextIds": ["PMC1"],
+            "pmid": "1",
+            "year": "2024",
+        }
+
+        class Source(EuropePmcSource):
+            def search(self, query, page_size):
+                return [dict(paper)]
+
+            def fetch_fulltext_many(self, pmcids):
+                return {"PMC1": Fulltext("PMC1", xml=xml, status=200)}
+
+        listing = (
+            b'<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+            b"<Contents><Key>PMC1.1/s1.csv</Key><Size>%d</Size></Contents>"
+            b"</ListBucketResult>" % len(csv_bytes)
+        )
+
+        def get(url, **kwargs):
+            response = mock.MagicMock()
+            response.content = listing if url.endswith("/") else csv_bytes
+            return response
+
+        config = replace(load_runtime_config(), supplementary_enrichment=True)
+        agent = LibrarianAgent(config, llm_client=object(), literature_source=Source())
+        with mock.patch("requests.get", side_effect=get):
+            top = agent._paragraphs_for_subquery("SOX2 description word550")
+        tables = [r for r in top if r["section_type"] == "supplementary"]
+        self.assertGreater(len(tables), 1)
+        for record in tables:
+            self.assertTrue(record["text"].startswith("gene | description ; SOX2 | "))
+            self.assertLessEqual(
+                len(record["text"].split()), config.max_paragraph_words
+            )
+        self.assertTrue(any("word550" in r["text"] for r in tables))
+
+
+class SpreadsheetPackageTest(unittest.TestCase):
+    def test_xlsx_unpacking_past_the_budget_is_not_opened(self):
+        data = _xlsx({"Hits": [["gene", "note"]] + [["G", "x" * 5000]] * 200})
+        with (
+            mock.patch.object(supplementary, "_MAX_PACKAGE_BYTES", 100_000),
+            mock.patch("openpyxl.load_workbook") as load_workbook,
+        ):
+            records = extract_supplementary_records({"t.xlsx": data}, {}, 40)
+        self.assertEqual(records, [])
+        load_workbook.assert_not_called()
