@@ -86,12 +86,13 @@ def _blocks(paragraphs: List[str]) -> Iterator[str]:
         yield " ".join(pending)
 
 
-def _pdf_texts(data: bytes) -> Iterator[Tuple[int, str]]:
-    """``(page_number, text)`` for every PDF page that has extractable text."""
+def _pdf_texts(data: bytes, skip: int = 0) -> Iterator[Tuple[int, str]]:
+    """``(page_number, text)`` for every PDF page after the first *skip* that has
+    extractable text."""
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(data))
-    for number, page in enumerate(reader.pages, 1):
+    for number, page in enumerate(reader.pages[skip:], skip + 1):
         text = _norm(page.extract_text() or "")
         if text:
             yield number, text
@@ -131,33 +132,59 @@ def _docling_converter() -> Any:
 _DOCLING_LOCK = threading.Lock()
 
 
-def _docling_items(name: str, data: bytes) -> Iterator[Tuple[int, str, str]]:
-    """``(page, kind, text)`` from Docling: each page's prose, then each table.
+# Pages converted with Docling (~6 s each on CPU, under _DOCLING_LOCK); later
+# pages are read as plain text with pypdf, so a 200-page supplement is still
+# covered without blocking every supplementary worker for minutes.
+_DOCLING_MAX_PAGES = 20
 
-    Tables are rendered by ``_sheet_blocks`` (header repeated in every block),
-    so a row keeps its column names instead of being flattened into the page.
+
+def _docling_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, Any]]:
+    """Records from Docling, in page order: each page's prose, then its tables.
+
+    Tables become header-repeated row blocks (``_table_record``), so a row keeps
+    its column names instead of being flattened into the page. Interleaving them
+    with the text by page means the per-file record cap reaches the tables of
+    early pages instead of being used up by the text of every page first.
     """
     from docling.datamodel.base_models import DocumentStream
 
     with _DOCLING_LOCK:
         document = (
             _docling_converter()
-            .convert(DocumentStream(name=name, stream=io.BytesIO(data)))
+            .convert(
+                DocumentStream(name=name, stream=io.BytesIO(data)),
+                page_range=(1, _DOCLING_MAX_PAGES),
+            )
             .document
         )
-    pages: Dict[int, List[str]] = defaultdict(list)
+    texts: Dict[int, List[str]] = defaultdict(list)
+    tables: Dict[int, List[Tuple[str, List[str]]]] = defaultdict(list)
     for item in document.texts:
         if item.prov:
-            pages[item.prov[0].page_no].append(item.text)
-    for page in sorted(pages):
-        text = _norm(" ".join(pages[page]))
-        if text:
-            yield page, "text", text
+            texts[item.prov[0].page_no].append(item.text)
     for table in document.tables:
         frame = table.export_to_dataframe(doc=document)
         page = table.prov[0].page_no if table.prov else 0
-        for block in _sheet_blocks([list(frame.columns)] + frame.values.tolist()):
-            yield page, "table", block
+        tables[page].extend(
+            _sheet_blocks([list(frame.columns)] + frame.values.tolist())
+        )
+    for page in sorted(set(texts) | set(tables)):
+        text = _norm(" ".join(texts[page]))
+        if text:
+            yield _page_record(text, f"{label} (p. {page})", name)
+        for header, rows in tables[page]:
+            yield _table_record(header, rows, f"{label} (p. {page}, table)", name)
+    for page, text in _pdf_texts(data, skip=_DOCLING_MAX_PAGES):
+        yield _page_record(text, f"{label} (p. {page})", name)
+
+
+def _page_record(text: str, title: str, name: str) -> Dict[str, Any]:
+    return {
+        "text": text,
+        "section_title": title,
+        "section_type": SUPPLEMENTARY_SECTION_TYPE,
+        "supplementary_file": name,
+    }
 
 
 def _docx_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, Any]]:
@@ -368,14 +395,7 @@ def _file_records(
     """Records for one supplementary file; nothing for an unsupported type."""
     extension = os.path.splitext(name)[1].lower()
     if extension == ".pdf" and pdf_extractor == "docling":
-        for page, kind, text in _docling_items(name, data):
-            suffix = f"p. {page}, table" if kind == "table" else f"p. {page}"
-            yield {
-                "text": text,
-                "section_title": f"{label} ({suffix})",
-                "section_type": SUPPLEMENTARY_SECTION_TYPE,
-                "supplementary_file": name,
-            }
+        yield from _docling_records(name, data, label)
         return
     if extension == ".pdf":
         for page, text in _pdf_texts(data):
