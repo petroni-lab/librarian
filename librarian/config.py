@@ -72,6 +72,17 @@ class LibrarianRuntimeConfig(DataClassTOMLMixin):
     # reasoning trace plus the relevant_ids list: too low and the judge returns
     # nothing and the batch is dropped without an error.
     filter_max_tokens: int
+    # ── Supplementary material ───────────────────────────────────────────────
+    # Also fetch each open-access paper's supplementary files (Europe PMC
+    # supplementaryFiles ZIP) and add the text of its PDF / Word documents to
+    # that paper's paragraph pool. Only applies when full text is fetched.
+    supplementary_enrichment: bool
+    # Size cap, in bytes, for one paper's supplementary ZIP and for each file
+    # in it; anything larger is skipped rather than downloaded or parsed.
+    max_supplementary_bytes: int
+    # Most supplementary paragraph records one paper contributes (before
+    # chunking), so a long supplement can't crowd the body out of BM25.
+    max_supplementary_records_per_paper: int
 
     def __post_init__(self) -> None:
         """Reject a sub-query budget too small to cover all the query roles.

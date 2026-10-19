@@ -608,9 +608,16 @@ Worth knowing before you plug Librarian into a pipeline:
 - **Single retrieval round.** Librarian issues multiple complementary sub-queries to
   improve recall, but it does not loop. Multi-hop questions are left to the downstream
   agent. Letting Librarian decide whether to keep searching is future work.
-- **Text only.** Figures and supplementary material are ignored, and tables are handled
-  as text, so evidence living in those places is currently inaccessible. This is why our
-  LAB-Bench evaluation excludes FigQA, TableQA, and SuppQA.
+- **Text only.** Figures are ignored and tables are handled as text, so evidence living
+  in them is currently inaccessible. This is why our LAB-Bench evaluation excludes FigQA,
+  TableQA, and SuppQA.
+- **Supplementary material is experimental and off by default.** `--supplementary` (or
+  `supplementary_enrichment` in `config.toml`) also reads each open-access paper's
+  supplementary PDF, Word (`.docx`, `.doc`) and plain-text (`.txt`, `.md`) files; it needs
+  the `supplementary` extra (`uv sync --extra supplementary`) and makes a query several
+  times slower. Legacy `.doc` files are converted with `antiword` (Linux:
+  `apt install antiword`) or macOS's built-in `textutil`; with neither on the `PATH`
+  they contribute no text, and the only sign is a debug log.
 
 ---
 

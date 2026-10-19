@@ -45,3 +45,16 @@ filter_temperature = 0.1
 # Generous margin over a plain JSON id-list response so a wide batch doesn't get
 # silently truncated. Reasoning models need more (their trace counts against it).
 filter_max_tokens = 8192
+
+# Supplementary material: off by default, because the values above are the ones
+# that produced the published LitQA2 numbers and they were measured without it.
+# Turning it on adds one ZIP download per open-access paper that declares
+# supplementary material, so Stage 2 gets slower.
+supplementary_enrichment = false
+# 50 MB covers typical PDF/Word supplements, including ZIPs that also bundle
+# the article's figure images; bigger archives are mostly imaging or sequence
+# data with no prose to retrieve.
+max_supplementary_bytes = 50_000_000
+# 40 records ≈ a 40-page PDF. The body of a paper is usually 40–80 paragraphs,
+# so a supplement can at most match it, not drown it.
+max_supplementary_records_per_paper = 40

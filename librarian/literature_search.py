@@ -12,12 +12,23 @@ source (with a cache, a worker pool, ...) as
 ``LibrarianAgent(literature_source=...)``.
 
 An opt-in full-text cache that wraps any source lives in ``fulltext_cache``.
+
+Supplementary material: ``fetch_supplementary_many`` downloads each paper's
+supplementary-files ZIP and keeps only the document files whose text the agent
+can read (``SUPPLEMENTARY_EXTENSIONS``); figures, videos and data files are
+dropped. The agent asks for it only when ``supplementary_enrichment`` is on, and
+only for papers whose JATS declares supplementary material
+(``declares_supplementary``). ``fulltext_cache.CachedSource`` caches these
+outcomes too.
 """
 
+import io
 import threading
 import time
+import zipfile
+import zlib
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Protocol
 from urllib.parse import quote
 
@@ -26,6 +37,13 @@ import requests
 _SEARCH_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 # Europe PMC full-text fetch endpoint (PMC id -> JATS XML).
 _FULLTEXT_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML"
+# Europe PMC supplementary-files endpoint (PMC id -> ZIP of every supplementary
+# file, plus the article's own figure images).
+_SUPPLEMENTARY_URL = (
+    "https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/supplementaryFiles"
+)
+# Supplementary files kept from the ZIP: documents whose text can be extracted.
+SUPPLEMENTARY_EXTENSIONS = (".pdf", ".docx", ".doc", ".txt", ".md")
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 # Statuses a retry will never fix: the document is absent or the id is malformed.
@@ -44,6 +62,11 @@ _PERMANENT_CONFIRM_DELAY_S = 0.5
 _FULLTEXT_WORKERS = 8
 _fulltext_pool: "ThreadPoolExecutor | None" = None
 _fulltext_pool_lock = threading.Lock()
+# Concurrent supplementary ZIP downloads, shared like the full-text pool. Smaller,
+# because each download is a ZIP of up to max_supplementary_bytes, not one XML.
+_SUPPLEMENTARY_WORKERS = 4
+_supplementary_pool: "ThreadPoolExecutor | None" = None
+_supplementary_pool_lock = threading.Lock()
 
 
 def _parse_result(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -291,6 +314,178 @@ def fetch_fulltext_many(pmcids: Iterable[str]) -> Dict[str, Fulltext]:
     return {r.pmcid: r for r in _get_fulltext_pool().map(fetch_fulltext, unique)}
 
 
+def declares_supplementary(xml: str) -> bool:
+    """True when a JATS document lists any supplementary material.
+
+    A cheap text check, used to skip the ZIP request for the (many) papers
+    that have nothing to download.
+    """
+    return "<supplementary-material" in xml or "<inline-supplementary-material" in xml
+
+
+class SupplementaryTooLarge(ValueError):
+    """A supplementary ZIP over the size cap: re-downloading cannot change that."""
+
+
+def fetch_supplementary(pmcid: str, max_bytes: int) -> Dict[str, bytes]:
+    """Download one paper's supplementary ZIP; return its document files.
+
+    Only entries ending in ``SUPPLEMENTARY_EXTENSIONS`` are kept, keyed by
+    their base filename. A ZIP larger than ``max_bytes`` is abandoned mid-
+    download, and entries are kept only while their combined uncompressed size
+    stays within ``max_bytes``, so one huge supplement cannot stall or exhaust
+    a run.
+
+    :param pmcid: A PMC id in any form (see ``normalize_pmcid``).
+    :param max_bytes: Size cap for the ZIP and for the files kept from it.
+    :return: Document files by filename (empty when there are none).
+    :rtype: Dict[str, bytes]
+    :raises requests.exceptions.RequestException: on a failed request.
+    :raises SupplementaryTooLarge: when the ZIP exceeds ``max_bytes``.
+    :raises ValueError: when the download is not a readable ZIP.
+    """
+    pmcid = normalize_pmcid(pmcid)
+    with requests.get(
+        _SUPPLEMENTARY_URL.format(pmcid=pmcid), timeout=120, stream=True
+    ) as response:
+        response.raise_for_status()
+        declared = int(response.headers.get("Content-Length") or 0)
+        if declared > max_bytes:
+            raise SupplementaryTooLarge(
+                f"supplementary ZIP is {declared} bytes (cap {max_bytes})"
+            )
+        buffer = io.BytesIO()
+        for chunk in response.iter_content(chunk_size=1 << 16):
+            buffer.write(chunk)
+            if buffer.tell() > max_bytes:
+                raise SupplementaryTooLarge(
+                    f"supplementary ZIP exceeds cap of {max_bytes} bytes"
+                )
+    files: Dict[str, bytes] = {}
+    # Uncompressed bytes kept so far: a tiny ZIP can expand far past max_bytes.
+    kept = 0
+    try:
+        with zipfile.ZipFile(buffer) as archive:
+            for info in archive.infolist():
+                name = info.filename.rsplit("/", 1)[-1]
+                if info.is_dir() or not name.lower().endswith(SUPPLEMENTARY_EXTENSIONS):
+                    continue
+                if kept + info.file_size > max_bytes:
+                    continue
+                files[name] = archive.read(info)
+                kept += info.file_size
+    # A corrupt or unsupported member (bad CRC, truncated, encrypted) fails only
+    # this paper's supplement, never the run.
+    except (
+        zipfile.BadZipFile,
+        zlib.error,
+        EOFError,
+        NotImplementedError,
+        RuntimeError,
+    ) as exc:
+        raise ValueError(f"unreadable supplementary ZIP: {exc}") from exc
+    return files
+
+
+@dataclass
+class Supplementary:
+    """One supplementary download outcome: the document files, or why they are missing.
+
+    ``ok`` with empty ``files`` is a real answer: the ZIP held no readable
+    document (only figures, data, videos, ...).
+    """
+
+    pmcid: str
+    files: Dict[str, bytes] = field(default_factory=dict)
+    error: str = ""
+    status: "int | None" = None
+    # The ZIP was over the size cap: permanent for that cap, whatever the status.
+    too_large: bool = False
+    # True when a ``CachedSource`` served this outcome instead of a request.
+    from_cache: bool = False
+
+    @property
+    def ok(self) -> bool:
+        """True when the ZIP was downloaded and read (it may hold no documents)."""
+        return not self.error
+
+    @property
+    def permanent(self) -> bool:
+        """True when re-requesting this pmcid cannot change the outcome."""
+        return self.too_large or self.status in _PERMANENT_FULLTEXT_STATUSES
+
+
+def _attempt_supplementary(pmcid: str, max_bytes: int) -> Supplementary:
+    """One supplementary download for *pmcid*, with no retry; never raises."""
+    try:
+        files = fetch_supplementary(pmcid, max_bytes)
+    except SupplementaryTooLarge as exc:
+        return Supplementary(pmcid=pmcid, error=str(exc), too_large=True)
+    except (requests.exceptions.RequestException, ValueError) as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        return Supplementary(
+            pmcid=pmcid, status=status, error=f"{status or type(exc).__name__}: {exc}"
+        )
+    return Supplementary(pmcid=pmcid, files=files, status=200)
+
+
+def fetch_supplementary_outcome(pmcid: str, max_bytes: int) -> Supplementary:
+    """Supplementary document files for one PMC id, confirming a permanent failure.
+
+    Like ``fetch_fulltext``: a failure comes back as a ``Supplementary`` with
+    ``error`` set instead of raising, and a permanent HTTP status is
+    re-requested once before it is trusted.
+
+    :param pmcid: A PMC id in any form (see ``normalize_pmcid``).
+    :param max_bytes: Size cap for the ZIP and for each file inside it.
+    :return: The document files, or the error that replaced them.
+    :rtype: Supplementary
+    """
+    pmcid = normalize_pmcid(pmcid)
+    result = _attempt_supplementary(pmcid, max_bytes)
+    if not result.ok and result.status in _PERMANENT_FULLTEXT_STATUSES:
+        time.sleep(_PERMANENT_CONFIRM_DELAY_S)
+        result = _attempt_supplementary(pmcid, max_bytes)
+    return result
+
+
+def _get_supplementary_pool() -> ThreadPoolExecutor:
+    """The shared supplementary download pool, created on first use."""
+    global _supplementary_pool
+    if _supplementary_pool is None:
+        with _supplementary_pool_lock:
+            if _supplementary_pool is None:
+                _supplementary_pool = ThreadPoolExecutor(
+                    max_workers=_SUPPLEMENTARY_WORKERS, thread_name_prefix="epmc-supp"
+                )
+    return _supplementary_pool
+
+
+def fetch_supplementary_many(
+    pmcids: Iterable[str], max_bytes: int
+) -> Dict[str, Supplementary]:
+    """Download several papers' supplementary files concurrently, keyed by PMC id.
+
+    Blank ids are dropped and repeats are fetched once. All callers share
+    ``_SUPPLEMENTARY_WORKERS`` slots.
+
+    :param pmcids: PMC ids in any form; blanks are dropped.
+    :type pmcids: Iterable[str]
+    :param max_bytes: Size cap for each ZIP and for each file inside it.
+    :type max_bytes: int
+    :return: One ``Supplementary`` per distinct id, successes and failures alike.
+    :rtype: Dict[str, Supplementary]
+    """
+    unique = list(
+        dict.fromkeys(normalize_pmcid(p) for p in pmcids if str(p or "").strip())
+    )
+    pool = _get_supplementary_pool()
+    return {
+        r.pmcid: r
+        for r in pool.map(lambda p: fetch_supplementary_outcome(p, max_bytes), unique)
+    }
+
+
 class LiteratureSource(Protocol):
     """What ``LibrarianAgent`` needs from a literature backend.
 
@@ -309,6 +504,11 @@ class LiteratureSource(Protocol):
     open access. Drop the blanks and return one entry per distinct remaining
     id, keyed by that id. The agent only reads each value's ``ok``, ``xml``
     and ``error``, so any object with those attributes will do.
+
+    Optionally, ``fetch_supplementary_many(pmcids, max_bytes)`` returns one
+    ``Supplementary`` per id, the same way. The agent calls it only when
+    ``supplementary_enrichment`` is on; a source without it contributes no
+    supplementary text.
     """
 
     def search(self, query: str, page_size: int) -> List[Dict[str, Any]]:
@@ -330,6 +530,12 @@ class EuropePmcSource:
     def fetch_fulltext_many(self, pmcids: Iterable[str]) -> Dict[str, Fulltext]:
         """Fetch full texts concurrently (see ``fetch_fulltext_many``)."""
         return fetch_fulltext_many(pmcids)
+
+    def fetch_supplementary_many(
+        self, pmcids: Iterable[str], max_bytes: int
+    ) -> Dict[str, Supplementary]:
+        """Fetch supplementary files concurrently (see ``fetch_supplementary_many``)."""
+        return fetch_supplementary_many(pmcids, max_bytes)
 
 
 if __name__ == "__main__":
