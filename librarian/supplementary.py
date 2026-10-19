@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import zipfile
 from typing import Callable, Dict, Iterator, List, Tuple
 
 logger = logging.getLogger(__name__)
@@ -67,10 +68,33 @@ def _pdf_texts(data: bytes) -> Iterator[Tuple[int, str]]:
             yield number, text
 
 
+# Most bytes an Office document (.docx, and .xlsx later) may unpack to. These
+# files are ZIPs themselves, so the download budget only bounds their compressed
+# size: a 40 KB .docx can hold millions of characters, all loaded at once.
+_MAX_PACKAGE_BYTES = 25_000_000
+
+
+class PackageTooLarge(ValueError):
+    """An Office document that would unpack past ``_MAX_PACKAGE_BYTES``."""
+
+
+def _check_package_size(data: bytes) -> None:
+    """Refuse an Office document whose parts would unpack past the budget.
+
+    Reads only the ZIP directory (declared sizes), never the parts themselves;
+    a part larger than declared fails its CRC check when it is read later.
+    """
+    with zipfile.ZipFile(io.BytesIO(data)) as package:
+        size = sum(info.file_size for info in package.infolist())
+    if size > _MAX_PACKAGE_BYTES:
+        raise PackageTooLarge(f"unpacks to {size} bytes (budget {_MAX_PACKAGE_BYTES})")
+
+
 def _docx_paragraphs(data: bytes) -> List[str]:
     """Paragraph texts of a .docx, then its tables rendered ``a | b ; c | d``."""
     import docx
 
+    _check_package_size(data)
     document = docx.Document(io.BytesIO(data))
     paragraphs = [p.text for p in document.paragraphs]
     for table in document.tables:

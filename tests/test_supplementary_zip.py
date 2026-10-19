@@ -1,6 +1,6 @@
 """Regression tests for supplementary ZIP handling (no network).
 
-    uv run python -m unittest discover tests
+uv run python -m unittest discover tests
 """
 
 import io
@@ -8,6 +8,9 @@ import unittest
 import zipfile
 from unittest import mock
 
+import docx
+
+from librarian import supplementary
 from librarian.literature_search import fetch_supplementary, fetch_supplementary_outcome
 
 
@@ -44,6 +47,28 @@ class SupplementaryZipTest(unittest.TestCase):
             result = fetch_supplementary_outcome("PMC1", max_bytes=1_000_000)
         self.assertFalse(result.ok)
         self.assertEqual(result.files, {})
+
+
+class NestedArchiveTest(unittest.TestCase):
+    def test_docx_unpacking_past_the_budget_is_not_parsed(self):
+        # A .docx is a ZIP too: ~2 MB of text compresses to a few KB, so the
+        # outer download budget alone would let it through.
+        document = docx.Document()
+        document.add_paragraph("gene " * 400_000)
+        buffer = io.BytesIO()
+        document.save(buffer)
+        outer = _zip({"s1.docx": buffer.getvalue()})
+        self.assertLess(len(outer), 100_000)
+
+        with mock.patch("requests.get", return_value=_response(outer)):
+            files = fetch_supplementary("PMC1", max_bytes=1_000_000)
+        self.assertIn("s1.docx", files)
+        with (
+            mock.patch.object(supplementary, "_MAX_PACKAGE_BYTES", 1_000_000),
+            mock.patch("docx.Document", side_effect=AssertionError("parsed")),
+        ):
+            records = supplementary.extract_supplementary_records(files, {}, 40)
+        self.assertEqual(records, [])
 
 
 if __name__ == "__main__":
