@@ -31,6 +31,7 @@ import logging
 import os
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -534,6 +535,8 @@ class _RunState:
     filter_done: int = 0
     filter_total: int = 0
     filter_lock: threading.Lock = field(default_factory=threading.Lock)
+    # One entry per judge LLM call (size, duration, outcome), split retries included.
+    judge_requests: List[Dict[str, Any]] = field(default_factory=list)
 
     def progress(self, message: str) -> None:
         """Send a status message to this call's progress callback."""
@@ -1105,16 +1108,28 @@ class LibrarianAgent:
         query: str,
         batch_data: List[Dict[str, Any]],
         prompt_template: str,
+        state: _RunState,
         depth: int = 0,
     ) -> List[str]:
         """LLM-judge one batch; return relevant sentence IDs (most→least relevant).
 
         On a malformed/empty response, split the batch and retry (<=2 levels)
-        so a whole batch is never silently dropped.
+        so a whole batch is never silently dropped. Every call is logged on
+        ``state.judge_requests`` with its outcome: ``ok``, ``salvaged`` (ids
+        recovered from a truncated reply), ``unparseable`` or ``exception``.
         """
         prompt = prompt_template.replace("{user_query}", query).replace(
             "{paragraphs_batch}", json.dumps(batch_data, indent=2)
         )
+        request = {
+            "depth": depth,
+            "paragraphs": len(batch_data),
+            "sentences": sum(len(item["sentences"]) for item in batch_data),
+            "prompt_chars": len(prompt),
+            "outcome": "",
+            "error": "",
+        }
+        started = time.monotonic()
         try:
             response = self.llm.chat_completion(
                 [
@@ -1132,7 +1147,10 @@ class LibrarianAgent:
             )
         except Exception as exc:
             self._log(f"filter batch error: {exc}")
+            request["outcome"] = "exception"
+            request["error"] = f"{type(exc).__name__}: {exc}"[:300]
             response = ""
+        request["seconds"] = round(time.monotonic() - started, 1)
 
         if self.verbose:
             preview = str(response).replace("\n", " ")[:200]
@@ -1140,24 +1158,35 @@ class LibrarianAgent:
 
         parsed = parse_json_response(response)
         ids = parsed.get("relevant_ids") if isinstance(parsed, dict) else None
+        result: Optional[List[str]] = None
         if isinstance(ids, list):
             # Deduplicated even on the happy path: the judge can repeat ids
             # without truncating, which inflates the caller's ranking walk.
-            return _dedupe_preserving_order(str(x) for x in ids)
-
-        # Unparseable (usually truncated mid-array): keep the prefix that
-        # arrived rather than re-judging or discarding the batch.
-        salvaged = self._salvage_relevant_ids(str(response))
-        if salvaged:
-            self._log(f"salvaged {len(salvaged)} ids from an unparseable judge reply")
-            return salvaged
+            request["outcome"] = "ok"
+            result = _dedupe_preserving_order(str(x) for x in ids)
+        else:
+            # Unparseable (usually truncated mid-array): keep the prefix that
+            # arrived rather than re-judging or discarding the batch.
+            salvaged = self._salvage_relevant_ids(str(response))
+            if salvaged:
+                self._log(
+                    f"salvaged {len(salvaged)} ids from an unparseable judge reply"
+                )
+                request["outcome"] = "salvaged"
+                result = salvaged
+            else:
+                request["outcome"] = request["outcome"] or "unparseable"
+        with state.filter_lock:
+            state.judge_requests.append(request)
+        if result is not None:
+            return result
 
         if depth < 2 and len(batch_data) > 1:
             mid = len(batch_data) // 2
             return self._evaluate_batch(
-                query, batch_data[:mid], prompt_template, depth + 1
+                query, batch_data[:mid], prompt_template, state, depth + 1
             ) + self._evaluate_batch(
-                query, batch_data[mid:], prompt_template, depth + 1
+                query, batch_data[mid:], prompt_template, state, depth + 1
             )
         return []
 
@@ -1235,7 +1264,7 @@ class LibrarianAgent:
         with ThreadPoolExecutor(max_workers=_JUDGE_WORKERS) as pool:
             futures = []
             for batch in batches:
-                future = pool.submit(bound_evaluate, query, batch, template)
+                future = pool.submit(bound_evaluate, query, batch, template, state)
                 future.add_done_callback(state.on_filter_batch_done)
                 futures.append(future)
             for future in futures:  # submission order == batch order
@@ -1483,6 +1512,10 @@ class LibrarianAgent:
                 ),
                 "relevant_count": len(relevant_papers),
                 "final_pmids": [str(p.get("pmid") or "") for p in relevant_papers],
+                # What Stage 3 was actually sent: merged passages can run past
+                # max_paragraph_words, so the longest is measured, not assumed.
+                "longest_passage_chars": max(len(p["text"]) for p in paragraphs),
+                "judge_requests": state.judge_requests,
             }
         )
         logger.debug(

@@ -14,12 +14,14 @@ source (with a cache, a worker pool, ...) as
 An opt-in full-text cache that wraps any source lives in ``fulltext_cache``.
 
 Supplementary material: ``fetch_supplementary_many`` downloads each paper's
-supplementary-files ZIP and keeps only the document files whose text the agent
-can read (``SUPPLEMENTARY_EXTENSIONS``); figures, videos and data files are
-dropped. The agent asks for it only when ``supplementary_enrichment`` is on, and
-only for papers whose JATS declares supplementary material
-(``declares_supplementary``). ``fulltext_cache.CachedSource`` caches these
-outcomes too.
+supplementary document files (``SUPPLEMENTARY_EXTENSIONS``) from the PMC Open
+Access bucket on AWS, which lists every file with its size, so figures, videos
+and data files are never downloaded. Papers missing from the bucket (outside
+PMC's open-access subset, preprints) fall back to Europe PMC's
+supplementary-files ZIP, which is much slower and often fails. The agent asks
+for it only when ``supplementary_enrichment`` is on, and only for papers whose
+JATS declares supplementary material (``declares_supplementary``).
+``fulltext_cache.CachedSource`` caches these outcomes too.
 """
 
 import io
@@ -27,6 +29,7 @@ import threading
 import time
 import zipfile
 import zlib
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Protocol
@@ -42,7 +45,12 @@ _FULLTEXT_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTe
 _SUPPLEMENTARY_URL = (
     "https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/supplementaryFiles"
 )
-# Supplementary files kept from the ZIP: documents whose text can be extracted.
+# PMC Open Access subset on AWS (public, no credentials): one folder per article
+# version, PMC123.1/, holding the JATS, PMC's own PDF/text renditions and every
+# supplementary and figure file. https://pmc.ncbi.nlm.nih.gov/tools/pmcaws/
+_PMC_AWS_URL = "https://pmc-oa-opendata.s3.amazonaws.com/"
+_S3_NS = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+# Supplementary files kept: documents whose text can be extracted.
 SUPPLEMENTARY_EXTENSIONS = (".pdf", ".docx", ".doc", ".txt", ".md")
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
@@ -62,9 +70,12 @@ _PERMANENT_CONFIRM_DELAY_S = 0.5
 _FULLTEXT_WORKERS = 8
 _fulltext_pool: "ThreadPoolExecutor | None" = None
 _fulltext_pool_lock = threading.Lock()
-# Concurrent supplementary ZIP downloads, shared like the full-text pool. Smaller,
-# because each download is a ZIP of up to max_supplementary_bytes, not one XML.
+# Concurrent supplementary downloads, shared like the full-text pool. Smaller,
+# because each paper can bring up to max_supplementary_bytes, not one XML.
 _SUPPLEMENTARY_WORKERS = 4
+# Wall-clock limit on one fallback ZIP download (requests' timeout is per read):
+# Europe PMC streams these slowly enough to hold a worker for minutes.
+_SUPPLEMENTARY_ZIP_DEADLINE_S = 60
 _supplementary_pool: "ThreadPoolExecutor | None" = None
 _supplementary_pool_lock = threading.Lock()
 
@@ -328,23 +339,80 @@ class SupplementaryTooLarge(ValueError):
 
 
 def fetch_supplementary(pmcid: str, max_bytes: int) -> Dict[str, bytes]:
-    """Download one paper's supplementary ZIP; return its document files.
+    """Download one paper's supplementary document files.
 
-    Only entries ending in ``SUPPLEMENTARY_EXTENSIONS`` are kept, keyed by
-    their base filename. A ZIP larger than ``max_bytes`` is abandoned mid-
-    download, and entries are kept only while their combined uncompressed size
-    stays within ``max_bytes``, so one huge supplement cannot stall or exhaust
-    a run.
+    Only files ending in ``SUPPLEMENTARY_EXTENSIONS`` are kept, keyed by their
+    base filename, and only while their combined size stays within
+    ``max_bytes``. Served from the PMC Open Access bucket on AWS, or from
+    Europe PMC's supplementary-files ZIP when the bucket has no copy.
 
     :param pmcid: A PMC id in any form (see ``normalize_pmcid``).
-    :param max_bytes: Size cap for the ZIP and for the files kept from it.
+    :param max_bytes: Size cap for the files kept (and for the fallback ZIP).
     :return: Document files by filename (empty when there are none).
     :rtype: Dict[str, bytes]
     :raises requests.exceptions.RequestException: on a failed request.
-    :raises SupplementaryTooLarge: when the ZIP exceeds ``max_bytes``.
-    :raises ValueError: when the download is not a readable ZIP.
+    :raises SupplementaryTooLarge: when the fallback ZIP exceeds ``max_bytes``.
+    :raises ValueError: when a listing or the fallback ZIP is unreadable.
     """
     pmcid = normalize_pmcid(pmcid)
+    files = _fetch_supplementary_aws(pmcid, max_bytes)
+    return files if files is not None else _fetch_supplementary_zip(pmcid, max_bytes)
+
+
+def _fetch_supplementary_aws(pmcid: str, max_bytes: int) -> "Dict[str, bytes] | None":
+    """Supplementary document files from the PMC bucket, or None if it has no copy.
+
+    The listing gives every file's size, so the ``max_bytes`` budget is applied
+    before downloading, and figures, videos and PMC's own renditions of the
+    article (``PMC123.1.pdf``, ``.xml``, ``.txt``) are never fetched.
+    """
+    response = requests.get(
+        _PMC_AWS_URL, params={"list-type": "2", "prefix": f"{pmcid}."}, timeout=30
+    )
+    response.raise_for_status()
+    try:
+        root = ET.fromstring(response.content)
+    except ET.ParseError as exc:
+        raise ValueError(f"unreadable PMC bucket listing: {exc}") from exc
+    sizes = {
+        item.findtext("s3:Key", namespaces=_S3_NS): int(
+            item.findtext("s3:Size", namespaces=_S3_NS)
+        )
+        for item in root.findall("s3:Contents", _S3_NS)
+    }
+    if not sizes:
+        return None
+    # One folder per article version: read the latest.
+    version = max(
+        {key.split("/", 1)[0] for key in sizes}, key=lambda v: int(v.rsplit(".", 1)[1])
+    )
+    files: Dict[str, bytes] = {}
+    kept = 0
+    for key, size in sorted(sizes.items()):
+        folder, _, name = key.partition("/")
+        if folder != version or name.startswith(f"{version}."):
+            continue
+        if (
+            not name.lower().endswith(SUPPLEMENTARY_EXTENSIONS)
+            or kept + size > max_bytes
+        ):
+            continue
+        file_response = requests.get(_PMC_AWS_URL + quote(key), timeout=120)
+        file_response.raise_for_status()
+        files[name] = file_response.content
+        kept += size
+    return files
+
+
+def _fetch_supplementary_zip(pmcid: str, max_bytes: int) -> Dict[str, bytes]:
+    """Supplementary document files from Europe PMC's supplementary-files ZIP.
+
+    A ZIP larger than ``max_bytes`` is abandoned mid-download, and entries are
+    kept only while their combined uncompressed size stays within ``max_bytes``,
+    so one huge supplement cannot stall or exhaust a run. A download still going
+    after ``_SUPPLEMENTARY_ZIP_DEADLINE_S`` is abandoned as a transient failure.
+    """
+    deadline = time.monotonic() + _SUPPLEMENTARY_ZIP_DEADLINE_S
     with requests.get(
         _SUPPLEMENTARY_URL.format(pmcid=pmcid), timeout=120, stream=True
     ) as response:
@@ -360,6 +428,10 @@ def fetch_supplementary(pmcid: str, max_bytes: int) -> Dict[str, bytes]:
             if buffer.tell() > max_bytes:
                 raise SupplementaryTooLarge(
                     f"supplementary ZIP exceeds cap of {max_bytes} bytes"
+                )
+            if time.monotonic() > deadline:
+                raise requests.exceptions.Timeout(
+                    f"supplementary ZIP took over {_SUPPLEMENTARY_ZIP_DEADLINE_S}s"
                 )
     files: Dict[str, bytes] = {}
     # Uncompressed bytes kept so far: a tiny ZIP can expand far past max_bytes.

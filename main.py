@@ -34,14 +34,14 @@ load_dotenv()
 
 DEFAULT_QUERY = "What is the role of telomere shortening in cellular senescence?"
 
-# Shown whenever supplementary retrieval is on. The figures are from a 23-query
-# LAB-Bench SuppQA comparison against the default (main-text-only) pipeline.
+# Shown whenever supplementary retrieval is on. The figures are from a LAB-Bench
+# SuppQA sample run against the default (main-text-only) pipeline.
 SUPPLEMENTARY_WARNING = """\
 WARNING: supplementary material retrieval is EXPERIMENTAL.
-  In our tests it made a query ~15x slower (median ~25 min vs ~2 min): every
-  paper's supplementary ZIP is downloaded from Europe PMC, whose servers are
-  slow and often fail (HTTP 500s, timeouts). The larger evidence pool can also
-  make the relevance-judge LLM time out and drop evidence. Use at your own risk.
+  In our tests a query took ~4x longer (mean ~7 min vs ~2 min): each paper's
+  supplementary documents are downloaded (PMC Open Access on AWS) and parsed.
+  Set LIBRARIAN_CACHE_DIR so repeat runs reuse the downloads. Use at your own
+  risk.
 """
 
 
