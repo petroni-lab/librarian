@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import csv
 import io
+import itertools
 import logging
 import os
 import re
@@ -26,7 +27,19 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from contextlib import contextmanager
+from typing import (
+    Any,
+    Callable,
+    ContextManager,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 logger = logging.getLogger(__name__)
 # pypdf warns on every slightly malformed PDF; those are routine here.
@@ -154,40 +167,52 @@ def _cell(value: Any) -> str:
     return _norm(str(value))
 
 
-def _delimited_sheets(data: bytes, delimiter: str) -> List[Tuple[str, List[List[Any]]]]:
+# (sheet name, rows): rows are an iterator, read only as far as records are needed.
+_Sheets = List[Tuple[str, Iterable[Sequence[Any]]]]
+# Rows scanned for a table header (the first row with two or more filled cells)
+# before a sheet is taken to be a one-column list.
+_HEADER_SCAN_ROWS = 10
+
+
+@contextmanager
+def _delimited_sheets(data: bytes, delimiter: str) -> Iterator[_Sheets]:
     """The one unnamed sheet of a CSV/TSV file."""
     try:
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError:
         text = data.decode("latin-1")
-    return [("", list(csv.reader(io.StringIO(text), delimiter=delimiter)))]
+    yield [("", csv.reader(io.StringIO(text), delimiter=delimiter))]
 
 
-def _xlsx_sheets(data: bytes) -> List[Tuple[str, List[List[Any]]]]:
-    """Every worksheet of an .xlsx, as (name, rows) with computed cell values."""
+@contextmanager
+def _xlsx_sheets(data: bytes) -> Iterator[_Sheets]:
+    """Every worksheet of an .xlsx, rows streamed with computed cell values.
+
+    Read-only mode parses rows as they are asked for: an .xlsx is itself a ZIP,
+    so loading it whole could expand far past the download budget.
+    """
     import openpyxl
 
     workbook = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     try:
-        return [
-            (sheet.title, list(sheet.iter_rows(values_only=True))) for sheet in workbook
-        ]
+        yield [(sheet.title, sheet.iter_rows(values_only=True)) for sheet in workbook]
     finally:
         workbook.close()
 
 
-def _xls_sheets(data: bytes) -> List[Tuple[str, List[List[Any]]]]:
-    """Every worksheet of a legacy .xls, as (name, rows)."""
+@contextmanager
+def _xls_sheets(data: bytes) -> Iterator[_Sheets]:
+    """Every worksheet of a legacy .xls (not compressed, so bounded by its size)."""
     import xlrd
 
     workbook = xlrd.open_workbook(file_contents=data)
-    return [
-        (sheet.name, [sheet.row_values(i) for i in range(sheet.nrows)])
+    yield [
+        (sheet.name, (sheet.row_values(i) for i in range(sheet.nrows)))
         for sheet in workbook.sheets()
     ]
 
 
-_SHEET_READERS: Dict[str, Callable[[bytes], List[Tuple[str, List[List[Any]]]]]] = {
+_SHEET_READERS: Dict[str, Callable[[bytes], ContextManager[_Sheets]]] = {
     ".csv": lambda data: _delimited_sheets(data, ","),
     ".tsv": lambda data: _delimited_sheets(data, "\t"),
     ".xlsx": _xlsx_sheets,
@@ -195,30 +220,57 @@ _SHEET_READERS: Dict[str, Callable[[bytes], List[Tuple[str, List[List[Any]]]]]] 
 }
 
 
-def _sheet_blocks(rows: List[List[Any]]) -> Iterator[str]:
+def _row(row: Sequence[Any]) -> Tuple[str, int]:
+    """A row as ``a | b | c`` and its count of filled cells.
+
+    Empty cells keep their position (``A |  | 0.01``), so every value stays under
+    its column; only trailing empty cells (sheet padding) are dropped.
+    """
+    cells = [_cell(v) for v in row]
+    while cells and not cells[-1]:
+        cells.pop()
+    return " | ".join(cells), sum(1 for c in cells if c)
+
+
+def _sheet_blocks(rows: Iterable[Sequence[Any]]) -> Iterator[str]:
     """Rows as ``header ; row ; row`` blocks of about ``_MIN_BLOCK_WORDS`` words.
 
-    The first non-empty row is taken as the header and starts every block, so a
-    block BM25 or the judge picks out still says what its columns are.
+    The header is the first row with two or more filled cells, so a title row
+    above the table ("Table S1. DE genes") is not taken for it; such rows are
+    kept as a caption. Caption and header start every block, so a block BM25
+    or the judge picks out still says what its columns are. Entirely empty rows
+    are skipped, and rows are read only as far as blocks are taken.
     """
+    rows = iter(rows)
+    caption: List[str] = []
     header: Optional[str] = None
+    for row in rows:
+        line, filled = _row(row)
+        if not filled:
+            continue
+        if filled >= 2:
+            header = line
+            break
+        caption.append(line)
+        if len(caption) == _HEADER_SCAN_ROWS:
+            break
+    data: List[str] = []
+    if header is None:  # no multi-column row near the top: a one-column list
+        if not caption:
+            return
+        header, data, caption = caption[0], caption[1:], []
+    prefix = " ; ".join(caption + [header])
     pending: List[str] = []
     words = 0
-    for row in rows:
-        cells = [c for c in (_cell(v) for v in row) if c]
-        if not cells:
-            continue
-        line = " | ".join(cells)
-        if header is None:
-            header = line
-            continue
+    rest = (line for line, filled in map(_row, rows) if filled)
+    for line in itertools.chain(data, rest):
         pending.append(line)
         words += len(line.split())
         if words >= _MIN_BLOCK_WORDS:
-            yield " ; ".join([header] + pending)
+            yield " ; ".join([prefix] + pending)
             pending, words = [], 0
     if pending:
-        yield " ; ".join([header] + pending)
+        yield " ; ".join([prefix] + pending)
 
 
 _PARAGRAPH_EXTRACTORS: Dict[str, Callable[[bytes], List[str]]] = {
@@ -243,15 +295,26 @@ def _file_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, str]
         return
     reader = _SHEET_READERS.get(extension)
     if reader is not None:
-        for sheet, rows in reader(data):
-            title = f'{label}, sheet "{sheet}"' if sheet else label
-            for block in _sheet_blocks(rows):
-                yield {
-                    "text": block,
-                    "section_title": title,
-                    "section_type": SUPPLEMENTARY_SECTION_TYPE,
-                    "supplementary_file": name,
-                }
+        with reader(data) as sheets:
+            streams = [
+                (f'{label}, sheet "{sheet}"' if sheet else label, _sheet_blocks(rows))
+                for sheet, rows in sheets
+            ]
+            # One block from each sheet in turn, so the file's record cap reaches
+            # every sheet instead of being used up by the first.
+            while streams:
+                for stream in list(streams):
+                    title, blocks = stream
+                    block = next(blocks, None)
+                    if block is None:
+                        streams.remove(stream)
+                        continue
+                    yield {
+                        "text": block,
+                        "section_title": title,
+                        "section_type": SUPPLEMENTARY_SECTION_TYPE,
+                        "supplementary_file": name,
+                    }
         return
     extractor = _PARAGRAPH_EXTRACTORS.get(extension)
     if extractor is None:
