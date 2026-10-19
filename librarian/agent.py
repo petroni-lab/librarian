@@ -1211,6 +1211,8 @@ class LibrarianAgent:
         if not supplementary.ok:
             self._log(f"supplementary unavailable for {pmcid}: {supplementary.error}")
             return []
+        if supplementary.failed:
+            self._log(f"{pmcid}: could not read supplementary {supplementary.failed}")
         if not supplementary.records:
             return []
         records = apply_captions(
