@@ -61,3 +61,60 @@ class SupplementaryRecordCacheTest(unittest.TestCase):
         with mock.patch("librarian.fulltext_cache.EXTRACTOR_VERSION", 99):
             source.fetch_supplementary_many(["PMC1"], options)
         self.assertEqual(inner.calls, 3)  # extractor changed: a miss
+
+
+class ExtractionFailureTest(unittest.TestCase):
+    def test_unreadable_file_is_reported_and_the_outcome_not_cached(self):
+        from librarian.literature_search import EuropePmcSource
+
+        listing = (
+            b'<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+            b"<Contents><Key>PMC1.1/bad.pdf</Key><Size>9</Size></Contents>"
+            b"<Contents><Key>PMC1.1/good.txt</Key><Size>9</Size></Contents>"
+            b"</ListBucketResult>"
+        )
+
+        def get(url, **kwargs):
+            response = mock.MagicMock()
+            if url.endswith("/"):
+                response.content = listing
+            else:
+                response.content = (
+                    b"not a pdf" if url.endswith(".pdf") else b"good text"
+                )
+            return response
+
+        backend = DictBackend()
+        source = CachedSource(EuropePmcSource(), backend)
+        options = SupplementaryOptions(max_bytes=1000, max_records=40)
+        with mock.patch("requests.get", side_effect=get):
+            first = source.fetch_supplementary_many(["PMC1"], options)["PMC1"]
+            second = source.fetch_supplementary_many(["PMC1"], options)["PMC1"]
+        self.assertEqual([r["text"] for r in first.records], ["good text"])
+        self.assertEqual(first.failed, ["bad.pdf"])
+        self.assertFalse(second.from_cache)
+        self.assertEqual(backend.store, {})
+
+    def test_doc_without_a_converter_is_a_failure_not_an_empty_file(self):
+        from librarian import supplementary
+
+        failed = []
+        with mock.patch.object(supplementary.shutil, "which", return_value=None):
+            records = supplementary.extract_supplementary_records(
+                {"old.doc": b"binary"}, {}, 40, failed
+            )
+        self.assertEqual((records, failed), ([], ["old.doc"]))
+
+    def test_a_file_skipped_by_the_size_policy_is_not_a_failure(self):
+        from librarian import supplementary
+
+        failed = []
+        with mock.patch.object(
+            supplementary,
+            "_check_package_size",
+            side_effect=supplementary.PackageTooLarge("too big"),
+        ):
+            supplementary.extract_supplementary_records(
+                {"t.docx": b"x"}, {}, 40, failed
+            )
+        self.assertEqual(failed, [])

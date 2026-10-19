@@ -134,19 +134,23 @@ def _docx_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, Any]
             yield _table_record(header, block, f"{label}, table {number}", name)
 
 
+class ConverterMissing(RuntimeError):
+    """The external program a file type needs is not installed here."""
+
+
 def _doc_paragraphs(data: bytes) -> List[str]:
     """Paragraph texts of a legacy binary .doc, via ``antiword`` or macOS ``textutil``.
 
-    Neither is a Python dependency: with neither installed, .doc files are
-    skipped (returns ``[]``).
+    Neither is a Python dependency: with neither installed this raises
+    ``ConverterMissing``, so the file counts as failed (and the outcome is not
+    cached) rather than as a document with no text.
     """
     if shutil.which("antiword"):
         command = ["antiword"]
     elif shutil.which("textutil"):
         command = ["textutil", "-convert", "txt", "-stdout"]
     else:
-        logger.debug("no antiword/textutil on PATH; skipping .doc supplement")
-        return []
+        raise ConverterMissing("no antiword or textutil on PATH for .doc")
     fd, path = tempfile.mkstemp(suffix=".doc")
     try:
         with os.fdopen(fd, "wb") as handle:
@@ -398,6 +402,7 @@ def extract_supplementary_records(
     files: Dict[str, bytes],
     captions: Dict[str, str],
     max_records: int,
+    failed: Optional[List[str]] = None,
 ) -> List[Dict[str, str]]:
     """All supplementary files of one paper → paragraph records, capped.
 
@@ -413,6 +418,10 @@ def extract_supplementary_records(
         covers every file.
     :param max_records: Most records returned for the paper, so one long
         supplement (a 200-page PDF) cannot crowd the body out of the BM25 pool.
+    :param failed: If given, receives the names of files that could not be
+        read (corrupt, parser error, missing converter). A file skipped by
+        policy (``PackageTooLarge``) is not a failure: that outcome is the same
+        on every run.
     :return: Records, interleaved across files, in document order within a file.
     :rtype: List[Dict[str, str]]
     """
@@ -428,8 +437,12 @@ def extract_supplementary_records(
                 records.append(record)
                 if len(records) >= max_records:
                     break
+        except PackageTooLarge as exc:
+            logger.debug("skipped supplementary file %s: %s", name, exc)
         except Exception as exc:  # a corrupt file must not cost the paper its body
             logger.debug("could not read supplementary file %s: %s", name, exc)
+            if failed is not None:
+                failed.append(name)
         if records:
             per_file.append(records)
 

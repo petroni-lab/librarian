@@ -519,8 +519,9 @@ class Supplementary:
     ``records`` are ``supplementary.extract_supplementary_records`` output,
     labelled by file name (the agent adds the JATS captions). ``ok`` with no
     records is a real answer: no readable document (only figures, videos, ...).
-    ``failed`` names files that were listed but could not be retrieved: the
-    outcome is still usable, but incomplete, so it is not cached.
+    ``failed`` names files that were listed but could not be downloaded or read
+    (a parser error, a missing converter): the outcome is still usable, but
+    incomplete, so it is not cached.
     """
 
     pmcid: str
@@ -556,7 +557,7 @@ def _attempt_supplementary(pmcid: str, options: SupplementaryOptions) -> Supplem
         return Supplementary(
             pmcid=pmcid, status=status, error=f"{status or type(exc).__name__}: {exc}"
         )
-    records = extract_supplementary_records(files, {}, options.max_records)
+    records = extract_supplementary_records(files, {}, options.max_records, failed)
     return Supplementary(pmcid=pmcid, records=records, failed=failed, status=200)
 
 
