@@ -4,6 +4,7 @@ import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from librarian import (
@@ -251,6 +252,23 @@ class RunStateTests(unittest.TestCase):
                 "action": "search",
             },
         )
+
+    def test_proclaim_verifier_formats_in_process_papers(self):
+        from evals.Literature.ProClaim import verifier
+
+        paper = {"pmid": "1", "title": "Title", "evidence_snippets": ["Evidence."]}
+        runner = verifier.VerifierRunner(SimpleNamespace(via_api=False))
+        runner._agent = SimpleNamespace(
+            run=lambda query: RunResult([paper], {"search_queries": [query]})
+        )
+        passages = runner._retrieve_librarian_passages("claim")
+        self.assertEqual(
+            verifier._format_librarian_passages_for_prompt(passages),
+            "[1] PMID: 1; Title\n- Evidence.",
+        )
+
+        runner._agent = SimpleNamespace(run=lambda query: RunResult([], {}))
+        self.assertEqual(runner._retrieve_librarian_passages("claim"), [])
 
 
 if __name__ == "__main__":
