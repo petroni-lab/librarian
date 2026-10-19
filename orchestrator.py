@@ -75,7 +75,8 @@ def _run(
         runtime_config=RUNTIME_CONFIG,
         full_text_enrichment=request.full_text_enrichment,
     )
-    papers = agent.run(request.query, on_progress=on_progress)
+    result = agent.run(request.query, on_progress=on_progress)
+    papers = result.papers
 
     # The librarian writes no prose, so its summary is empty rather than
     # absent; both agents return the same shape.
@@ -83,11 +84,11 @@ def _run(
     if request.agent == "literature_synthesis":
         if on_progress is not None:
             on_progress("Synthesizing answer")
-        summary = SynthesisAgent().run(request.query, papers)
+        summary = SynthesisAgent().run(request.query, papers).answer
 
     return {
         "query": request.query,
-        "search_queries": agent.last_run_debug.get("search_queries", []),
+        "search_queries": result.debug.get("search_queries", []),
         "papers": papers,
         "summary": summary,
         "action": "search",

@@ -121,10 +121,12 @@ def main() -> None:
     # or the spinner's line would interleave with the output.
     summary = ""
     with Spinner() as spinner:
-        passages = librarian.run(query, on_progress=spinner.update)
+        passages = librarian.run(query, on_progress=spinner.update).papers
         if not args.retrieval_only:
             spinner.update("Synthesizing answer")
-            summary = SynthesisAgent(verbose=not interactive).run(query, passages)
+            summary = (
+                SynthesisAgent(verbose=not interactive).run(query, passages).answer
+            )
 
     if args.retrieval_only:
         _print_passages(query, passages)

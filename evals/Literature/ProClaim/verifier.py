@@ -671,12 +671,12 @@ class VerifierRunner:
     def _retrieve_librarian_passages(self, claim: str) -> list:
         """Retrieve evidence for *claim*, in-process or through the orchestrator.
 
-        Both return ``LibrarianAgent.run``'s per-paper records, so the caller and
-        the prompt formatter are identical either way.
+        Both return the per-paper records of ``LibrarianAgent.run(...).papers``, so
+        the caller and the prompt formatter are identical either way.
         """
         if self.config.via_api:
             return _retrieve_librarian_passages_via_api(claim)
-        return self._agent.run(query=claim) or []
+        return self._agent.run(query=claim).papers
 
     def __call__(self, prompt: str) -> dict[str, Any] | str:
         if self.config.web_search:

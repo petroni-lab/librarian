@@ -253,14 +253,15 @@ from librarian.agent import LibrarianAgent
 from librarian.config import load_runtime_config
 
 agent = LibrarianAgent(runtime_config=load_runtime_config())
-for paper in agent.run("does metformin extend lifespan in mammals?"):
+result = agent.run("does metformin extend lifespan in mammals?")
+for paper in result.papers:
     print(paper["title"], paper["year"], paper["pmid"])
     for snippet in paper["evidence_snippets"]:
         print("  ", snippet)
 ```
 
-`run()` returns one record per paper the relevance judge kept — no fixed top-k. It
-takes `on_progress=callable` for live stage updates, and the constructor takes
+`run().papers` contains one record per paper the relevance judge kept — no fixed
+top-k. `run()` takes `on_progress=callable` for live stage updates, and the constructor takes
 `tracer=` for span tracing (see [`tracing_port.py`](librarian/tracing_port.py)).
 
 **Embedding librarian** in another application: install it from a commit tarball
@@ -350,6 +351,58 @@ index over the OpenScholar Data Store for Librarian — isolates the knowledge l
 gives **+6.8 Bio / +10.9 Neu**. See the paper for the full evaluation and ablations.
 
 ---
+
+## Migrating from 1.0.0 to 1.0.1
+
+Version 1.0.1 changes the Python return values of both agents. Update existing
+callers as follows:
+
+| In 1.0.0 | In 1.0.1 |
+| --- | --- |
+| `papers = agent.run(query)` | `papers = agent.run(query).papers` |
+| `answer = synthesis.run(query, papers)` | `answer = synthesis.run(query, papers).answer` |
+| `agent.last_run_debug` | Save the retrieval result and read `result.debug` |
+| `synthesis.last_run_debug` | Save the synthesis result and read `result.debug` |
+
+When you need both the output and its debug details, call `run()` once and keep
+its result:
+
+```python
+retrieval = agent.run(query)
+papers = retrieval.papers
+search_queries = retrieval.debug.get("search_queries", [])
+
+synthesis_result = synthesis.run(query, papers)
+answer = synthesis_result.answer
+route = synthesis_result.debug["action"]
+```
+
+Retrieval returns `RunResult(papers, debug)`; synthesis returns
+`SynthesisResult(answer, debug)`. Both types are exported from `librarian`.
+`last_run_debug` has been removed. Keeping debug details with each result
+prevents concurrent calls on one agent from overwriting each other's details.
+Injected clients, sources, scope guards, and tracers must also support concurrent
+calls; configure agents before sharing them.
+
+If the pipeline raises, no result is returned. Read partial debug details from
+the original exception's `run_debug` attribute instead:
+
+```python
+from librarian.literature_search import LiteratureSearchError
+
+try:
+    retrieval = agent.run(query)
+except LiteratureSearchError as exc:
+    attempted_queries = exc.run_debug.get("search_queries", [])
+    print("Search failed for sub-queries:", attempted_queries)
+    raise
+```
+
+For a failed search through `synthesis.run(query)`, `exc.run_debug` also includes
+the route (`action`) and the rewritten search query (`query`) once routing has
+completed. Debug details contain only the stages completed before the failure.
+
+The CLI commands and HTTP response fields are unchanged.
 
 ## 🔄 Pipeline Overview
 

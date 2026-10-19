@@ -517,10 +517,10 @@ class _LibrarianSynthesisPipeline:
         return self.synthesis.llm
 
     def run(self, question: str) -> dict:
-        passages = self.librarian.run(question)
+        passages = self.librarian.run(question).papers
         return {
             "action": "search",
-            "summary": self.synthesis.run(question, passages),
+            "summary": self.synthesis.run(question, passages).answer,
             "passages": passages,
         }
 
