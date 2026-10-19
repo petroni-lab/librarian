@@ -32,7 +32,7 @@ import zlib
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Protocol
+from typing import Any, Dict, Iterable, List, Optional, Protocol
 from urllib.parse import quote
 
 import requests
@@ -338,7 +338,9 @@ class SupplementaryTooLarge(ValueError):
     """A supplementary ZIP over the size cap: re-downloading cannot change that."""
 
 
-def fetch_supplementary(pmcid: str, max_bytes: int) -> Dict[str, bytes]:
+def fetch_supplementary(
+    pmcid: str, max_bytes: int, failed: Optional[List[str]] = None
+) -> Dict[str, bytes]:
     """Download one paper's supplementary document files.
 
     Only files ending in ``SUPPLEMENTARY_EXTENSIONS`` are kept, keyed by their
@@ -348,6 +350,8 @@ def fetch_supplementary(pmcid: str, max_bytes: int) -> Dict[str, bytes]:
 
     :param pmcid: A PMC id in any form (see ``normalize_pmcid``).
     :param max_bytes: Size cap for the files kept (and for the fallback ZIP).
+    :param failed: If given, receives the names of listed files whose own
+        download failed; the others are still returned.
     :return: Document files by filename (empty when there are none).
     :rtype: Dict[str, bytes]
     :raises requests.exceptions.RequestException: on a failed request.
@@ -355,31 +359,52 @@ def fetch_supplementary(pmcid: str, max_bytes: int) -> Dict[str, bytes]:
     :raises ValueError: when a listing or the fallback ZIP is unreadable.
     """
     pmcid = normalize_pmcid(pmcid)
-    files = _fetch_supplementary_aws(pmcid, max_bytes)
+    files = _fetch_supplementary_aws(
+        pmcid, max_bytes, failed if failed is not None else []
+    )
     return files if files is not None else _fetch_supplementary_zip(pmcid, max_bytes)
 
 
-def _fetch_supplementary_aws(pmcid: str, max_bytes: int) -> "Dict[str, bytes] | None":
+def _list_pmc_folder(pmcid: str) -> Dict[str, int]:
+    """Every object key under *pmcid*'s folders in the PMC bucket, with its size.
+
+    Follows ``NextContinuationToken`` until the listing is complete, so the
+    latest version and every file are seen however many pages they span.
+    """
+    params = {"list-type": "2", "prefix": f"{pmcid}."}
+    sizes: Dict[str, int] = {}
+    while True:
+        response = requests.get(_PMC_AWS_URL, params=params, timeout=30)
+        response.raise_for_status()
+        try:
+            root = ET.fromstring(response.content)
+        except ET.ParseError as exc:
+            raise ValueError(f"unreadable PMC bucket listing: {exc}") from exc
+        for item in root.findall("s3:Contents", _S3_NS):
+            key = item.findtext("s3:Key", namespaces=_S3_NS)
+            sizes[key] = int(item.findtext("s3:Size", namespaces=_S3_NS))
+        if root.findtext("s3:IsTruncated", namespaces=_S3_NS) != "true":
+            return sizes
+        token = root.findtext("s3:NextContinuationToken", namespaces=_S3_NS)
+        if not token:
+            raise ValueError(
+                "PMC bucket listing truncated without a continuation token"
+            )
+        params = {**params, "continuation-token": token}
+
+
+def _fetch_supplementary_aws(
+    pmcid: str, max_bytes: int, failed: List[str]
+) -> "Dict[str, bytes] | None":
     """Supplementary document files from the PMC bucket, or None if it has no copy.
 
     The listing gives every file's size, so the ``max_bytes`` budget is applied
     before downloading, and figures, videos and PMC's own renditions of the
-    article (``PMC123.1.pdf``, ``.xml``, ``.txt``) are never fetched.
+    article (``PMC123.1.pdf``, ``.xml``, ``.txt``) are never fetched. A listed
+    file whose own download fails (a 404 after the listing, a timeout) is added
+    to *failed* and skipped: it says nothing about the paper's other files.
     """
-    response = requests.get(
-        _PMC_AWS_URL, params={"list-type": "2", "prefix": f"{pmcid}."}, timeout=30
-    )
-    response.raise_for_status()
-    try:
-        root = ET.fromstring(response.content)
-    except ET.ParseError as exc:
-        raise ValueError(f"unreadable PMC bucket listing: {exc}") from exc
-    sizes = {
-        item.findtext("s3:Key", namespaces=_S3_NS): int(
-            item.findtext("s3:Size", namespaces=_S3_NS)
-        )
-        for item in root.findall("s3:Contents", _S3_NS)
-    }
+    sizes = _list_pmc_folder(pmcid)
     if not sizes:
         return None
     # One folder per article version: read the latest.
@@ -397,8 +422,12 @@ def _fetch_supplementary_aws(pmcid: str, max_bytes: int) -> "Dict[str, bytes] | 
             or kept + size > max_bytes
         ):
             continue
-        file_response = requests.get(_PMC_AWS_URL + quote(key), timeout=120)
-        file_response.raise_for_status()
+        try:
+            file_response = requests.get(_PMC_AWS_URL + quote(key), timeout=120)
+            file_response.raise_for_status()
+        except requests.exceptions.RequestException:
+            failed.append(name)
+            continue
         files[name] = file_response.content
         kept += size
     return files
@@ -464,11 +493,14 @@ class Supplementary:
     """One supplementary download outcome: the document files, or why they are missing.
 
     ``ok`` with empty ``files`` is a real answer: the ZIP held no readable
-    document (only figures, data, videos, ...).
+    document (only figures, data, videos, ...). ``failed`` names files that
+    were listed but could not be retrieved: the outcome is still usable, but
+    incomplete, so it is not cached.
     """
 
     pmcid: str
     files: Dict[str, bytes] = field(default_factory=dict)
+    failed: List[str] = field(default_factory=list)
     error: str = ""
     status: "int | None" = None
     # The ZIP was over the size cap: permanent for that cap, whatever the status.
@@ -489,8 +521,9 @@ class Supplementary:
 
 def _attempt_supplementary(pmcid: str, max_bytes: int) -> Supplementary:
     """One supplementary download for *pmcid*, with no retry; never raises."""
+    failed: List[str] = []
     try:
-        files = fetch_supplementary(pmcid, max_bytes)
+        files = fetch_supplementary(pmcid, max_bytes, failed)
     except SupplementaryTooLarge as exc:
         return Supplementary(pmcid=pmcid, error=str(exc), too_large=True)
     except (requests.exceptions.RequestException, ValueError) as exc:
@@ -498,7 +531,7 @@ def _attempt_supplementary(pmcid: str, max_bytes: int) -> Supplementary:
         return Supplementary(
             pmcid=pmcid, status=status, error=f"{status or type(exc).__name__}: {exc}"
         )
-    return Supplementary(pmcid=pmcid, files=files, status=200)
+    return Supplementary(pmcid=pmcid, files=files, failed=failed, status=200)
 
 
 def fetch_supplementary_outcome(pmcid: str, max_bytes: int) -> Supplementary:

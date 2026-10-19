@@ -292,7 +292,9 @@ class CachedSource:
         fetch = getattr(self.inner, "fetch_supplementary_many", None)
         if misses and fetch is not None:
             for pmcid, result in fetch(misses, max_bytes).items():
-                if result.ok or result.permanent:
+                # An outcome missing some files is used but not cached, so the
+                # next read retries it instead of serving it for the full TTL.
+                if (result.ok and not result.failed) or result.permanent:
                     self._set_supplementary(result, max_bytes)
                 results[pmcid] = result
         return {pmcid: results[pmcid] for pmcid in unique if pmcid in results}

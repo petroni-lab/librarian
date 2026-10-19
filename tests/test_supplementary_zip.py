@@ -9,9 +9,12 @@ import zipfile
 from unittest import mock
 
 import docx
+import requests
 
 from librarian import supplementary
+from librarian.fulltext_cache import CachedSource
 from librarian.literature_search import (
+    EuropePmcSource,
     _fetch_supplementary_zip,
     fetch_supplementary,
     fetch_supplementary_outcome,
@@ -36,17 +39,42 @@ def _response(body):
     return response
 
 
-def _listing(sizes):
-    """An S3 ListObjectsV2 reply for ``{key: size}``."""
+def _listing(sizes, next_token=None):
+    """An S3 ListObjectsV2 reply for ``{key: size}``, truncated if *next_token*."""
     items = "".join(
         f"<Contents><Key>{key}</Key><Size>{size}</Size></Contents>"
         for key, size in sizes.items()
     )
+    if next_token:
+        items += (
+            "<IsTruncated>true</IsTruncated>"
+            f"<NextContinuationToken>{next_token}</NextContinuationToken>"
+        )
     return _response(
         b'<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
         + items.encode()
         + b"</ListBucketResult>"
     )
+
+
+def _not_found():
+    response = _response(b"")
+    response.status_code = 404
+    response.raise_for_status.side_effect = requests.HTTPError(
+        "404 Not Found", response=response
+    )
+    return response
+
+
+class DictBackend:
+    def __init__(self):
+        self.store = {}
+
+    def get(self, key):
+        return self.store.get(key)
+
+    def set(self, key, value, expire_seconds):
+        self.store[key] = value
 
 
 class SupplementaryZipTest(unittest.TestCase):
@@ -91,6 +119,41 @@ class SupplementaryAwsTest(unittest.TestCase):
             files = fetch_supplementary("PMC1", max_bytes=1000)
         self.assertEqual(sorted(files), ["a.docx"])
         self.assertEqual(calls.call_count, 2)  # listing + one download
+
+
+class SupplementaryAwsListingTest(unittest.TestCase):
+    def test_every_listing_page_is_read_before_choosing_the_version(self):
+        # The latest version only appears on the second page of the listing.
+        first = _listing({"PMC1.1/old.txt": 5}, next_token="page2")
+        second = _listing({"PMC1.2/new.txt": 5})
+
+        def get(url, params=None, **kwargs):
+            if url.endswith("/"):
+                return second if params.get("continuation-token") == "page2" else first
+            return _response(b"new")
+
+        with mock.patch("requests.get", side_effect=get):
+            files = fetch_supplementary("PMC1", max_bytes=1000)
+        self.assertEqual(files, {"new.txt": b"new"})
+
+    def test_one_failed_file_keeps_the_others_and_is_not_cached(self):
+        listing = _listing({"PMC1.1/a.txt": 5, "PMC1.1/b.txt": 5})
+
+        def get(url, **kwargs):
+            if url.endswith("/"):
+                return listing
+            return _not_found() if url.endswith("b.txt") else _response(b"alpha")
+
+        source = CachedSource(EuropePmcSource(), DictBackend())
+        with mock.patch("requests.get", side_effect=get) as calls:
+            first = source.fetch_supplementary_many(["PMC1"], 1000)["PMC1"]
+            second = source.fetch_supplementary_many(["PMC1"], 1000)["PMC1"]
+        self.assertTrue(first.ok)
+        self.assertEqual(first.files, {"a.txt": b"alpha"})
+        self.assertEqual(first.failed, ["b.txt"])
+        self.assertFalse(second.from_cache)  # incomplete: fetched again, not cached
+        self.assertEqual(source.backend.store, {})
+        self.assertEqual(calls.call_count, 6)  # (listing + 2 files) x 2
 
 
 class NestedArchiveTest(unittest.TestCase):
