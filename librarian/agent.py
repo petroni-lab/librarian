@@ -367,51 +367,121 @@ def _rank_paragraphs_for_subquery(
     return [records[i] for i in order[:k]]
 
 
+def _words(text: str) -> int:
+    return len(text.split())
+
+
+def _column_groups(
+    prefix: str, rows: List[str], max_words: int
+) -> List[Tuple[str, List[str]]]:
+    """Split a wide table into column groups whose header fits in half the budget.
+
+    Each group keeps the first column (the row's identity) and gets its own
+    header, so every piece names exactly the columns it holds. Rows with no
+    value in a group are left out of that group.
+    """
+    *caption, header = prefix.split(" ; ")
+    if _words(" ; ".join(caption)) > max_words // 4:  # a long caption would crowd out
+        caption = []  # the columns; the header matters more
+    names = header.split(" | ")
+    limit = max_words // 2 - _words(" ; ".join(caption)) - 1
+    groups: List[List[int]] = []
+    current: List[int] = []
+    size = _words(names[0])
+    for column in range(1, len(names)):
+        cost = _words(names[column]) + 1  # the cell and its "|"
+        if current and size + cost > limit:
+            groups.append(current)
+            current, size = [], _words(names[0])
+        current.append(column)
+        size += cost
+    if current:
+        groups.append(current)
+    cells = [row.split(" | ") for row in rows]
+    sliced = []
+    for group in groups:
+        columns = [0] + group
+        group_rows = []
+        for row in cells:
+            values = [row[c] if c < len(row) else "" for c in columns]
+            while values and not values[-1]:
+                values.pop()
+            if any(values[1:]):
+                group_rows.append(" | ".join(values))
+        if group_rows:
+            group_header = " | ".join(names[c] for c in columns)
+            sliced.append((" ; ".join(caption + [group_header]), group_rows))
+    return sliced
+
+
+def _row_pieces(prefix: str, rows: List[str], max_words: int) -> List[str]:
+    """``prefix ; row ; row`` texts of at most ``max_words`` words, whole rows first.
+
+    Every ``" ; "`` separator is a word too, so each row costs its words plus
+    one. A row too long on its own is cut into parts that each repeat its first
+    cell, ``identity | ...``, so every text keeps the header and the row it is from.
+    """
+    room = max_words - _words(prefix)  # for "; row ; row ..."
+    parts: List[str] = []
+    for row in rows:
+        words = row.split()
+        if len(words) + 1 <= room:
+            parts.append(row)
+            continue
+        identity = row.split(" | ", 1)[0]
+        parts.append(" ".join(words[: room - 1]))
+        step = max(room - _words(identity) - 2, 1)  # after "; identity |"
+        for start in range(room - 1, len(words), step):
+            parts.append(f"{identity} | " + " ".join(words[start : start + step]))
+    texts: List[str] = []
+    chunk: List[str] = []
+    used = 0
+    for part in parts:
+        cost = _words(part) + 1
+        if chunk and used + cost > room:
+            texts.append(" ; ".join([prefix] + chunk))
+            chunk, used = [], 0
+        chunk.append(part)
+        used += cost
+    if chunk:
+        texts.append(" ; ".join([prefix] + chunk))
+    return texts
+
+
 def _split_table_records(
     records: List[Dict[str, Any]], max_words: int
 ) -> List[Dict[str, Any]]:
-    """Re-cut table records longer than ``max_words`` by rows, header in every piece.
+    """Re-cut table records longer than ``max_words`` so every piece keeps its header.
 
     ``_chunk_paragraphs`` would split a table like prose, so only its first
     window would keep the column names. Here each piece is the header plus as
-    many whole rows as fit; a single row longer than that is split into pieces
-    that each repeat the header and the row's first cell (its identity, e.g. the
-    gene). Every piece then becomes its own paragraph. Other records, and tables
-    whose header alone exceeds ``max_words``, pass through unchanged.
+    many whole rows as fit, at most ``max_words`` words, so the chunker passes
+    it through untouched; a row too long on its own is cut into parts that
+    repeat the header and the row's first cell. A table whose header takes more
+    than half the budget is first split into column groups, each with its own
+    header. Every piece then becomes its own paragraph.
     """
     out: List[Dict[str, Any]] = []
     for record in records:
-        header = record.get("table_header")
+        prefix = record.get("table_header")
         rows = record.get("table_rows") or []
         base = {
             k: v for k, v in record.items() if k not in ("table_header", "table_rows")
         }
-        budget = max_words - len(str(header or "").split())
-        if not header or budget <= 0 or len(record["text"].split()) <= max_words:
+        if not prefix or _words(record["text"]) <= max_words:
             out.append(base)
             continue
-        pieces: List[str] = []
-        for row in rows:
-            words = row.split()
-            if len(words) <= budget:
-                pieces.append(row)
+        tables = [(prefix, rows)]
+        if _words(prefix) > max_words // 2:
+            tables = _column_groups(prefix, rows, max_words)
+        for table_prefix, table_rows in tables:
+            if _words(table_prefix) >= max_words:  # one enormous header cell
+                out.append({**base, "text": " ; ".join([table_prefix] + table_rows)})
                 continue
-            identity = row.split(" | ", 1)[0]
-            step = budget - len(identity.split()) - 1  # room after "identity |"
-            pieces.append(" ".join(words[:budget]))
-            for start in range(budget, len(words), max(step, 1)):
-                pieces.append(f"{identity} | " + " ".join(words[start : start + step]))
-        chunk: List[str] = []
-        size = 0
-        for piece in pieces:
-            words = len(piece.split())
-            if chunk and size + words > budget:
-                out.append({**base, "text": " ; ".join([header] + chunk)})
-                chunk, size = [], 0
-            chunk.append(piece)
-            size += words
-        if chunk:
-            out.append({**base, "text": " ; ".join([header] + chunk)})
+            out.extend(
+                {**base, "text": text}
+                for text in _row_pieces(table_prefix, table_rows, max_words)
+            )
     return out
 
 
