@@ -63,6 +63,31 @@ class SupplementaryRecordCacheTest(unittest.TestCase):
         self.assertEqual(inner.calls, 3)  # extractor changed: a miss
 
 
+class PreviousVersionTest(unittest.TestCase):
+    def test_an_entry_from_the_previous_extractor_version_is_refetched(self):
+        # Written exactly as the previous revision did: an empty 200 (e.g. a
+        # .doc read without a converter) under extractor version 1.
+        import dataclasses
+
+        from librarian.fulltext_cache import _supplementary_cache_key
+
+        options = SupplementaryOptions(max_bytes=1000, max_records=40)
+        backend = DictBackend()
+        backend.store[_supplementary_cache_key("PMC1")] = {
+            "records": [],
+            "status": 200,
+            "error": "",
+            "too_large": False,
+            "made_under": {**dataclasses.asdict(options), "extractor_version": 1},
+        }
+        inner = Inner()
+        result = CachedSource(inner, backend).fetch_supplementary_many(
+            ["PMC1"], options
+        )
+        self.assertFalse(result["PMC1"].from_cache)
+        self.assertEqual(inner.calls, 1)
+
+
 class ExtractionFailureTest(unittest.TestCase):
     def test_unreadable_file_is_reported_and_the_outcome_not_cached(self):
         from librarian.literature_search import EuropePmcSource
