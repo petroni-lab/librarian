@@ -769,6 +769,7 @@ class LibrarianAgent:
         self._supplementary_options = SupplementaryOptions(
             max_bytes=runtime_config.max_supplementary_bytes,
             max_records=runtime_config.max_supplementary_records_per_paper,
+            pdf_extractor=runtime_config.supplementary_pdf_extractor,
         )
 
         self.llm = (
@@ -785,7 +786,7 @@ class LibrarianAgent:
             else default_literature_source()
         )
         if self._supplementary_enrichment:
-            require_extraction_dependencies()
+            require_extraction_dependencies(self._supplementary_options.pdf_extractor)
             if getattr(self._source, "fetch_supplementary_many", None) is None:
                 logger.warning(
                     "supplementary_enrichment is on but %s has no "

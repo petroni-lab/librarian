@@ -60,3 +60,8 @@ max_supplementary_bytes = 15_000_000
 # 40 records ≈ a 40-page PDF. The body of a paper is usually 40–80 paragraphs,
 # so a supplement can at most match it, not drown it.
 max_supplementary_records_per_paper = 40
+# pypdf flattens PDF tables into run-on text; "docling" keeps their rows and
+# headers (it recovered a SuppQA answer pypdf lost) but costs ~6 s per page on
+# CPU plus ~0.5 GB of models, so it is opt-in. Records are cached (see
+# LIBRARIAN_CACHE_DIR), so each file is converted once.
+supplementary_pdf_extractor = "pypdf"

@@ -510,6 +510,7 @@ class SupplementaryOptions:
 
     max_bytes: int
     max_records: int
+    pdf_extractor: str = "pypdf"
 
 
 @dataclass
@@ -557,7 +558,9 @@ def _attempt_supplementary(pmcid: str, options: SupplementaryOptions) -> Supplem
         return Supplementary(
             pmcid=pmcid, status=status, error=f"{status or type(exc).__name__}: {exc}"
         )
-    records = extract_supplementary_records(files, {}, options.max_records, failed)
+    records = extract_supplementary_records(
+        files, {}, options.max_records, failed, pdf_extractor=options.pdf_extractor
+    )
     return Supplementary(pmcid=pmcid, records=records, failed=failed, status=200)
 
 
@@ -571,7 +574,7 @@ def fetch_supplementary_outcome(
     re-requested once before it is trusted.
 
     :param pmcid: A PMC id in any form (see ``normalize_pmcid``).
-    :param options: Size budget and record cap.
+    :param options: Size budget, record cap and PDF extractor.
     :return: The extracted records, or the error that replaced them.
     :rtype: Supplementary
     """
@@ -605,7 +608,7 @@ def fetch_supplementary_many(
 
     :param pmcids: PMC ids in any form; blanks are dropped.
     :type pmcids: Iterable[str]
-    :param options: Size budget and record cap.
+    :param options: Size budget, record cap and PDF extractor.
     :type options: SupplementaryOptions
     :return: One ``Supplementary`` per distinct id, successes and failures alike.
     :rtype: Dict[str, Supplementary]

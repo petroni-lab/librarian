@@ -18,6 +18,7 @@ record is readable on its own.
 from __future__ import annotations
 
 import csv
+import functools
 import io
 import itertools
 import logging
@@ -26,7 +27,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import zipfile
+from collections import defaultdict
 from contextlib import contextmanager
 from typing import (
     Any,
@@ -51,6 +54,9 @@ SUPPLEMENTARY_SECTION_TYPE = "supplementary"
 # 2: failed extractions are no longer cached; table records carry their header
 # (table_header/table_rows), keep empty cells, and read every .xls sheet.
 EXTRACTOR_VERSION = 2
+# "pypdf" (default: text only, one record per page) or "docling" (layout model:
+# tables come out as rows with their header, like spreadsheets; slow, optional).
+PDF_EXTRACTORS = ("pypdf", "docling")
 
 # Consecutive short paragraphs (headings, list items, one-line captions) are
 # merged until a block reaches this many words, so BM25 does not score a bare
@@ -111,6 +117,47 @@ def _check_package_size(data: bytes) -> None:
         size = sum(info.file_size for info in package.infolist())
     if size > _MAX_PACKAGE_BYTES:
         raise PackageTooLarge(f"unpacks to {size} bytes (budget {_MAX_PACKAGE_BYTES})")
+
+
+@functools.lru_cache(maxsize=1)
+def _docling_converter() -> Any:
+    from docling.document_converter import DocumentConverter
+
+    return DocumentConverter()
+
+
+# One Docling conversion at a time: it is CPU/GPU-bound and its thread safety
+# is not documented.
+_DOCLING_LOCK = threading.Lock()
+
+
+def _docling_items(name: str, data: bytes) -> Iterator[Tuple[int, str, str]]:
+    """``(page, kind, text)`` from Docling: each page's prose, then each table.
+
+    Tables are rendered by ``_sheet_blocks`` (header repeated in every block),
+    so a row keeps its column names instead of being flattened into the page.
+    """
+    from docling.datamodel.base_models import DocumentStream
+
+    with _DOCLING_LOCK:
+        document = (
+            _docling_converter()
+            .convert(DocumentStream(name=name, stream=io.BytesIO(data)))
+            .document
+        )
+    pages: Dict[int, List[str]] = defaultdict(list)
+    for item in document.texts:
+        if item.prov:
+            pages[item.prov[0].page_no].append(item.text)
+    for page in sorted(pages):
+        text = _norm(" ".join(pages[page]))
+        if text:
+            yield page, "text", text
+    for table in document.tables:
+        frame = table.export_to_dataframe(doc=document)
+        page = table.prov[0].page_no if table.prov else 0
+        for block in _sheet_blocks([list(frame.columns)] + frame.values.tolist()):
+            yield page, "table", block
 
 
 def _docx_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, Any]]:
@@ -315,9 +362,21 @@ _PARAGRAPH_EXTRACTORS: Dict[str, Callable[[bytes], List[str]]] = {
 }
 
 
-def _file_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, str]]:
+def _file_records(
+    name: str, data: bytes, label: str, pdf_extractor: str
+) -> Iterator[Dict[str, str]]:
     """Records for one supplementary file; nothing for an unsupported type."""
     extension = os.path.splitext(name)[1].lower()
+    if extension == ".pdf" and pdf_extractor == "docling":
+        for page, kind, text in _docling_items(name, data):
+            suffix = f"p. {page}, table" if kind == "table" else f"p. {page}"
+            yield {
+                "text": text,
+                "section_title": f"{label} ({suffix})",
+                "section_type": SUPPLEMENTARY_SECTION_TYPE,
+                "supplementary_file": name,
+            }
+        return
     if extension == ".pdf":
         for page, text in _pdf_texts(data):
             yield {
@@ -360,7 +419,7 @@ def _file_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, str]
         }
 
 
-def require_extraction_dependencies() -> None:
+def require_extraction_dependencies(pdf_extractor: str = "pypdf") -> None:
     """Raise a clear ``ImportError`` when the ``supplementary`` extra is missing.
 
     The PDF/Word/spreadsheet readers are imported lazily inside a per-file ``except
@@ -378,6 +437,14 @@ def require_extraction_dependencies() -> None:
             "`uv sync --extra supplementary` or "
             '`pip install "librarian[supplementary]"`'
         ) from exc
+    if pdf_extractor == "docling":
+        try:
+            import docling  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                'supplementary_pdf_extractor = "docling" needs the `docling` '
+                "package: `uv sync --extra docling` or `pip install docling`"
+            ) from exc
 
 
 def apply_captions(
@@ -405,6 +472,7 @@ def extract_supplementary_records(
     captions: Dict[str, str],
     max_records: int,
     failed: Optional[List[str]] = None,
+    pdf_extractor: str = "pypdf",
 ) -> List[Dict[str, str]]:
     """All supplementary files of one paper → paragraph records, capped.
 
@@ -424,6 +492,7 @@ def extract_supplementary_records(
         read (corrupt, parser error, missing converter). A file skipped by
         policy (``PackageTooLarge``) is not a failure: that outcome is the same
         on every run.
+    :param pdf_extractor: One of ``PDF_EXTRACTORS``.
     :return: Records, interleaved across files, in document order within a file.
     :rtype: List[Dict[str, str]]
     """
@@ -432,7 +501,9 @@ def extract_supplementary_records(
     for name in sorted(files):
         records: List[Dict[str, str]] = []
         try:
-            for record in _file_records(name, files[name], f"Supplementary: {name}"):
+            for record in _file_records(
+                name, files[name], f"Supplementary: {name}", pdf_extractor
+            ):
                 if record["text"] in seen:
                     continue
                 seen.add(record["text"])
