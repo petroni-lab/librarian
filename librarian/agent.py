@@ -33,7 +33,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -325,6 +325,29 @@ _BODY_BM25_FIELDS = ("year",)
 def _bm25_metadata(paper: Dict[str, Any], fields: Tuple[str, ...]) -> str:
     """Space-joined values of ``fields`` from ``paper``, for the BM25 document."""
     return " ".join(str(paper.get(field) or "").strip() for field in fields).strip()
+
+
+# Most supplementary records extracted (and cached) per paper. Only a safety
+# limit: Stage 2 keeps each paper's top max_supplementary_records_per_paper of
+# them by BM25 for the sub-query, so which records survive depends on the
+# question, not on their position in the files.
+_SUPPLEMENTARY_RECORD_SAFETY_LIMIT = 300
+
+
+def _top_supplementary(
+    subquery: str, supplementary: Supplementary, k: int
+) -> Supplementary:
+    """*supplementary* with only its *k* best records for *subquery*, by BM25.
+
+    The kept records stay in document order, so adjacent cited pages remain
+    adjacent; the outcome itself (shared, possibly cached) is not modified.
+    """
+    records = supplementary.records
+    if len(records) <= k:
+        return supplementary
+    ranked = _bm25_rank(subquery, [_bm25_doc(r) for r in records])
+    keep = sorted(index for index, _ in ranked[:k])
+    return replace(supplementary, records=[records[i] for i in keep])
 
 
 def _bm25_doc(record: Dict[str, Any]) -> str:
@@ -766,9 +789,12 @@ class LibrarianAgent:
         self._filter_temperature = runtime_config.filter_temperature
         self._filter_max_tokens = runtime_config.filter_max_tokens
         self._supplementary_enrichment = runtime_config.supplementary_enrichment
+        self._max_supplementary_records = (
+            runtime_config.max_supplementary_records_per_paper
+        )
         self._supplementary_options = SupplementaryOptions(
             max_bytes=runtime_config.max_supplementary_bytes,
-            max_records=runtime_config.max_supplementary_records_per_paper,
+            max_records=_SUPPLEMENTARY_RECORD_SAFETY_LIMIT,
             pdf_extractor=runtime_config.supplementary_pdf_extractor,
         )
 
@@ -1060,9 +1086,14 @@ class LibrarianAgent:
                             "paper.count": len(wanted),
                         },
                     ) as supplementary_span:
-                        supplementaries = fetch_supplementary(
-                            wanted, self._supplementary_options
-                        )
+                        supplementaries = {
+                            pmcid: _top_supplementary(
+                                subquery, outcome, self._max_supplementary_records
+                            )
+                            for pmcid, outcome in fetch_supplementary(
+                                wanted, self._supplementary_options
+                            ).items()
+                        }
                         self._tracer.set_span_attributes(
                             supplementary_span,
                             {
