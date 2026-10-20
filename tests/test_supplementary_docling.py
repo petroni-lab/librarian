@@ -88,3 +88,45 @@ class DoclingTest(unittest.TestCase):
             FakeConverter(error=RuntimeError("model download failed")), failed=failed
         )
         self.assertEqual((records, failed), ([], ["s.pdf"]))
+
+
+class DoclingStage2Test(unittest.TestCase):
+    """A Docling table's long cell through the agent's Stage-2 pool, every chunk."""
+
+    def test_a_long_cell_stays_in_its_column_in_every_chunk(self):
+        from test_supplementary_tables import _stage2_pool
+
+        description = " ".join(f"word{i}" for i in range(600))
+        table = _Table(
+            1, [["gene", "score", "description"], ["SOX2", "3", description]]
+        )
+        converter = FakeConverter(types.SimpleNamespace(texts=[], tables=[table]))
+        fake_docling = types.ModuleType("docling.datamodel.base_models")
+        fake_docling.DocumentStream = lambda name, stream: name
+        modules = {
+            "docling": types.ModuleType("docling"),
+            "docling.datamodel.base_models": fake_docling,
+        }
+        with (
+            mock.patch.dict(sys.modules, modules),
+            mock.patch.object(
+                supplementary, "_docling_converter", return_value=converter
+            ),
+            mock.patch.object(supplementary, "_pdf_texts", return_value=iter(())),
+        ):
+            max_words, chunks = _stage2_pool(
+                {"s.pdf": b"%PDF"}, supplementary_pdf_extractor="docling"
+            )
+        self.assertGreater(len(chunks), 1)
+        continued = []
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk["text"].split()), max_words)
+            self.assertTrue(chunk["section_title"].endswith("(p. 1, table)"))
+            header, row = chunk["text"].split(" ; ", 1)
+            self.assertEqual(header, "gene | score | description")
+            cells = row.split(" | ")
+            self.assertEqual(len(cells), 3, chunk["text"][:180])
+            self.assertEqual(cells[0], "SOX2")
+            self.assertIn(cells[1], ("3", ""))
+            continued += cells[2].split()
+        self.assertEqual(continued, description.split())
