@@ -108,23 +108,27 @@ def _check_package_size(data: bytes) -> None:
         raise PackageTooLarge(f"unpacks to {size} bytes (budget {_MAX_PACKAGE_BYTES})")
 
 
-def _docx_paragraphs(data: bytes) -> List[str]:
-    """Paragraph texts of a .docx, then its tables rendered ``a | b ; c | d``."""
+def _docx_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, Any]]:
+    """A .docx's paragraph blocks, then its tables as table records.
+
+    Tables go through ``_sheet_blocks`` like spreadsheets: empty cells keep
+    their column, the header row is detected and starts every block.
+    """
     import docx
 
     _check_package_size(data)
     document = docx.Document(io.BytesIO(data))
-    paragraphs = [p.text for p in document.paragraphs]
-    for table in document.tables:
-        rows = []
-        for row in table.rows:
-            cells = [_norm(cell.text) for cell in row.cells]
-            cells = [c for c in cells if c]
-            if cells:
-                rows.append(" | ".join(cells))
-        if rows:
-            paragraphs.append(" ; ".join(rows))
-    return paragraphs
+    for block in _blocks([p.text for p in document.paragraphs]):
+        yield {
+            "text": block,
+            "section_title": label,
+            "section_type": SUPPLEMENTARY_SECTION_TYPE,
+            "supplementary_file": name,
+        }
+    for number, table in enumerate(document.tables, 1):
+        rows = [[cell.text for cell in row.cells] for row in table.rows]
+        for header, block in _sheet_blocks(rows):
+            yield _table_record(header, block, f"{label}, table {number}", name)
 
 
 def _doc_paragraphs(data: bytes) -> List[str]:
@@ -207,10 +211,14 @@ def _xls_sheets(data: bytes) -> Iterator[_Sheets]:
     import xlrd
 
     workbook = xlrd.open_workbook(file_contents=data)
-    yield [
-        (sheet.name, (sheet.row_values(i) for i in range(sheet.nrows)))
-        for sheet in workbook.sheets()
-    ]
+    yield [(sheet.name, _xls_rows(sheet)) for sheet in workbook.sheets()]
+
+
+def _xls_rows(sheet: Any) -> Iterator[List[Any]]:
+    """One worksheet's rows. A function of its own, so each generator keeps its
+    sheet (a generator expression in the loop would read the last one)."""
+    for i in range(sheet.nrows):
+        yield sheet.row_values(i)
 
 
 _SHEET_READERS: Dict[str, Callable[[bytes], ContextManager[_Sheets]]] = {
@@ -292,7 +300,6 @@ def _table_record(
 
 
 _PARAGRAPH_EXTRACTORS: Dict[str, Callable[[bytes], List[str]]] = {
-    ".docx": _docx_paragraphs,
     ".doc": _doc_paragraphs,
     ".txt": _text_paragraphs,
     ".md": _text_paragraphs,
@@ -310,6 +317,9 @@ def _file_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, str]
                 "section_type": SUPPLEMENTARY_SECTION_TYPE,
                 "supplementary_file": name,
             }
+        return
+    if extension == ".docx":
+        yield from _docx_records(name, data, label)
         return
     reader = _SHEET_READERS.get(extension)
     if reader is not None:

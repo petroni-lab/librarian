@@ -5,6 +5,7 @@ uv run python -m unittest discover tests
 
 import io
 import itertools
+import sys
 import unittest
 from contextlib import contextmanager
 from unittest import mock
@@ -104,61 +105,175 @@ class SupplementaryTableTest(unittest.TestCase):
         self.assertEqual(len(records), 3)
 
 
-class TableChunkingTest(unittest.TestCase):
-    """Extraction through the agent's Stage-2 chunking, not just the extractor."""
+def _stage2_pool(files):
+    """Every supplementary chunk the agent hands to BM25 for one sub-query.
 
-    def test_every_chunk_of_a_long_row_keeps_header_and_row_identity(self):
-        from dataclasses import replace
+    Runs the agent's real Stage-2 path (download mocked, then extraction,
+    table re-cutting and chunking) and captures the pool before ranking.
+    """
+    from dataclasses import replace
 
-        from librarian import LibrarianAgent, load_runtime_config
-        from librarian.literature_search import EuropePmcSource, Fulltext
+    from librarian import LibrarianAgent, load_runtime_config
+    from librarian.literature_search import EuropePmcSource, Fulltext
 
-        description = " ".join(f"word{i}" for i in range(600))
-        csv_bytes = f"gene,description\nSOX2,{description}\n".encode()
-        xml = (
-            "<article><body><p>Unrelated body text.</p></body><back>"
-            '<supplementary-material><media href="s1.csv"/></supplementary-material>'
-            "</back></article>"
+    xml = (
+        "<article><body><p>Unrelated body text.</p></body><back>"
+        "<supplementary-material/></back></article>"
+    )
+    paper = {
+        "title": "T",
+        "isOpenAccess": True,
+        "pmcid": "PMC1",
+        "fullTextIds": ["PMC1"],
+        "pmid": "1",
+        "year": "2024",
+    }
+
+    class Source(EuropePmcSource):
+        def search(self, query, page_size):
+            return [dict(paper)]
+
+        def fetch_fulltext_many(self, pmcids):
+            return {"PMC1": Fulltext("PMC1", xml=xml, status=200)}
+
+    listing = (
+        '<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+        + "".join(
+            f"<Contents><Key>PMC1.1/{name}</Key><Size>{len(data)}</Size></Contents>"
+            for name, data in files.items()
         )
-        paper = {
-            "title": "T",
-            "isOpenAccess": True,
-            "pmcid": "PMC1",
-            "fullTextIds": ["PMC1"],
-            "pmid": "1",
-            "year": "2024",
+        + "</ListBucketResult>"
+    ).encode()
+
+    def get(url, **kwargs):
+        response = mock.MagicMock()
+        response.content = (
+            listing if url.endswith("/") else files[url.rsplit("/", 1)[1]]
+        )
+        return response
+
+    pool = []
+
+    def capture(subquery, records, k):
+        pool.extend(records)
+        return []
+
+    config = replace(load_runtime_config(), supplementary_enrichment=True)
+    agent = LibrarianAgent(config, llm_client=object(), literature_source=Source())
+    with (
+        mock.patch("requests.get", side_effect=get),
+        mock.patch(
+            "librarian.agent._rank_paragraphs_for_subquery", side_effect=capture
+        ),
+    ):
+        agent._paragraphs_for_subquery("query")
+    return config.max_paragraph_words, [
+        r for r in pool if r["section_type"] == "supplementary"
+    ]
+
+
+class TableChunkingTest(unittest.TestCase):
+    """The header invariant on every chunk before BM25, not just BM25's picks."""
+
+    def assert_every_chunk(self, chunks, max_words, startswith):
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertLessEqual(
+                len(chunk["text"].split()), max_words, chunk["text"][:80]
+            )
+            self.assertTrue(chunk["text"].startswith(startswith), chunk["text"][:80])
+
+    def test_a_long_row_keeps_header_and_row_identity_in_every_chunk(self):
+        description = " ".join(f"word{i}" for i in range(600))
+        max_words, chunks = _stage2_pool(
+            {"s1.csv": f"gene,description\nSOX2,{description}\n".encode()}
+        )
+        self.assert_every_chunk(chunks, max_words, "gene | description ; SOX2 | ")
+        self.assertIn("word599", " ".join(c["text"] for c in chunks))
+
+    def test_rows_packed_together_leave_room_for_every_separator(self):
+        # Three short rows and one 400-word row land in one block; re-cutting it
+        # packs whole rows and row parts, each " ; " costing a word.
+        small = [f"G{i},{' '.join(['note'] * 20)}" for i in range(3)]
+        big = "BIG," + " ".join(f"w{i}" for i in range(400))
+        max_words, chunks = _stage2_pool(
+            {"s1.csv": ("gene,description\n" + "\n".join(small + [big])).encode()}
+        )
+        self.assert_every_chunk(chunks, max_words, "gene | description ; ")
+        self.assertTrue(any(c["text"].count(" ; ") >= 3 for c in chunks))
+        self.assertTrue(
+            all(
+                c["text"].split(" ; ")[1].split(" | ")[0] in {"G0", "BIG"}
+                for c in chunks
+            )
+        )
+
+    def test_a_wide_table_is_split_into_column_groups_each_with_its_header(self):
+        header = "gene," + ",".join(f"sample{i}" for i in range(130))
+        rows = [f"G{r}," + ",".join(str(r * i) for i in range(130)) for r in range(3)]
+        max_words, chunks = _stage2_pool(
+            {"s1.csv": (header + "\n" + "\n".join(rows)).encode()}
+        )
+        self.assert_every_chunk(chunks, max_words, "gene | sample")
+        columns = set()
+        for chunk in chunks:
+            columns.update(chunk["text"].split(" ; ")[0].split(" | "))
+        self.assertTrue(all(f"sample{i}" in columns for i in range(130)))
+
+
+class LegacyXlsTest(unittest.TestCase):
+    def test_each_sheet_reads_its_own_rows(self):
+        sheets = {
+            "Hits": [["gene", "score"], ["SOX2", 3.0]],
+            "Primers": [["primer", "sequence"], ["P1", "ACGT"]],
         }
 
-        class Source(EuropePmcSource):
-            def search(self, query, page_size):
-                return [dict(paper)]
+        class Sheet:
+            def __init__(self, name, rows):
+                self.name, self.rows, self.nrows = name, rows, len(rows)
 
-            def fetch_fulltext_many(self, pmcids):
-                return {"PMC1": Fulltext("PMC1", xml=xml, status=200)}
+            def row_values(self, i):
+                return self.rows[i]
 
-        listing = (
-            b'<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
-            b"<Contents><Key>PMC1.1/s1.csv</Key><Size>%d</Size></Contents>"
-            b"</ListBucketResult>" % len(csv_bytes)
+        fake_xlrd = mock.MagicMock()
+        fake_xlrd.open_workbook.return_value.sheets.return_value = [
+            Sheet(name, rows) for name, rows in sheets.items()
+        ]
+        with mock.patch.dict(sys.modules, {"xlrd": fake_xlrd}):
+            records = extract_supplementary_records({"t.xls": b""}, {}, max_records=40)
+        by_sheet = {
+            r["section_title"].split('sheet "')[1].rstrip('"'): r["text"]
+            for r in records
+        }
+        self.assertEqual(
+            by_sheet,
+            {
+                "Hits": "gene | score ; SOX2 | 3",
+                "Primers": "primer | sequence ; P1 | ACGT",
+            },
         )
 
-        def get(url, **kwargs):
-            response = mock.MagicMock()
-            response.content = listing if url.endswith("/") else csv_bytes
-            return response
 
-        config = replace(load_runtime_config(), supplementary_enrichment=True)
-        agent = LibrarianAgent(config, llm_client=object(), literature_source=Source())
-        with mock.patch("requests.get", side_effect=get):
-            top = agent._paragraphs_for_subquery("SOX2 description word550")
-        tables = [r for r in top if r["section_type"] == "supplementary"]
+class DocxTableTest(unittest.TestCase):
+    def test_docx_tables_keep_empty_cells_and_repeat_the_header(self):
+        import docx
+
+        document = docx.Document()
+        document.add_paragraph("Supplementary methods.")
+        rows = [["gene", "log2FC", "padj"], ["A", "", "0.01"]]
+        rows += [[f"GENE{i}", f"{i}.5", "0.02"] for i in range(60)]
+        table = document.add_table(rows=len(rows), cols=3)
+        for r, values in enumerate(rows):
+            for c, value in enumerate(values):
+                table.cell(r, c).text = value
+        buffer = io.BytesIO()
+        document.save(buffer)
+        records = extract_supplementary_records({"s1.docx": buffer.getvalue()}, {}, 40)
+        tables = [r for r in records if r["section_title"].endswith(", table 1")]
         self.assertGreater(len(tables), 1)
         for record in tables:
-            self.assertTrue(record["text"].startswith("gene | description ; SOX2 | "))
-            self.assertLessEqual(
-                len(record["text"].split()), config.max_paragraph_words
-            )
-        self.assertTrue(any("word550" in r["text"] for r in tables))
+            self.assertTrue(record["text"].startswith("gene | log2FC | padj ; "))
+        self.assertIn("A |  | 0.01", tables[0]["text"])
 
 
 class SpreadsheetPackageTest(unittest.TestCase):
