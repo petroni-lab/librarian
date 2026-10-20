@@ -18,19 +18,22 @@ record is readable on its own.
 from __future__ import annotations
 
 import csv
-import functools
 import io
 import itertools
+import json
 import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import zipfile
 from collections import defaultdict
 from contextlib import contextmanager
+from pathlib import Path
 from typing import (
     Any,
     Callable,
@@ -120,15 +123,7 @@ def _check_package_size(data: bytes) -> None:
         raise PackageTooLarge(f"unpacks to {size} bytes (budget {_MAX_PACKAGE_BYTES})")
 
 
-@functools.lru_cache(maxsize=1)
-def _docling_converter() -> Any:
-    from docling.document_converter import DocumentConverter
-
-    return DocumentConverter()
-
-
-# One Docling conversion at a time: it is CPU/GPU-bound and its thread safety
-# is not documented.
+# One Docling conversion at a time: it is CPU/GPU-bound.
 _DOCLING_LOCK = threading.Lock()
 
 
@@ -136,6 +131,76 @@ _DOCLING_LOCK = threading.Lock()
 # pages are read as plain text with pypdf, so a 200-page supplement is still
 # covered without blocking every supplementary worker for minutes.
 _DOCLING_MAX_PAGES = 20
+# Docling runs in its own process (_docling_worker.py), so a native crash or a
+# hang cannot end the librarian run; a conversion still going after this many
+# seconds (model loading included) is killed and its file reported as failed.
+_DOCLING_WORKER = (sys.executable, str(Path(__file__).with_name("_docling_worker.py")))
+_DOCLING_TIMEOUT_S = 300
+
+
+class DoclingFailed(RuntimeError):
+    """The Docling worker crashed, timed out, or wrote no valid output."""
+
+
+def _end_process_group(process: subprocess.Popen) -> None:
+    """Kill a worker and anything it started (it leads its own process group)."""
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+    except ProcessLookupError:
+        pass
+    process.communicate()  # reap it
+
+
+def _docling_payload(name: str, data: bytes) -> Dict[str, Any]:
+    """Convert one PDF with Docling in a worker process; its texts and table rows.
+
+    :raises DoclingFailed: on an abnormal exit (e.g. a segmentation fault), a
+        timeout, or missing/invalid output. The file then counts as failed, and
+        the rest of the paper's evidence is unaffected.
+    """
+    with tempfile.TemporaryDirectory() as folder:
+        source = os.path.join(folder, "input.pdf")
+        output = os.path.join(folder, "output.json")
+        with open(source, "wb") as handle:
+            handle.write(data)
+        command = [*_DOCLING_WORKER, source, str(_DOCLING_MAX_PAGES), output]
+        with _DOCLING_LOCK:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+            try:
+                _, stderr = process.communicate(timeout=_DOCLING_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                _end_process_group(process)
+                logger.warning(
+                    "Docling timed out after %ss on %s", _DOCLING_TIMEOUT_S, name
+                )
+                raise DoclingFailed(f"timed out after {_DOCLING_TIMEOUT_S}s") from None
+        if process.returncode != 0:
+            last = stderr.decode("utf-8", errors="replace").strip().splitlines()[-1:]
+            logger.warning(
+                "Docling worker for %s exited with status %s", name, process.returncode
+            )
+            raise DoclingFailed(
+                f"worker exited with status {process.returncode} {last}"
+            )
+        try:
+            with open(output, encoding="utf-8") as handle:
+                payload = json.load(handle)
+            if not isinstance(payload["texts"], list) or not isinstance(
+                payload["tables"], list
+            ):
+                raise ValueError("texts and tables must be lists")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            logger.warning("Docling worker for %s wrote no valid output: %s", name, exc)
+            raise DoclingFailed(f"no valid output: {exc}") from exc
+    return payload
 
 
 def _docling_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, Any]]:
@@ -146,34 +211,19 @@ def _docling_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, A
     with the text by page means the per-file record cap reaches the tables of
     early pages instead of being used up by the text of every page first.
     """
-    from docling.datamodel.base_models import DocumentStream
-
-    with _DOCLING_LOCK:
-        document = (
-            _docling_converter()
-            .convert(
-                DocumentStream(name=name, stream=io.BytesIO(data)),
-                page_range=(1, _DOCLING_MAX_PAGES),
-            )
-            .document
-        )
+    payload = _docling_payload(name, data)
     texts: Dict[int, List[str]] = defaultdict(list)
     tables: Dict[int, List[Tuple[str, List[str]]]] = defaultdict(list)
-    for item in document.texts:
-        if item.prov:
-            texts[item.prov[0].page_no].append(item.text)
-    for table in document.tables:
-        frame = table.export_to_dataframe(doc=document)
-        page = table.prov[0].page_no if table.prov else 0
-        tables[page].extend(
-            _sheet_blocks([list(frame.columns)] + frame.values.tolist())
-        )
+    for page, text in payload["texts"]:
+        texts[page].append(text)
+    for page, rows in payload["tables"]:
+        tables[page].extend(_sheet_blocks(rows))
     for page in sorted(set(texts) | set(tables)):
         text = _norm(" ".join(texts[page]))
         if text:
             yield _page_record(text, f"{label} (p. {page})", name)
-        for header, rows in tables[page]:
-            yield _table_record(header, rows, f"{label} (p. {page}, table)", name)
+        for header, block in tables[page]:
+            yield _table_record(header, block, f"{label} (p. {page}, table)", name)
     for page, text in _pdf_texts(data, skip=_DOCLING_MAX_PAGES):
         yield _page_record(text, f"{label} (p. {page})", name)
 
