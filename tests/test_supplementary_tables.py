@@ -105,7 +105,7 @@ class SupplementaryTableTest(unittest.TestCase):
         self.assertEqual(len(records), 3)
 
 
-def _stage2_pool(files, subquery="query", **config_overrides):
+def _stage2_pool(files, subquery="query", everything=False, **config_overrides):
     """Every supplementary chunk the agent hands to BM25 for one sub-query.
 
     Runs the agent's real Stage-2 path (download mocked, then extraction,
@@ -169,6 +169,8 @@ def _stage2_pool(files, subquery="query", **config_overrides):
         ),
     ):
         agent._paragraphs_for_subquery(subquery)
+    if everything:
+        return config.max_paragraph_words, pool
     return config.max_paragraph_words, [
         r for r in pool if r["section_type"] == "supplementary"
     ]
