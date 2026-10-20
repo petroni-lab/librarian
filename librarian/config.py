@@ -83,8 +83,10 @@ class LibrarianRuntimeConfig(DataClassTOMLMixin):
     # Size cap, in bytes, on the supplementary documents kept per paper (and on
     # a fallback ZIP); files past it are skipped, not downloaded or parsed.
     max_supplementary_bytes: int
-    # Most supplementary paragraph records one paper contributes (before
-    # chunking), so a long supplement can't crowd the body out of BM25.
+    # Most supplementary paragraph records one paper contributes to a
+    # sub-query's pool (before chunking), so a long supplement can't crowd the
+    # body out of BM25. The records kept are the paper's best for that
+    # sub-query by BM25, out of up to a few hundred extracted and cached.
     max_supplementary_records_per_paper: int
     # How supplementary PDFs are read: "pypdf" (text per page) or "docling"
     # (tables as rows with their header; slow, needs the `docling` extra).
