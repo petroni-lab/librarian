@@ -178,3 +178,46 @@ def extract_body_paragraphs(xml_text: str) -> List[Dict[str, str]]:
                 {"text": text, "section_title": title, "section_type": sec_type}
             )
     return records
+
+
+_XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
+
+
+def extract_supplementary_captions(xml_text: str) -> Dict[str, str]:
+    """Supplementary file name → its human label, from ``<supplementary-material>``.
+
+    Each ``<supplementary-material>`` (or ``<inline-supplementary-material>``)
+    names its file(s) via ``xlink:href`` on itself or a ``<media>`` child, and
+    carries a ``<label>`` / ``<caption><title>``. Keys are base file names, so
+    they match the entries of the supplementary ZIP. Files the JATS does not
+    name (common: it often links one index page for several files) are simply
+    absent; callers fall back to the file name.
+    """
+    if not xml_text:
+        return {}
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return {}
+
+    captions: Dict[str, str] = {}
+    for element in root.iter():
+        if local_name(element.tag) not in {
+            "supplementary-material",
+            "inline-supplementary-material",
+        }:
+            continue
+        label = ""
+        title = ""
+        for child in element.iter():
+            local = local_name(child.tag)
+            if local == "label" and not label:
+                label = _norm("".join(child.itertext()))
+            elif local == "title" and not title:
+                title = _norm("".join(child.itertext()))
+        text = " ".join(part for part in (label, title) if part)
+        for node in element.iter():
+            href = str(node.attrib.get(_XLINK_HREF, "")).strip()
+            if href and text:
+                captions.setdefault(href.rsplit("/", 1)[-1], text)
+    return captions
