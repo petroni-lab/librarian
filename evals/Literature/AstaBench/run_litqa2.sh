@@ -105,15 +105,19 @@ case "$ANSWER_URL" in
     *api.openai.com*) export LLM_API_KEY="${LLM_API_KEY:-$OPENAI_KEY}" ;;
 esac
 
-# The task reads this file; build it once if absent (91-question split).
+# The task reads this file; build it once if absent. It is rebuilt from the
+# committed 91 row ids, not re-derived from Europe PMC: full-text availability
+# drifts, and re-deriving it gave 93 rows on 2026-10-20, a different split.
 SPLIT_FILE="$SCRIPT_DIR/data/litqa2_europepmc_fulltext/litqa2_full_europepmc_fulltext.json"
 if [ ! -f "$SPLIT_FILE" ] && [ "$DRY_RUN" != true ]; then
-    echo "Building the europepmc_fulltext split (one-off, queries Europe PMC) ..."
-    "$PYTHON_BIN" "$SCRIPT_DIR/check_litqa2_europepmc_fulltext.py" \
-        --output-dir "$(dirname "$SPLIT_FILE")"
+    echo "Building the 91-question europepmc_fulltext split from the committed ids ..."
+    "$PYTHON_BIN" "$SCRIPT_DIR/reconstruct_litqa2_from_ids.py" --output "$SPLIT_FILE"
 fi
 
+# `env` makes the VAR=value words below assignments; as the first words of an
+# array expansion bash would run them as a command ("command not found").
 cmd=(
+    env
     LITERATURE_USE_LIBRARIAN_AGENT=true
     ${VIA_API_ENV[@]+"${VIA_API_ENV[@]}"}
     ${LIBRARIAN_API_URL:+LIBRARIAN_API_URL="$LIBRARIAN_API_URL"}
