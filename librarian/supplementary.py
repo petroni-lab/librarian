@@ -48,7 +48,9 @@ logging.getLogger("pypdf").setLevel(logging.ERROR)
 SUPPLEMENTARY_SECTION_TYPE = "supplementary"
 # Part of every cached supplementary entry's validity: bump it whenever the
 # records these extractors produce change, so cached records are re-extracted.
-EXTRACTOR_VERSION = 1
+# 2: failed extractions are no longer cached; table records carry their header
+# (table_header/table_rows), keep empty cells, and read every .xls sheet.
+EXTRACTOR_VERSION = 2
 
 # Consecutive short paragraphs (headings, list items, one-line captions) are
 # merged until a block reaches this many words, so BM25 does not score a bare
