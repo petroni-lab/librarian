@@ -50,6 +50,7 @@ from librarian.literature_search import (
     normalize_pmcid,
 )
 from librarian.llm_client import create_llm_client, parse_json_response
+from librarian.query_validation.epmc_rules import BOOLEAN_FIELDS, DATE_FIELDS
 from librarian.supplementary import (
     SUPPLEMENTARY_SECTION_TYPE,
     extract_supplementary_records,
@@ -241,13 +242,30 @@ def _merge_selected_paragraphs(
     return merged
 
 
+# One clause value: a (group), "phrase", [range], {range} or bare token.
+# ponytail: no nested parentheses inside a negated group or filter value.
+_EPMC_VALUE = r'(?:\([^)]*\)|"[^"]*"|\[[^\]]*\]|\{[^}]*\}|[^\s()]+)'
+# NOT / leading '-' (at start, after whitespace or '(') plus the negated term.
+_EPMC_NEGATED_RE = re.compile(r"(?:\bNOT\s+|(?<![^\s(])-)(?:[A-Z_]+:)?" + _EPMC_VALUE)
+# Filter fields whose values are dates, Y/N flags or codes, not content words.
+_EPMC_FILTER_FIELDS = DATE_FIELDS | BOOLEAN_FIELDS | {"SRC", "LICENSE", "LANG"}
+_EPMC_FILTER_RE = re.compile(
+    r"\b(?:" + "|".join(sorted(_EPMC_FILTER_FIELDS)) + r"):" + _EPMC_VALUE
+)
+
+
 def _strip_epmc_operators(query: str) -> str:
     """Reduce a Europe PMC query to bare keywords for BM25.
 
-    Drops field specifiers (``TITLE_ABS:``), quotes, parentheses and the
-    boolean operators AND/OR/NOT. A plain keyword query is returned unchanged.
+    Drops negated terms (``NOT x``, ``-x``) and filter clauses
+    (``PUB_YEAR:[...]``, ``HAS_FT:y``, ``SRC:MED``, ...) entirely, since they
+    say nothing about what a relevant passage contains. Then drops field
+    specifiers (``TITLE_ABS:``), quotes, parentheses and the boolean operators
+    AND/OR/NOT. A plain keyword query is returned unchanged.
     """
-    stripped = re.sub(r"\b[A-Z_]+:", " ", query)
+    stripped = _EPMC_NEGATED_RE.sub(" ", query)
+    stripped = _EPMC_FILTER_RE.sub(" ", stripped)
+    stripped = re.sub(r"\b[A-Z_]+:", " ", stripped)
     stripped = stripped.replace('"', " ").replace("(", " ").replace(")", " ")
     tokens = [t for t in stripped.split() if t not in {"AND", "OR", "NOT"}]
     return " ".join(tokens)
