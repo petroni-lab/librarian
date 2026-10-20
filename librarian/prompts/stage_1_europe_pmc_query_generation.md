@@ -132,7 +132,7 @@ This bar does not apply to precision queries — those are meant to be narrow, a
 
 ### 2. Controlled Vocabulary & Mined Entity Fields
 
-**Important:** The primary keyword field in Europe PMC is `KW:`, which covers both MeSH terms and publisher-supplied keywords. There is no documented `MESH:` field. An undocumented one answers only quoted values and covers a small fraction of MeSH-indexed records (`MESH:"Humans"` 259k hits vs `KW:"Humans"` 23.8M), so use `KW:` for MeSH concepts.
+**Important:** Search MeSH terms with `KW:`, which covers both MeSH terms and publisher-supplied keywords. `MESH:` is not supported.
 
 - `KW:"term"` — keyword search including MeSH and publisher terms (e.g. `KW:"galactosylceramides"`)
 - `KEYWORD:"term"` — keywords section in full-text records (narrower than KW:)
@@ -252,7 +252,7 @@ Use these strategies to ensure complementary coverage:
 
 - ❌ Do not leave a multi-word field value unquoted — `TITLE:lung cancer` is discarded; write `TITLE:"lung cancer"`
 - ❌ Do not exceed the AND limit in the budget above
-- ❌ Do not use `MESH:` — undocumented and sparsely indexed; use `KW:`
+- ❌ Do not use `MESH:` — use `KW:` for MeSH terms
 - ❌ Do not write full first names in `AUTH:` — use `AUTH:"Smith AB"`, not `AUTH:"Smith Alice"`
 - ❌ Do not write operators in lower case — `and`/`not` are silently dropped
 - ❌ Do not make every query require a field specifier — plain-text queries are essential
