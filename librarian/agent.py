@@ -414,25 +414,47 @@ def _column_groups(
     return sliced
 
 
+def _row_parts(row: str, room: int) -> List[str]:
+    """A row as parts of at most ``room - 1`` words, every column kept in place.
+
+    Each part has all of the row's cells: the first (the row's identity) is
+    repeated, and the others are filled in column order with as many of their
+    remaining words as fit, empty once used up. So a long cell continues in its
+    own column (``SOX2 |  | ...description``), never under another header.
+    The ``" ; "`` before a part and every ``" | "`` count as words.
+    """
+    if _words(row) + 1 <= room:
+        return [row]
+    identity, *cells = row.split(" | ")
+    remaining = [cell.split() for cell in cells]
+    budget = room - 1 - _words(identity) - len(cells)  # for the cells' own words
+    if budget <= 0:  # the identity and separators alone fill the room
+        words = row.split()
+        return [
+            " ".join(words[i : i + room - 1]) for i in range(0, len(words), room - 1)
+        ]
+    parts: List[str] = []
+    while any(remaining):
+        left = budget
+        values = [identity]
+        for column, words in enumerate(remaining):
+            taken = words[:left]
+            remaining[column] = words[len(taken) :]
+            left -= len(taken)
+            values.append(" ".join(taken))
+        parts.append(" | ".join(values))
+    return parts
+
+
 def _row_pieces(prefix: str, rows: List[str], max_words: int) -> List[str]:
     """``prefix ; row ; row`` texts of at most ``max_words`` words, whole rows first.
 
     Every ``" ; "`` separator is a word too, so each row costs its words plus
-    one. A row too long on its own is cut into parts that each repeat its first
-    cell, ``identity | ...``, so every text keeps the header and the row it is from.
+    one. A row too long on its own is cut by ``_row_parts``, keeping its columns
+    aligned under the header and its first cell in every part.
     """
     room = max_words - _words(prefix)  # for "; row ; row ..."
-    parts: List[str] = []
-    for row in rows:
-        words = row.split()
-        if len(words) + 1 <= room:
-            parts.append(row)
-            continue
-        identity = row.split(" | ", 1)[0]
-        parts.append(" ".join(words[: room - 1]))
-        step = max(room - _words(identity) - 2, 1)  # after "; identity |"
-        for start in range(room - 1, len(words), step):
-            parts.append(f"{identity} | " + " ".join(words[start : start + step]))
+    parts = [part for row in rows for part in _row_parts(row, room)]
     texts: List[str] = []
     chunk: List[str] = []
     used = 0

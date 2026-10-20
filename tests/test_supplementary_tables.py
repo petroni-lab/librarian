@@ -105,7 +105,7 @@ class SupplementaryTableTest(unittest.TestCase):
         self.assertEqual(len(records), 3)
 
 
-def _stage2_pool(files):
+def _stage2_pool(files, subquery="query", **config_overrides):
     """Every supplementary chunk the agent hands to BM25 for one sub-query.
 
     Runs the agent's real Stage-2 path (download mocked, then extraction,
@@ -158,7 +158,9 @@ def _stage2_pool(files):
         pool.extend(records)
         return []
 
-    config = replace(load_runtime_config(), supplementary_enrichment=True)
+    config = replace(
+        load_runtime_config(), supplementary_enrichment=True, **config_overrides
+    )
     agent = LibrarianAgent(config, llm_client=object(), literature_source=Source())
     with (
         mock.patch("requests.get", side_effect=get),
@@ -166,7 +168,7 @@ def _stage2_pool(files):
             "librarian.agent._rank_paragraphs_for_subquery", side_effect=capture
         ),
     ):
-        agent._paragraphs_for_subquery("query")
+        agent._paragraphs_for_subquery(subquery)
     return config.max_paragraph_words, [
         r for r in pool if r["section_type"] == "supplementary"
     ]
@@ -190,6 +192,43 @@ class TableChunkingTest(unittest.TestCase):
         )
         self.assert_every_chunk(chunks, max_words, "gene | description ; SOX2 | ")
         self.assertIn("word599", " ".join(c["text"] for c in chunks))
+
+    def test_a_long_cell_continues_in_its_own_column(self):
+        description = " ".join(f"word{i}" for i in range(600))
+        max_words, chunks = _stage2_pool(
+            {"s.csv": f"gene,score,description\nSOX2,3,{description}\n".encode()}
+        )
+        self.assertGreater(len(chunks), 1)
+        continued = []
+        for chunk in chunks:
+            text = chunk["text"]
+            self.assertLessEqual(len(text.split()), max_words)
+            header, row = text.split(" ; ", 1)
+            self.assertEqual(header, "gene | score | description")
+            cells = row.split(" | ")
+            self.assertEqual(len(cells), 3, text[:180])
+            self.assertEqual(cells[0], "SOX2")
+            self.assertIn(cells[1], ("3", ""))
+            self.assertTrue(cells[2].startswith("word"))
+            continued += cells[2].split()
+        self.assertEqual(continued, description.split())  # all of it, in order
+
+    def test_a_long_middle_cell_keeps_the_next_column_in_place(self):
+        description = " ".join(f"word{i}" for i in range(600))
+        max_words, chunks = _stage2_pool(
+            {"s.csv": f"gene,description,padj\nSOX2,{description},0.01\n".encode()}
+        )
+        padj = []
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk["text"].split()), max_words)
+            header, row = chunk["text"].split(" ; ", 1)
+            self.assertEqual(header, "gene | description | padj")
+            cells = row.split(" | ")
+            self.assertEqual(len(cells), 3, chunk["text"][:180])
+            self.assertEqual(cells[0], "SOX2")
+            self.assertNotIn("0.01", cells[1])
+            padj.append(cells[2].strip())
+        self.assertEqual([p for p in padj if p], ["0.01"])
 
     def test_rows_packed_together_leave_room_for_every_separator(self):
         # Three short rows and one 400-word row land in one block; re-cutting it
