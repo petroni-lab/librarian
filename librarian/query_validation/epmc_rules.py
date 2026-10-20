@@ -217,7 +217,7 @@ EPMC_FIELD_DESCRIPTIONS: Dict[str, str] = {
     "CITES": "Search for records citing a specific record (format: CITES:identifier_source, e.g., CITES:IND43783977_agr)",
     "CHEBI_PUBS": "Show publications with links to given ChEBI ID",
     "CHEBITERM": "Search by ChEBI chemical entity term (text-mined from full text)",
-    "CHEM": "Search by chemical name (text-mined from full text)",
+    "CHEM": "Search by MeSH substance",
     "COMP_INT": "Search within competing interests section of full text records",
     "CONCL": "Search within conclusion section of full text records",
     "CREATION_DATE": "Search for publications by date of entry into the Europe PMC database (YYYY-MM-DD or range)",
