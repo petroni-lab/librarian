@@ -276,7 +276,7 @@ class CachedSource:
 
         :param pmcids: PMC ids in any form; blanks are dropped.
         :type pmcids: Iterable[str]
-        :param options: Size budget and record cap, passed to
+        :param options: Size budget, record cap and PDF extractor, passed to
             the source and checked against cached entries.
         :type options: SupplementaryOptions
         :return: One ``Supplementary`` per distinct id the cache or source
