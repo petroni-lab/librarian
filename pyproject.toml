@@ -24,6 +24,9 @@ supplementary = [    # opt-in supplementary PDF/Word/spreadsheet text (--supplem
     "openpyxl>=3.1",    # .xlsx
     "xlrd>=2.0",        # legacy .xls
 ]
+# Opt-in table-aware PDF extraction (supplementary_pdf_extractor = "docling").
+# Heavy: pulls in PyTorch and downloads ~0.5 GB of models on first use.
+docling = ["docling>=2.0"]
 
 # The benchmark harness under evals/Literature deliberately adds nothing here.
 # Each bench builds its own locked virtualenv on first use.

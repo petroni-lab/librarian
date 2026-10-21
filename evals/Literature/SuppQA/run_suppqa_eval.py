@@ -399,6 +399,8 @@ def _worker(args: argparse.Namespace):
             supplementary_enrichment=args.arm == "supp",
             filter_temperature=0.0,
         )
+        if args.pdf_extractor:
+            config = replace(config, supplementary_pdf_extractor=args.pdf_extractor)
         agent = InstrumentedAgent(
             runtime_config=config,
             llm_base_url=args.agent_base_url,
@@ -550,6 +552,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "cuts them first.",
     )
     parser.add_argument("--queries-from", help="Run dir whose Stage-1 sub-queries to replay.")
+    parser.add_argument(
+        "--pdf-extractor",
+        choices=("pypdf", "docling"),
+        help="supplementary_pdf_extractor for the supp arm (default: config.toml).",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--max-examples", type=int)
     parser.add_argument("--max-workers", type=int, default=4)

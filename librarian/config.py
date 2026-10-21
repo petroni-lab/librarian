@@ -21,6 +21,8 @@ from typing import Optional
 
 from mashumaro.mixins.toml import DataClassTOMLMixin
 
+from librarian.supplementary import PDF_EXTRACTORS
+
 
 # One query per role in query_budget_guidance's recall/coverage/precision split.
 MIN_SUBQUERIES = 3
@@ -81,9 +83,14 @@ class LibrarianRuntimeConfig(DataClassTOMLMixin):
     # Size cap, in bytes, on the supplementary documents kept per paper (and on
     # a fallback ZIP); files past it are skipped, not downloaded or parsed.
     max_supplementary_bytes: int
-    # Most supplementary paragraph records one paper contributes (before
-    # chunking), so a long supplement can't crowd the body out of BM25.
+    # Most supplementary paragraph records one paper contributes to a
+    # sub-query's pool (before chunking), so a long supplement can't crowd the
+    # body out of BM25. The records kept are the paper's best for that
+    # sub-query by BM25, out of up to a few hundred extracted and cached.
     max_supplementary_records_per_paper: int
+    # How supplementary PDFs are read: "pypdf" (text per page) or "docling"
+    # (tables as rows with their header; slow, needs the `docling` extra).
+    supplementary_pdf_extractor: str
 
     def __post_init__(self) -> None:
         """Reject a sub-query budget too small to cover all the query roles.
@@ -94,8 +101,14 @@ class LibrarianRuntimeConfig(DataClassTOMLMixin):
         ``from_toml()`` and on ``dataclasses.replace()`` alike, so an ablation
         sweep is checked the same way the config file is.
 
-        :raises ValueError: if ``num_subqueries`` is below ``MIN_SUBQUERIES``.
+        :raises ValueError: if ``num_subqueries`` is below ``MIN_SUBQUERIES``,
+            or ``supplementary_pdf_extractor`` is not in ``PDF_EXTRACTORS``.
         """
+        if self.supplementary_pdf_extractor not in PDF_EXTRACTORS:
+            raise ValueError(
+                f"supplementary_pdf_extractor must be one of {PDF_EXTRACTORS}, "
+                f"got {self.supplementary_pdf_extractor!r}."
+            )
         if self.num_subqueries < MIN_SUBQUERIES:
             raise ValueError(
                 f"num_subqueries must be >= {MIN_SUBQUERIES} "

@@ -33,7 +33,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -327,6 +327,41 @@ def _bm25_metadata(paper: Dict[str, Any], fields: Tuple[str, ...]) -> str:
     return " ".join(str(paper.get(field) or "").strip() for field in fields).strip()
 
 
+# Most supplementary records extracted (and cached) per paper. Only a safety
+# limit: Stage 2 keeps each paper's top max_supplementary_records_per_paper of
+# them by BM25 for the sub-query, so which records survive depends on the
+# question, not on their position in the files.
+_SUPPLEMENTARY_RECORD_SAFETY_LIMIT = 300
+
+
+# Room for the pieces one record can be re-cut into (``_split_table_records``):
+# a record's paragraph coordinate is its stable position times this, plus the
+# piece number.
+_PIECES_PER_RECORD = 10_000
+
+
+def _top_supplementary(
+    subquery: str, supplementary: Supplementary, k: int
+) -> Supplementary:
+    """*supplementary* with only its *k* best records for *subquery*, by BM25.
+
+    The kept records stay in document order, so adjacent cited pages remain
+    adjacent. Each is a copy tagged with ``supplementary_index``, its position
+    among all the paper's records, so its paragraph coordinates are the same
+    whichever sub-query selected it; the outcome itself (shared, possibly
+    cached) is not modified.
+    """
+    records = supplementary.records
+    keep: Iterable[int] = range(len(records))
+    if len(records) > k:
+        ranked = _bm25_rank(subquery, [_bm25_doc(r) for r in records])
+        keep = sorted(index for index, _ in ranked[:k])
+    return replace(
+        supplementary,
+        records=[{**records[i], "supplementary_index": i} for i in keep],
+    )
+
+
 def _bm25_doc(record: Dict[str, Any]) -> str:
     """BM25 document for a paragraph record: text + section title/type + metadata."""
     return " ".join(
@@ -494,6 +529,7 @@ def _split_table_records(
         if not prefix or _words(record["text"]) <= max_words:
             out.append(base)
             continue
+        index = int(record.get("source_paragraph_index", 0))  # piece 0, 1, 2, ...
         tables = [(prefix, rows)]
         if _words(prefix) > max_words // 2:
             tables = _column_groups(prefix, rows, max_words)
@@ -501,10 +537,9 @@ def _split_table_records(
             if _words(table_prefix) >= max_words:  # one enormous header cell
                 out.append({**base, "text": " ; ".join([table_prefix] + table_rows)})
                 continue
-            out.extend(
-                {**base, "text": text}
-                for text in _row_pieces(table_prefix, table_rows, max_words)
-            )
+            for text in _row_pieces(table_prefix, table_rows, max_words):
+                out.append({**base, "text": text, "source_paragraph_index": index})
+                index += 1
     return out
 
 
@@ -766,9 +801,13 @@ class LibrarianAgent:
         self._filter_temperature = runtime_config.filter_temperature
         self._filter_max_tokens = runtime_config.filter_max_tokens
         self._supplementary_enrichment = runtime_config.supplementary_enrichment
+        self._max_supplementary_records = (
+            runtime_config.max_supplementary_records_per_paper
+        )
         self._supplementary_options = SupplementaryOptions(
             max_bytes=runtime_config.max_supplementary_bytes,
-            max_records=runtime_config.max_supplementary_records_per_paper,
+            max_records=_SUPPLEMENTARY_RECORD_SAFETY_LIMIT,
+            pdf_extractor=runtime_config.supplementary_pdf_extractor,
         )
 
         self.llm = (
@@ -785,7 +824,7 @@ class LibrarianAgent:
             else default_literature_source()
         )
         if self._supplementary_enrichment:
-            require_extraction_dependencies()
+            require_extraction_dependencies(self._supplementary_options.pdf_extractor)
             if getattr(self._source, "fetch_supplementary_many", None) is None:
                 logger.warning(
                     "supplementary_enrichment is on but %s has no "
@@ -965,9 +1004,22 @@ class LibrarianAgent:
                 record["bm25_metadata"] = body_metadata
                 records.append(record)
 
+        # Stable coordinates, assigned before re-cutting: the abstract and body
+        # by their order (the same for every sub-query), supplementary records
+        # after them by their position among all the paper's records, whichever
+        # subset this sub-query kept. Equal passages from different sub-queries
+        # then merge, and distinct ones never share a coordinate.
+        main = [
+            r for r in records if r.get("section_type") != SUPPLEMENTARY_SECTION_TYPE
+        ]
+        position = 0
+        for record in records:
+            if record.get("section_type") == SUPPLEMENTARY_SECTION_TYPE:
+                stable = len(main) + int(record["supplementary_index"])
+            else:
+                stable, position = position, position + 1
+            record["source_paragraph_index"] = stable * _PIECES_PER_RECORD
         records = _split_table_records(records, self._max_paragraph_words)
-        for source_index, record in enumerate(records):
-            record["source_paragraph_index"] = source_index
         chunked = _chunk_paragraphs(
             records,
             self._max_paragraph_words,
@@ -1059,9 +1111,14 @@ class LibrarianAgent:
                             "paper.count": len(wanted),
                         },
                     ) as supplementary_span:
-                        supplementaries = fetch_supplementary(
-                            wanted, self._supplementary_options
-                        )
+                        supplementaries = {
+                            pmcid: _top_supplementary(
+                                subquery, outcome, self._max_supplementary_records
+                            )
+                            for pmcid, outcome in fetch_supplementary(
+                                wanted, self._supplementary_options
+                            ).items()
+                        }
                         self._tracer.set_span_attributes(
                             supplementary_span,
                             {
@@ -1215,9 +1272,16 @@ class LibrarianAgent:
             self._log(f"{pmcid}: could not read supplementary {supplementary.failed}")
         if not supplementary.records:
             return []
-        records = apply_captions(
-            supplementary.records, extract_supplementary_captions(fulltext.xml)
-        )
+        # Copies: the caller annotates them, and the records may be shared by
+        # other sub-queries or held in the cache.
+        records = [
+            {"supplementary_index": index, **record}
+            for index, record in enumerate(
+                apply_captions(
+                    supplementary.records, extract_supplementary_captions(fulltext.xml)
+                )
+            )
+        ]
         files = sorted({r["supplementary_file"] for r in records})
         self._log(
             f"{pmcid}: {len(records)} supplementary paragraphs from "

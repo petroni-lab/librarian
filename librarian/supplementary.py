@@ -20,14 +20,20 @@ from __future__ import annotations
 import csv
 import io
 import itertools
+import json
 import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
+import threading
 import zipfile
+from collections import defaultdict
 from contextlib import contextmanager
+from pathlib import Path
 from typing import (
     Any,
     Callable,
@@ -51,6 +57,9 @@ SUPPLEMENTARY_SECTION_TYPE = "supplementary"
 # 2: failed extractions are no longer cached; table records carry their header
 # (table_header/table_rows), keep empty cells, and read every .xls sheet.
 EXTRACTOR_VERSION = 2
+# "pypdf" (default: text only, one record per page) or "docling" (layout model:
+# tables come out as rows with their header, like spreadsheets; slow, optional).
+PDF_EXTRACTORS = ("pypdf", "docling")
 
 # Consecutive short paragraphs (headings, list items, one-line captions) are
 # merged until a block reaches this many words, so BM25 does not score a bare
@@ -80,12 +89,13 @@ def _blocks(paragraphs: List[str]) -> Iterator[str]:
         yield " ".join(pending)
 
 
-def _pdf_texts(data: bytes) -> Iterator[Tuple[int, str]]:
-    """``(page_number, text)`` for every PDF page that has extractable text."""
+def _pdf_texts(data: bytes, skip: int = 0) -> Iterator[Tuple[int, str]]:
+    """``(page_number, text)`` for every PDF page after the first *skip* that has
+    extractable text."""
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(data))
-    for number, page in enumerate(reader.pages, 1):
+    for number, page in enumerate(reader.pages[skip:], skip + 1):
         text = _norm(page.extract_text() or "")
         if text:
             yield number, text
@@ -111,6 +121,120 @@ def _check_package_size(data: bytes) -> None:
         size = sum(info.file_size for info in package.infolist())
     if size > _MAX_PACKAGE_BYTES:
         raise PackageTooLarge(f"unpacks to {size} bytes (budget {_MAX_PACKAGE_BYTES})")
+
+
+# One Docling conversion at a time: it is CPU/GPU-bound.
+_DOCLING_LOCK = threading.Lock()
+
+
+# Pages converted with Docling (~6 s each on CPU, under _DOCLING_LOCK); later
+# pages are read as plain text with pypdf, so a 200-page supplement is still
+# covered without blocking every supplementary worker for minutes.
+_DOCLING_MAX_PAGES = 20
+# Docling runs in its own process (_docling_worker.py), so a native crash or a
+# hang cannot end the librarian run; a conversion still going after this many
+# seconds (model loading included) is killed and its file reported as failed.
+_DOCLING_WORKER = (sys.executable, str(Path(__file__).with_name("_docling_worker.py")))
+_DOCLING_TIMEOUT_S = 300
+
+
+class DoclingFailed(RuntimeError):
+    """The Docling worker crashed, timed out, or wrote no valid output."""
+
+
+def _end_process_group(process: subprocess.Popen) -> None:
+    """Kill a worker and anything it started (it leads its own process group)."""
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+    except ProcessLookupError:
+        pass
+    process.communicate()  # reap it
+
+
+def _docling_payload(name: str, data: bytes) -> Dict[str, Any]:
+    """Convert one PDF with Docling in a worker process; its texts and table rows.
+
+    :raises DoclingFailed: on an abnormal exit (e.g. a segmentation fault), a
+        timeout, or missing/invalid output. The file then counts as failed, and
+        the rest of the paper's evidence is unaffected.
+    """
+    with tempfile.TemporaryDirectory() as folder:
+        source = os.path.join(folder, "input.pdf")
+        output = os.path.join(folder, "output.json")
+        with open(source, "wb") as handle:
+            handle.write(data)
+        command = [*_DOCLING_WORKER, source, str(_DOCLING_MAX_PAGES), output]
+        with _DOCLING_LOCK:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+            try:
+                _, stderr = process.communicate(timeout=_DOCLING_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                _end_process_group(process)
+                logger.warning(
+                    "Docling timed out after %ss on %s", _DOCLING_TIMEOUT_S, name
+                )
+                raise DoclingFailed(f"timed out after {_DOCLING_TIMEOUT_S}s") from None
+        if process.returncode != 0:
+            last = stderr.decode("utf-8", errors="replace").strip().splitlines()[-1:]
+            logger.warning(
+                "Docling worker for %s exited with status %s", name, process.returncode
+            )
+            raise DoclingFailed(
+                f"worker exited with status {process.returncode} {last}"
+            )
+        try:
+            with open(output, encoding="utf-8") as handle:
+                payload = json.load(handle)
+            if not isinstance(payload["texts"], list) or not isinstance(
+                payload["tables"], list
+            ):
+                raise ValueError("texts and tables must be lists")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            logger.warning("Docling worker for %s wrote no valid output: %s", name, exc)
+            raise DoclingFailed(f"no valid output: {exc}") from exc
+    return payload
+
+
+def _docling_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, Any]]:
+    """Records from Docling, in page order: each page's prose, then its tables.
+
+    Tables become header-repeated row blocks (``_table_record``), so a row keeps
+    its column names instead of being flattened into the page. Interleaving them
+    with the text by page means the per-file record cap reaches the tables of
+    early pages instead of being used up by the text of every page first.
+    """
+    payload = _docling_payload(name, data)
+    texts: Dict[int, List[str]] = defaultdict(list)
+    tables: Dict[int, List[Tuple[str, List[str]]]] = defaultdict(list)
+    for page, text in payload["texts"]:
+        texts[page].append(text)
+    for page, rows in payload["tables"]:
+        tables[page].extend(_sheet_blocks(rows))
+    for page in sorted(set(texts) | set(tables)):
+        text = _norm(" ".join(texts[page]))
+        if text:
+            yield _page_record(text, f"{label} (p. {page})", name)
+        for header, block in tables[page]:
+            yield _table_record(header, block, f"{label} (p. {page}, table)", name)
+    for page, text in _pdf_texts(data, skip=_DOCLING_MAX_PAGES):
+        yield _page_record(text, f"{label} (p. {page})", name)
+
+
+def _page_record(text: str, title: str, name: str) -> Dict[str, Any]:
+    return {
+        "text": text,
+        "section_title": title,
+        "section_type": SUPPLEMENTARY_SECTION_TYPE,
+        "supplementary_file": name,
+    }
 
 
 def _docx_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, Any]]:
@@ -315,9 +439,14 @@ _PARAGRAPH_EXTRACTORS: Dict[str, Callable[[bytes], List[str]]] = {
 }
 
 
-def _file_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, str]]:
+def _file_records(
+    name: str, data: bytes, label: str, pdf_extractor: str
+) -> Iterator[Dict[str, str]]:
     """Records for one supplementary file; nothing for an unsupported type."""
     extension = os.path.splitext(name)[1].lower()
+    if extension == ".pdf" and pdf_extractor == "docling":
+        yield from _docling_records(name, data, label)
+        return
     if extension == ".pdf":
         for page, text in _pdf_texts(data):
             yield {
@@ -360,7 +489,7 @@ def _file_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, str]
         }
 
 
-def require_extraction_dependencies() -> None:
+def require_extraction_dependencies(pdf_extractor: str = "pypdf") -> None:
     """Raise a clear ``ImportError`` when the ``supplementary`` extra is missing.
 
     The PDF/Word/spreadsheet readers are imported lazily inside a per-file ``except
@@ -378,6 +507,14 @@ def require_extraction_dependencies() -> None:
             "`uv sync --extra supplementary` or "
             '`pip install "librarian[supplementary]"`'
         ) from exc
+    if pdf_extractor == "docling":
+        try:
+            import docling  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                'supplementary_pdf_extractor = "docling" needs the `docling` '
+                "package: `uv sync --extra docling` or `pip install docling`"
+            ) from exc
 
 
 def apply_captions(
@@ -405,6 +542,7 @@ def extract_supplementary_records(
     captions: Dict[str, str],
     max_records: int,
     failed: Optional[List[str]] = None,
+    pdf_extractor: str = "pypdf",
 ) -> List[Dict[str, str]]:
     """All supplementary files of one paper → paragraph records, capped.
 
@@ -424,6 +562,7 @@ def extract_supplementary_records(
         read (corrupt, parser error, missing converter). A file skipped by
         policy (``PackageTooLarge``) is not a failure: that outcome is the same
         on every run.
+    :param pdf_extractor: One of ``PDF_EXTRACTORS``.
     :return: Records, interleaved across files, in document order within a file.
     :rtype: List[Dict[str, str]]
     """
@@ -432,7 +571,9 @@ def extract_supplementary_records(
     for name in sorted(files):
         records: List[Dict[str, str]] = []
         try:
-            for record in _file_records(name, files[name], f"Supplementary: {name}"):
+            for record in _file_records(
+                name, files[name], f"Supplementary: {name}", pdf_extractor
+            ):
                 if record["text"] in seen:
                     continue
                 seen.add(record["text"])
