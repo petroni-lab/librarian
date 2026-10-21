@@ -73,12 +73,13 @@ class LibrarianRuntimeConfig(DataClassTOMLMixin):
     # nothing and the batch is dropped without an error.
     filter_max_tokens: int
     # ── Supplementary material ───────────────────────────────────────────────
-    # Also fetch each open-access paper's supplementary files (Europe PMC
-    # supplementaryFiles ZIP) and add the text of its PDF / Word documents to
-    # that paper's paragraph pool. Only applies when full text is fetched.
+    # Also fetch each open-access paper's supplementary files (PMC bucket on
+    # AWS, Europe PMC ZIP as fallback) and add the text of its PDF / Word
+    # documents to that paper's paragraph pool. Only applies when full text is
+    # fetched.
     supplementary_enrichment: bool
-    # Size cap, in bytes, for one paper's supplementary ZIP and for each file
-    # in it; anything larger is skipped rather than downloaded or parsed.
+    # Size cap, in bytes, on the supplementary documents kept per paper (and on
+    # a fallback ZIP); files past it are skipped, not downloaded or parsed.
     max_supplementary_bytes: int
     # Most supplementary paragraph records one paper contributes (before
     # chunking), so a long supplement can't crowd the body out of BM25.

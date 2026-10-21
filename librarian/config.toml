@@ -48,13 +48,15 @@ filter_max_tokens = 8192
 
 # Supplementary material: off by default, because the values above are the ones
 # that produced the published LitQA2 numbers and they were measured without it.
-# Turning it on adds one ZIP download per open-access paper that declares
-# supplementary material, so Stage 2 gets slower.
+# Turning it on downloads the supplementary documents of every open-access paper
+# that declares any (from the PMC bucket on AWS), so Stage 2 gets slower.
 supplementary_enrichment = false
-# 50 MB covers typical PDF/Word supplements, including ZIPs that also bundle
-# the article's figure images; bigger archives are mostly imaging or sequence
-# data with no prose to retrieve.
-max_supplementary_bytes = 50_000_000
+# 15 MB of documents per paper. Measured on PMC supplements: median 1.7 MB per
+# paper, 90th percentile 10.6 MB; the few files over 10 MB (5%) are image-heavy
+# PDFs holding about half of all bytes, yet a paper contributes at most
+# max_supplementary_records_per_paper records. Every LAB-Bench SuppQA paper
+# (largest 14.2 MB) fits. Also caps the Europe PMC ZIP fallback.
+max_supplementary_bytes = 15_000_000
 # 40 records ≈ a 40-page PDF. The body of a paper is usually 40–80 paragraphs,
 # so a supplement can at most match it, not drown it.
 max_supplementary_records_per_paper = 40

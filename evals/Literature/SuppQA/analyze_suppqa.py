@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from evals.Literature.SuppQA.run_suppqa_eval import KEY_PASSAGE_THRESHOLD, _read_rows
+from librarian.literature_search import SUPPLEMENTARY_EXTENSIONS
 
 FOUND = KEY_PASSAGE_THRESHOLD
 
@@ -110,7 +111,8 @@ def timing_report(arms: dict[str, dict[str, dict]], ids: set[str]) -> str:
     """Retrieval seconds per question; Stage 1 is left out of the headline since
     a run with --queries-from skips the query-planning LLM call."""
     spans = ["librarian.stage2_paragraphs", "librarian.epmc_search",
-             "librarian.epmc_fulltext", "librarian.bm25_rank", "librarian.filter_relevance"]
+             "librarian.epmc_fulltext", "librarian.epmc_supplementary",
+             "librarian.bm25_rank", "librarian.filter_relevance"]
     rows = []
     for arm, by_id in arms.items():
         stats = [by_id[i]["retrieval"] for i in ids if by_id[i].get("retrieval")]
@@ -129,11 +131,11 @@ def timing_report(arms: dict[str, dict[str, dict]], ids: set[str]) -> str:
     return (
         "## Retrieval time per question, seconds (Stage 2 + 3)\n\n"
         "Sub-query spans (search, fulltext, bm25) are summed over the parallel "
-        "sub-query threads, so they are thread-seconds, not wall-clock. fulltext "
-        "includes the supplementary downloads; bm25 includes parsing them.\n\n"
+        "sub-query threads, so they are thread-seconds, not wall-clock. bm25 "
+        "includes parsing the supplementary files.\n\n"
         + _table(
             ["arm", "median", "p90", "mean", "stage 2 wall", "search Σ", "fulltext Σ",
-             "bm25+parse Σ", "judge", "supp fetch errors"],
+             "supp download Σ", "bm25+parse Σ", "judge", "supp fetch errors"],
             rows,
         )
     )
@@ -212,6 +214,112 @@ def target_report(arms: dict[str, dict[str, dict]], ids: set[str]) -> str:
     return out
 
 
+def judge_report(arms: dict[str, dict[str, dict]], ids: set[str]) -> str:
+    """Stage-3 request sizes and failures: what the judge was sent, and whether
+    a failed request's split-and-retry halves recovered it."""
+    rows = []
+    for arm, by_id in arms.items():
+        stats = [by_id[i]["retrieval"] for i in ids if by_id[i].get("retrieval")]
+        requests = [r for s in stats for r in s.get("judge_requests", [])]
+        if not requests:
+            continue
+        outcomes = Counter(r.get("outcome", "") for r in requests)
+        rows.append([
+            arm, len(requests),
+            *(outcomes[o] for o in ("ok", "salvaged", "unparseable", "exception")),
+            sum(r["depth"] > 0 for r in requests),
+            sum(
+                any(r.get("outcome") != "ok" for r in s.get("judge_requests", []))
+                for s in stats
+            ),
+            f"{statistics.median(r['sentences'] for r in requests):.0f}",
+            max(r["sentences"] for r in requests),
+            max(r["prompt_chars"] for r in requests),
+            max(s.get("longest_passage_chars", 0) for s in stats),
+            f"{statistics.median(r['seconds'] for r in requests):.1f}",
+            max(r["seconds"] for r in requests),
+        ])
+    errors = Counter(
+        r["error"].split(":", 1)[0]
+        for by_id in arms.values() for i in ids if by_id[i].get("retrieval")
+        for r in by_id[i]["retrieval"].get("judge_requests", []) if r["error"]
+    )
+    return (
+        "## Stage-3 judge requests\n\n"
+        "One row per arm, over every judge LLM call. Outcomes: ok, salvaged (ids "
+        "recovered from a truncated reply), unparseable, exception; an unparseable "
+        "or failed request is retried as two halves (depth > 0).\n\n"
+        + _table(
+            ["arm", "requests", "ok", "salvaged", "unparseable", "exception",
+             "split retries", "questions with a non-ok request",
+             "median sentences", "max sentences", "max prompt chars",
+             "longest passage chars", "median s", "max s"],
+            rows,
+        )
+        + ("\n\nException causes: " + ", ".join(f"{k} {v}" for k, v in errors.most_common())
+           if errors else "")
+    )
+
+
+def _loss_stage(stats: dict, pre: dict | None) -> str:
+    """The first stage at which a question's answer was lost, from its target-paper
+    funnel and, when a preflight run is given, where the answer sits in the paper."""
+    key = stats["key"]
+    if pre is not None and not pre["fulltext_ok"]:
+        return "no full text (not open access)"
+    if stats["counts"].get("target_pool", 0) == 0:
+        return "source paper not retrieved"
+    if max(key.get("key_pool_main", 0), key.get("key_pool_supp", 0)) < FOUND:
+        if pre is None:
+            return "answer not in the extracted text"
+        if pre["key_in_supp"] >= FOUND:
+            return "answer only in the supplement (not read in this arm)"
+        if pre["supp_error"]:
+            return "supplementary download failed"
+        unread = sorted({
+            name.rsplit(".", 1)[-1].lower() for name in pre.get("declared_files", [])
+            if not name.lower().endswith(SUPPLEMENTARY_EXTENSIONS)
+        })
+        if unread:
+            return f"answer location not established (unread file types: {', '.join(unread)})"
+        return "answer location not established (key passage not found in extracted text)"
+    if max(key.get("key_bm25_main", 0), key.get("key_bm25_supp", 0)) < FOUND:
+        return "lost at BM25 selection"
+    if key.get("key_cited", 0) < FOUND:
+        return "lost at judge selection"
+    if key.get("key_shown", 0) < FOUND:
+        return "truncated before the answering model"
+    return "answering model wrong with the answer shown"
+
+
+def loss_report(
+    arms: dict[str, dict[str, dict]], ids: set[str], preflight: dict[str, dict]
+) -> str:
+    """For every wrongly answered question, the stage where its answer was lost."""
+    rows, totals = [], {}
+    for arm, by_id in arms.items():
+        totals[arm] = Counter()
+        for i in sorted(ids):
+            row = by_id[i]
+            if row["correct"] or not row.get("retrieval"):
+                continue
+            stage = _loss_stage(row["retrieval"], preflight.get(i))
+            totals[arm][stage] += 1
+            rows.append([i[:8], row.get("pmcid", ""), arm, stage])
+    summary = "\n".join(
+        f"- `{arm}`: " + ", ".join(f"{stage} {n}" for stage, n in counts.most_common())
+        for arm, counts in totals.items() if counts
+    )
+    return (
+        "## Where each missed answer was lost\n\n"
+        "First failing stage per wrongly answered question. With a preflight run, "
+        "questions whose answer cannot be located in the paper are kept separate "
+        "(\"answer location not established\").\n\n"
+        + _table(["question", "pmcid", "arm", "lost at"], rows)
+        + ("\n\n" + summary if summary else "")
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_dirs", nargs="+")
@@ -219,6 +327,7 @@ def main(argv: list[str] | None = None) -> None:
 
     sections = []
     arms: dict[str, dict[str, dict]] = {}
+    preflight: dict[str, dict] = {}
     for run_dir in args.run_dirs:
         # One row per question: the last one wins, as with a resumed run.
         rows = list({r["id"]: r for r in _read_rows(Path(run_dir) / "predictions.jsonl")}.values())
@@ -227,6 +336,7 @@ def main(argv: list[str] | None = None) -> None:
         arm = rows[0]["arm"]
         if arm == "preflight":
             sections.append(preflight_report(rows))
+            preflight = {r["id"]: r for r in rows}
         else:
             arms[arm] = {r["id"]: r for r in rows if not r.get("error")}
     if arms:
@@ -236,8 +346,10 @@ def main(argv: list[str] | None = None) -> None:
         if retrieval_arms:
             sections += [
                 timing_report(retrieval_arms, ids),
+                judge_report(retrieval_arms, ids),
                 evidence_report(retrieval_arms, ids),
                 target_report(retrieval_arms, ids),
+                loss_report(retrieval_arms, ids, preflight),
             ]
     print("\n\n".join(sections))
 

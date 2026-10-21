@@ -194,6 +194,7 @@ def preflight_row(args: argparse.Namespace, q: dict[str, Any]) -> dict[str, Any]
         row["supp_error"] = str(exc) or type(exc).__name__
         return row
     captions = extract_supplementary_captions(fulltext.xml)
+    row["declared_files"] = sorted(captions)
     capped = extract_supplementary_records(
         files, captions, config.max_supplementary_records_per_paper
     )
@@ -365,6 +366,8 @@ def retrieval_stats(agent: InstrumentedAgent, budget: int) -> dict[str, Any]:
         "counts": dict(counts),
         "target_cited": target is not None,
         "key": {k: round(v, 3) for k, v in key.items()},
+        "longest_passage_chars": debug.get("longest_passage_chars", 0),
+        "judge_requests": debug.get("judge_requests", []),
     }
 
 

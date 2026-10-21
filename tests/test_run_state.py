@@ -43,7 +43,7 @@ def retrieval_agent(barrier=None):
             for i in range(1 if query == "alpha" else 2)
         ]
 
-    def evaluate(query, batch, template):
+    def evaluate(query, batch, template, state):
         if barrier and batch[0]["id"] == "paragraph_0":
             barrier.wait(timeout=10)
         return [sentence["id"] for item in batch for sentence in item["sentences"]]
