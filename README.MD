@@ -3,7 +3,7 @@
 <img src="assets/ai-librarian.png" alt="EMBL AI Librarian logo" width="140">
 <h1><span style="color:#18974C">EMBL AI Librarian</span></h1></td>
 
-<h3>A life-sciences knowledge layer for AI agents</h3>
+<h3>The life-sciences knowledge layer for AI agents</h3>
 
 <!-- TODO: project page, once one exists
 <h4><a href="https://your-project-page.example">Project Page 🚀</a></h4>
