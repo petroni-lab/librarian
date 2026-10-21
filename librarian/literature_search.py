@@ -37,6 +37,8 @@ from urllib.parse import quote
 
 import requests
 
+from librarian.supplementary import extract_supplementary_records
+
 _SEARCH_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 # Europe PMC full-text fetch endpoint (PMC id -> JATS XML).
 _FULLTEXT_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML"
@@ -498,18 +500,32 @@ def _fetch_supplementary_zip(pmcid: str, max_bytes: int) -> Dict[str, bytes]:
     return files
 
 
+@dataclass(frozen=True)
+class SupplementaryOptions:
+    """Everything that decides which supplementary records a paper yields.
+
+    It is also the validity of a cached outcome: ``fulltext_cache`` stores it
+    beside the records, and an entry made under other options is a miss.
+    """
+
+    max_bytes: int
+    max_records: int
+
+
 @dataclass
 class Supplementary:
-    """One supplementary download outcome: the document files, or why they are missing.
+    """One paper's supplementary outcome: its extracted records, or why they are missing.
 
-    ``ok`` with empty ``files`` is a real answer: the ZIP held no readable
-    document (only figures, data, videos, ...). ``failed`` names files that
-    were listed but could not be retrieved: the outcome is still usable, but
+    ``records`` are ``supplementary.extract_supplementary_records`` output,
+    labelled by file name (the agent adds the JATS captions). ``ok`` with no
+    records is a real answer: no readable document (only figures, videos, ...).
+    ``failed`` names files that were listed but could not be downloaded or read
+    (a parser error, a missing converter): the outcome is still usable, but
     incomplete, so it is not cached.
     """
 
     pmcid: str
-    files: Dict[str, bytes] = field(default_factory=dict)
+    records: List[Dict[str, str]] = field(default_factory=list)
     failed: List[str] = field(default_factory=list)
     error: str = ""
     status: "int | None" = None
@@ -520,7 +536,7 @@ class Supplementary:
 
     @property
     def ok(self) -> bool:
-        """True when the ZIP was downloaded and read (it may hold no documents)."""
+        """True when the files were downloaded (they may hold no documents)."""
         return not self.error
 
     @property
@@ -529,11 +545,11 @@ class Supplementary:
         return self.too_large or self.status in _PERMANENT_FULLTEXT_STATUSES
 
 
-def _attempt_supplementary(pmcid: str, max_bytes: int) -> Supplementary:
-    """One supplementary download for *pmcid*, with no retry; never raises."""
+def _attempt_supplementary(pmcid: str, options: SupplementaryOptions) -> Supplementary:
+    """One supplementary download and extraction for *pmcid*, no retry; never raises."""
     failed: List[str] = []
     try:
-        files = fetch_supplementary(pmcid, max_bytes, failed)
+        files = fetch_supplementary(pmcid, options.max_bytes, failed)
     except SupplementaryTooLarge as exc:
         return Supplementary(pmcid=pmcid, error=str(exc), too_large=True)
     except (requests.exceptions.RequestException, ValueError) as exc:
@@ -541,26 +557,29 @@ def _attempt_supplementary(pmcid: str, max_bytes: int) -> Supplementary:
         return Supplementary(
             pmcid=pmcid, status=status, error=f"{status or type(exc).__name__}: {exc}"
         )
-    return Supplementary(pmcid=pmcid, files=files, failed=failed, status=200)
+    records = extract_supplementary_records(files, {}, options.max_records, failed)
+    return Supplementary(pmcid=pmcid, records=records, failed=failed, status=200)
 
 
-def fetch_supplementary_outcome(pmcid: str, max_bytes: int) -> Supplementary:
-    """Supplementary document files for one PMC id, confirming a permanent failure.
+def fetch_supplementary_outcome(
+    pmcid: str, options: SupplementaryOptions
+) -> Supplementary:
+    """Supplementary records for one PMC id, confirming a permanent failure.
 
     Like ``fetch_fulltext``: a failure comes back as a ``Supplementary`` with
     ``error`` set instead of raising, and a permanent HTTP status is
     re-requested once before it is trusted.
 
     :param pmcid: A PMC id in any form (see ``normalize_pmcid``).
-    :param max_bytes: Size cap for the ZIP and for each file inside it.
-    :return: The document files, or the error that replaced them.
+    :param options: Size budget and record cap.
+    :return: The extracted records, or the error that replaced them.
     :rtype: Supplementary
     """
     pmcid = normalize_pmcid(pmcid)
-    result = _attempt_supplementary(pmcid, max_bytes)
+    result = _attempt_supplementary(pmcid, options)
     if not result.ok and result.status in _PERMANENT_FULLTEXT_STATUSES:
         time.sleep(_PERMANENT_CONFIRM_DELAY_S)
-        result = _attempt_supplementary(pmcid, max_bytes)
+        result = _attempt_supplementary(pmcid, options)
     return result
 
 
@@ -577,17 +596,17 @@ def _get_supplementary_pool() -> ThreadPoolExecutor:
 
 
 def fetch_supplementary_many(
-    pmcids: Iterable[str], max_bytes: int
+    pmcids: Iterable[str], options: SupplementaryOptions
 ) -> Dict[str, Supplementary]:
-    """Download several papers' supplementary files concurrently, keyed by PMC id.
+    """Supplementary records for several papers, fetched concurrently, by PMC id.
 
     Blank ids are dropped and repeats are fetched once. All callers share
     ``_SUPPLEMENTARY_WORKERS`` slots.
 
     :param pmcids: PMC ids in any form; blanks are dropped.
     :type pmcids: Iterable[str]
-    :param max_bytes: Size cap for each ZIP and for each file inside it.
-    :type max_bytes: int
+    :param options: Size budget and record cap.
+    :type options: SupplementaryOptions
     :return: One ``Supplementary`` per distinct id, successes and failures alike.
     :rtype: Dict[str, Supplementary]
     """
@@ -597,7 +616,7 @@ def fetch_supplementary_many(
     pool = _get_supplementary_pool()
     return {
         r.pmcid: r
-        for r in pool.map(lambda p: fetch_supplementary_outcome(p, max_bytes), unique)
+        for r in pool.map(lambda p: fetch_supplementary_outcome(p, options), unique)
     }
 
 
@@ -620,7 +639,7 @@ class LiteratureSource(Protocol):
     id, keyed by that id. The agent only reads each value's ``ok``, ``xml``
     and ``error``, so any object with those attributes will do.
 
-    Optionally, ``fetch_supplementary_many(pmcids, max_bytes)`` returns one
+    Optionally, ``fetch_supplementary_many(pmcids, options)`` returns one
     ``Supplementary`` per id, the same way. The agent calls it only when
     ``supplementary_enrichment`` is on; a source without it contributes no
     supplementary text.
@@ -647,10 +666,10 @@ class EuropePmcSource:
         return fetch_fulltext_many(pmcids)
 
     def fetch_supplementary_many(
-        self, pmcids: Iterable[str], max_bytes: int
+        self, pmcids: Iterable[str], options: SupplementaryOptions
     ) -> Dict[str, Supplementary]:
-        """Fetch supplementary files concurrently (see ``fetch_supplementary_many``)."""
-        return fetch_supplementary_many(pmcids, max_bytes)
+        """Fetch supplementary records concurrently (see ``fetch_supplementary_many``)."""
+        return fetch_supplementary_many(pmcids, options)
 
 
 if __name__ == "__main__":

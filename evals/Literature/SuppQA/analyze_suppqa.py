@@ -131,11 +131,11 @@ def timing_report(arms: dict[str, dict[str, dict]], ids: set[str]) -> str:
     return (
         "## Retrieval time per question, seconds (Stage 2 + 3)\n\n"
         "Sub-query spans (search, fulltext, bm25) are summed over the parallel "
-        "sub-query threads, so they are thread-seconds, not wall-clock. bm25 "
-        "includes parsing the supplementary files.\n\n"
+        "sub-query threads, so they are thread-seconds, not wall-clock. supp "
+        "download includes extracting the files' text (none on a cache hit).\n\n"
         + _table(
             ["arm", "median", "p90", "mean", "stage 2 wall", "search Σ", "fulltext Σ",
-             "supp download Σ", "bm25+parse Σ", "judge", "supp fetch errors"],
+             "supp download+parse Σ", "bm25 Σ", "judge", "supp fetch errors"],
             rows,
         )
     )

@@ -40,8 +40,8 @@ SUPPLEMENTARY_WARNING = """\
 WARNING: supplementary material retrieval is EXPERIMENTAL.
   In our tests a query took ~4x longer (mean ~7 min vs ~2 min): each paper's
   supplementary documents are downloaded (PMC Open Access on AWS) and parsed.
-  Set LIBRARIAN_CACHE_DIR so repeat runs reuse the downloads. Use at your own
-  risk.
+  Set LIBRARIAN_CACHE_DIR so repeat runs reuse the extracted text. Use at your
+  own risk.
 """
 
 

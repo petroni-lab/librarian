@@ -46,6 +46,11 @@ logger = logging.getLogger(__name__)
 logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 SUPPLEMENTARY_SECTION_TYPE = "supplementary"
+# Part of every cached supplementary entry's validity: bump it whenever the
+# records these extractors produce change, so cached records are re-extracted.
+# 2: failed extractions are no longer cached; table records carry their header
+# (table_header/table_rows), keep empty cells, and read every .xls sheet.
+EXTRACTOR_VERSION = 2
 
 # Consecutive short paragraphs (headings, list items, one-line captions) are
 # merged until a block reaches this many words, so BM25 does not score a bare
@@ -131,19 +136,23 @@ def _docx_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, Any]
             yield _table_record(header, block, f"{label}, table {number}", name)
 
 
+class ConverterMissing(RuntimeError):
+    """The external program a file type needs is not installed here."""
+
+
 def _doc_paragraphs(data: bytes) -> List[str]:
     """Paragraph texts of a legacy binary .doc, via ``antiword`` or macOS ``textutil``.
 
-    Neither is a Python dependency: with neither installed, .doc files are
-    skipped (returns ``[]``).
+    Neither is a Python dependency: with neither installed this raises
+    ``ConverterMissing``, so the file counts as failed (and the outcome is not
+    cached) rather than as a document with no text.
     """
     if shutil.which("antiword"):
         command = ["antiword"]
     elif shutil.which("textutil"):
         command = ["textutil", "-convert", "txt", "-stdout"]
     else:
-        logger.debug("no antiword/textutil on PATH; skipping .doc supplement")
-        return []
+        raise ConverterMissing("no antiword or textutil on PATH for .doc")
     fd, path = tempfile.mkstemp(suffix=".doc")
     try:
         with os.fdopen(fd, "wb") as handle:
@@ -371,10 +380,31 @@ def require_extraction_dependencies() -> None:
         ) from exc
 
 
+def apply_captions(
+    records: List[Dict[str, str]], captions: Dict[str, str]
+) -> List[Dict[str, str]]:
+    """Records relabelled ``Supplementary: <caption> [<file>]`` where the paper's
+    JATS captions their file; extraction labels them by file name alone, so
+    records can be cached independently of the article XML.
+    """
+    labelled = []
+    for record in records:
+        name = record["supplementary_file"]
+        caption = captions.get(name)
+        if caption:
+            title = record["section_title"].replace(
+                f"Supplementary: {name}", f"Supplementary: {caption} [{name}]", 1
+            )
+            record = {**record, "section_title": title}
+        labelled.append(record)
+    return labelled
+
+
 def extract_supplementary_records(
     files: Dict[str, bytes],
     captions: Dict[str, str],
     max_records: int,
+    failed: Optional[List[str]] = None,
 ) -> List[Dict[str, str]]:
     """All supplementary files of one paper → paragraph records, capped.
 
@@ -390,29 +420,31 @@ def extract_supplementary_records(
         covers every file.
     :param max_records: Most records returned for the paper, so one long
         supplement (a 200-page PDF) cannot crowd the body out of the BM25 pool.
+    :param failed: If given, receives the names of files that could not be
+        read (corrupt, parser error, missing converter). A file skipped by
+        policy (``PackageTooLarge``) is not a failure: that outcome is the same
+        on every run.
     :return: Records, interleaved across files, in document order within a file.
     :rtype: List[Dict[str, str]]
     """
     per_file: List[List[Dict[str, str]]] = []
     seen: set = set()
     for name in sorted(files):
-        caption = captions.get(name)
-        label = (
-            f"Supplementary: {caption} [{name}]"
-            if caption
-            else f"Supplementary: {name}"
-        )
         records: List[Dict[str, str]] = []
         try:
-            for record in _file_records(name, files[name], label):
+            for record in _file_records(name, files[name], f"Supplementary: {name}"):
                 if record["text"] in seen:
                     continue
                 seen.add(record["text"])
                 records.append(record)
                 if len(records) >= max_records:
                     break
+        except PackageTooLarge as exc:
+            logger.debug("skipped supplementary file %s: %s", name, exc)
         except Exception as exc:  # a corrupt file must not cost the paper its body
             logger.debug("could not read supplementary file %s: %s", name, exc)
+            if failed is not None:
+                failed.append(name)
         if records:
             per_file.append(records)
 
@@ -425,4 +457,4 @@ def extract_supplementary_records(
     # position, and reading order keeps adjacent cited pages adjacent.
     kept = interleaved[:max_records]
     order = {id(r): i for i, r in enumerate(r for records in per_file for r in records)}
-    return sorted(kept, key=lambda r: order[id(r)])
+    return apply_captions(sorted(kept, key=lambda r: order[id(r)]), captions)
