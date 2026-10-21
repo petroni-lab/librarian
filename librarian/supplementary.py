@@ -1,19 +1,25 @@
 """Supplementary document files → paragraph records.
 
 ``extract_supplementary_records`` turns the files ``literature_search``
-downloaded for one paper (``.pdf``, ``.docx``, ``.doc``, ``.txt``, ``.md``) into
-the same ``{text, section_title, section_type}`` records
-``jats.extract_body_paragraphs`` produces for the body, so they join the paper's
-paragraph pool and go through chunking, BM25 and the Stage-3 judge unchanged.
+downloaded for one paper (``.pdf``, ``.docx``, ``.doc``, ``.txt``, ``.md``, and
+``.csv``, ``.tsv``, ``.xlsx``, ``.xls`` tables) into the same
+``{text, section_title, section_type}`` records ``jats.extract_body_paragraphs``
+produces for the body, so they join the paper's paragraph pool and go through
+chunking, BM25 and the Stage-3 judge unchanged.
 
 Every record has ``section_type = "supplementary"`` and a ``section_title``
 naming the file (``"Supplementary: <caption or file name>"``, plus the page for
-a PDF), which is how a cited snippet is traced back to its supplement.
+a PDF or the sheet for a workbook), which is how a cited snippet is traced back
+to its supplement. Table rows are rendered like ``jats`` renders article tables
+(``a | b ; c | d``), with the header row repeated in every record so a matched
+record is readable on its own.
 """
 
 from __future__ import annotations
 
+import csv
 import io
+import itertools
 import logging
 import os
 import re
@@ -21,7 +27,19 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
-from typing import Callable, Dict, Iterator, List, Tuple
+from contextlib import contextmanager
+from typing import (
+    Any,
+    Callable,
+    ContextManager,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 logger = logging.getLogger(__name__)
 # pypdf warns on every slightly malformed PDF; those are routine here.
@@ -68,7 +86,7 @@ def _pdf_texts(data: bytes) -> Iterator[Tuple[int, str]]:
             yield number, text
 
 
-# Most bytes an Office document (.docx, and .xlsx later) may unpack to. These
+# Most bytes an Office document (.docx, .xlsx) may unpack to. These
 # files are ZIPs themselves, so the download budget only bounds their compressed
 # size: a 40 KB .docx can hold millions of characters, all loaded at once.
 _MAX_PACKAGE_BYTES = 25_000_000
@@ -90,23 +108,27 @@ def _check_package_size(data: bytes) -> None:
         raise PackageTooLarge(f"unpacks to {size} bytes (budget {_MAX_PACKAGE_BYTES})")
 
 
-def _docx_paragraphs(data: bytes) -> List[str]:
-    """Paragraph texts of a .docx, then its tables rendered ``a | b ; c | d``."""
+def _docx_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, Any]]:
+    """A .docx's paragraph blocks, then its tables as table records.
+
+    Tables go through ``_sheet_blocks`` like spreadsheets: empty cells keep
+    their column, the header row is detected and starts every block.
+    """
     import docx
 
     _check_package_size(data)
     document = docx.Document(io.BytesIO(data))
-    paragraphs = [p.text for p in document.paragraphs]
-    for table in document.tables:
-        rows = []
-        for row in table.rows:
-            cells = [_norm(cell.text) for cell in row.cells]
-            cells = [c for c in cells if c]
-            if cells:
-                rows.append(" | ".join(cells))
-        if rows:
-            paragraphs.append(" ; ".join(rows))
-    return paragraphs
+    for block in _blocks([p.text for p in document.paragraphs]):
+        yield {
+            "text": block,
+            "section_title": label,
+            "section_type": SUPPLEMENTARY_SECTION_TYPE,
+            "supplementary_file": name,
+        }
+    for number, table in enumerate(document.tables, 1):
+        rows = [[cell.text for cell in row.cells] for row in table.rows]
+        for header, block in _sheet_blocks(rows):
+            yield _table_record(header, block, f"{label}, table {number}", name)
 
 
 def _doc_paragraphs(data: bytes) -> List[str]:
@@ -140,8 +162,144 @@ def _text_paragraphs(data: bytes) -> List[str]:
     return re.split(r"\n\s*\n", data.decode("utf-8-sig", errors="replace"))
 
 
+def _cell(value: Any) -> str:
+    """One spreadsheet cell as text: empty for None, 3 not 3.0 for whole numbers."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return _norm(str(value))
+
+
+# (sheet name, rows): rows are an iterator, read only as far as records are needed.
+_Sheets = List[Tuple[str, Iterable[Sequence[Any]]]]
+# Rows scanned for a table header (the first row with two or more filled cells)
+# before a sheet is taken to be a one-column list.
+_HEADER_SCAN_ROWS = 10
+
+
+@contextmanager
+def _delimited_sheets(data: bytes, delimiter: str) -> Iterator[_Sheets]:
+    """The one unnamed sheet of a CSV/TSV file."""
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = data.decode("latin-1")
+    yield [("", csv.reader(io.StringIO(text), delimiter=delimiter))]
+
+
+@contextmanager
+def _xlsx_sheets(data: bytes) -> Iterator[_Sheets]:
+    """Every worksheet of an .xlsx, rows streamed with computed cell values.
+
+    Read-only mode parses rows as they are asked for: an .xlsx is itself a ZIP,
+    so loading it whole could expand far past the download budget.
+    """
+    import openpyxl
+
+    _check_package_size(data)
+    workbook = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    try:
+        yield [(sheet.title, sheet.iter_rows(values_only=True)) for sheet in workbook]
+    finally:
+        workbook.close()
+
+
+@contextmanager
+def _xls_sheets(data: bytes) -> Iterator[_Sheets]:
+    """Every worksheet of a legacy .xls (not compressed, so bounded by its size)."""
+    import xlrd
+
+    workbook = xlrd.open_workbook(file_contents=data)
+    yield [(sheet.name, _xls_rows(sheet)) for sheet in workbook.sheets()]
+
+
+def _xls_rows(sheet: Any) -> Iterator[List[Any]]:
+    """One worksheet's rows. A function of its own, so each generator keeps its
+    sheet (a generator expression in the loop would read the last one)."""
+    for i in range(sheet.nrows):
+        yield sheet.row_values(i)
+
+
+_SHEET_READERS: Dict[str, Callable[[bytes], ContextManager[_Sheets]]] = {
+    ".csv": lambda data: _delimited_sheets(data, ","),
+    ".tsv": lambda data: _delimited_sheets(data, "\t"),
+    ".xlsx": _xlsx_sheets,
+    ".xls": _xls_sheets,
+}
+
+
+def _row(row: Sequence[Any]) -> Tuple[str, int]:
+    """A row as ``a | b | c`` and its count of filled cells.
+
+    Empty cells keep their position (``A |  | 0.01``), so every value stays under
+    its column; only trailing empty cells (sheet padding) are dropped.
+    """
+    cells = [_cell(v) for v in row]
+    while cells and not cells[-1]:
+        cells.pop()
+    return " | ".join(cells), sum(1 for c in cells if c)
+
+
+def _sheet_blocks(rows: Iterable[Sequence[Any]]) -> Iterator[Tuple[str, List[str]]]:
+    """Rows as ``(header, [row, row, ...])`` blocks of about ``_MIN_BLOCK_WORDS`` words.
+
+    The header is the first row with two or more filled cells, so a title row
+    above the table ("Table S1. DE genes") is not taken for it; such rows are
+    kept as a caption. Caption and header start every block, so a block BM25
+    or the judge picks out still says what its columns are. Entirely empty rows
+    are skipped, and rows are read only as far as blocks are taken.
+    """
+    rows = iter(rows)
+    caption: List[str] = []
+    header: Optional[str] = None
+    for row in rows:
+        line, filled = _row(row)
+        if not filled:
+            continue
+        if filled >= 2:
+            header = line
+            break
+        caption.append(line)
+        if len(caption) == _HEADER_SCAN_ROWS:
+            break
+    data: List[str] = []
+    if header is None:  # no multi-column row near the top: a one-column list
+        if not caption:
+            return
+        header, data, caption = caption[0], caption[1:], []
+    prefix = " ; ".join(caption + [header])
+    pending: List[str] = []
+    words = 0
+    rest = (line for line, filled in map(_row, rows) if filled)
+    for line in itertools.chain(data, rest):
+        pending.append(line)
+        words += len(line.split())
+        if words >= _MIN_BLOCK_WORDS:
+            yield prefix, pending
+            pending, words = [], 0
+    if pending:
+        yield prefix, pending
+
+
+def _table_record(
+    header: str, rows: List[str], title: str, name: str
+) -> Dict[str, Any]:
+    """One table block as a record: ``header ; row ; row``, rendered like
+    ``jats`` tables. ``table_header``/``table_rows`` let the agent re-cut a block
+    that is still too long by rows, keeping the header in every piece.
+    """
+    return {
+        "text": " ; ".join([header] + rows),
+        "section_title": title,
+        "section_type": SUPPLEMENTARY_SECTION_TYPE,
+        "supplementary_file": name,
+        "table_header": header,
+        "table_rows": rows,
+    }
+
+
 _PARAGRAPH_EXTRACTORS: Dict[str, Callable[[bytes], List[str]]] = {
-    ".docx": _docx_paragraphs,
     ".doc": _doc_paragraphs,
     ".txt": _text_paragraphs,
     ".md": _text_paragraphs,
@@ -160,6 +318,27 @@ def _file_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, str]
                 "supplementary_file": name,
             }
         return
+    if extension == ".docx":
+        yield from _docx_records(name, data, label)
+        return
+    reader = _SHEET_READERS.get(extension)
+    if reader is not None:
+        with reader(data) as sheets:
+            streams = [
+                (f'{label}, sheet "{sheet}"' if sheet else label, _sheet_blocks(rows))
+                for sheet, rows in sheets
+            ]
+            # One block from each sheet in turn, so the file's record cap reaches
+            # every sheet instead of being used up by the first.
+            while streams:
+                for stream in list(streams):
+                    title, blocks = stream
+                    block = next(blocks, None)
+                    if block is None:
+                        streams.remove(stream)
+                        continue
+                    yield _table_record(*block, title, name)
+        return
     extractor = _PARAGRAPH_EXTRACTORS.get(extension)
     if extractor is None:
         return
@@ -175,13 +354,15 @@ def _file_records(name: str, data: bytes, label: str) -> Iterator[Dict[str, str]
 def require_extraction_dependencies() -> None:
     """Raise a clear ``ImportError`` when the ``supplementary`` extra is missing.
 
-    The PDF/Word readers are imported lazily inside a per-file ``except
+    The PDF/Word/spreadsheet readers are imported lazily inside a per-file ``except
     Exception``, which would otherwise turn a missing package into silently
     empty supplements.
     """
     try:
         import docx  # noqa: F401
+        import openpyxl  # noqa: F401
         import pypdf  # noqa: F401
+        import xlrd  # noqa: F401
     except ImportError as exc:
         raise ImportError(
             "supplementary_enrichment needs the `supplementary` extra: "

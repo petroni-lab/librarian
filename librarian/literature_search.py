@@ -51,7 +51,17 @@ _SUPPLEMENTARY_URL = (
 _PMC_AWS_URL = "https://pmc-oa-opendata.s3.amazonaws.com/"
 _S3_NS = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
 # Supplementary files kept: documents whose text can be extracted.
-SUPPLEMENTARY_EXTENSIONS = (".pdf", ".docx", ".doc", ".txt", ".md")
+SUPPLEMENTARY_EXTENSIONS = (
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".txt",
+    ".md",
+    ".csv",
+    ".tsv",
+    ".xlsx",
+    ".xls",
+)
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 # Statuses a retry will never fix: the document is absent or the id is malformed.
