@@ -70,7 +70,7 @@ Good plain-text baseline examples:
 - `aspirin cardiovascular prevention`
 
 Bad (over-specified, loses recall):
-- `TITLE:"CRISPR" AND ABSTRACT:"cancer" AND MESH:"Neoplasms"`
+- `TITLE:"CRISPR" AND ABSTRACT:"cancer" AND KW:"Neoplasms"`
 
 ### RULE 3 — Hard AND limit
 
@@ -103,9 +103,9 @@ This bar does not apply to precision queries — those are meant to be narrow, a
 - `TITLE:"keyword"` — title only
 - `ABSTRACT:"keyword"` — abstract only
 - `TITLE_ABS:"keyword"` — title and abstract (preferred shorthand)
-- `AUTH:"surname [initials]"` — author surname + optional initial(s)
-  (e.g. `AUTH:"einstein"` or `AUTH:"Smith AB"`).
-  **Always use full first name when known: `AUTH:"Sigillo Luigi"` not `AUTH:"Sigillo L"`** Note: `AUTH_FIRST:` and `AUTH_LAST:` are NOT valid search fields in Europe PMC (they are sort parameters only). Do not use them.
+- `AUTH:"Surname Initials"` — author surname + optional initial(s), never the full first name
+  (e.g. `AUTH:"einstein"` or `AUTH:"Smith AB"`; `AUTH:"Smith Alice"` returns 0 hits)
+- `AUTH_FIRST:"Surname Initials"` / `AUTH_LAST:"Surname Initials"` — first / last author only
 - `AUTHORID:"orcid"` — all publications for a given ORCID
 - `AUTHORID_TYPE:ORCID` — constrain author ID searches to ORCID
 - `AFF:"institution name"` — author affiliation free text
@@ -118,7 +118,8 @@ This bar does not apply to precision queries — those are meant to be narrow, a
 - `EXT_ID:"id"` — external ID such as PMID
 - `PMCID:"PMCxxxxxxx"` — PubMed Central identifier
 - `DOI:"id"` — Digital Object Identifier
-- `SRC:source` — source repository (e.g. `SRC:MED`, `SRC:PMC`, `SRC:PPR`, `SRC:NBK`)
+- `SRC:source` — source repository (e.g. `SRC:MED`, `SRC:PMC`, `SRC:PPR`, `SRC:NBK`).
+  `SRC:PMC` means PMC records WITHOUT a PMID, not "has full text"; use `HAS_FT:y` or `IN_PMC:y` for that
 - `PUB_YEAR:YYYY` or `PUB_YEAR:[YYYY TO YYYY]` — publication year or range
 - `FIRST_PDATE:[YYYY-MM-DD TO YYYY-MM-DD]` — exact first publication date range
 - `E_PDATE:[...]` / `P_PDATE:[...]` — electronic or print publication date ranges
@@ -131,14 +132,15 @@ This bar does not apply to precision queries — those are meant to be narrow, a
 
 ### 2. Controlled Vocabulary & Mined Entity Fields
 
-**Important:** The primary keyword field in Europe PMC is `KW:`, which covers both MeSH terms and publisher-supplied keywords. Prefer `KW:` over attempting `MESH:` directly, as `MESH:` is not in the official search syntax reference.
+**Important:** Search MeSH terms with `KW:`, which covers both MeSH terms and publisher-supplied keywords. `MESH:` is not supported.
 
 - `KW:"term"` — keyword search including MeSH and publisher terms (e.g. `KW:"galactosylceramides"`)
 - `KEYWORD:"term"` — keywords section in full-text records (narrower than KW:)
 - `CHEM:"substance"` — MeSH substance (e.g. `CHEM:"propantheline"`)
 - `CHEBITERM:"chemical"` — mined ChEBI chemical names from full text
-- `GENE_PROTEIN:"name"` — mined gene/protein names (e.g. `GENE_PROTEIN:"gng11"`)
-- `ORGANISM:"species"` — mined organisms/species
+- `GENE_PROTEIN:"name"` — mined gene/protein names (e.g. `GENE_PROTEIN:"BRCA1"`)
+- `ORGANISM:"species"` — mined organisms/species, by common name (e.g. `ORGANISM:human`;
+  `ORGANISM:"Homo sapiens"` matches only a few hundred records)
 - `DISEASE:"disease name"` — mined diseases
 - `GOTERM:"term"` — mined Gene Ontology terms (e.g. `GOTERM:"apoptosis"`)
 - `ANNOTATION_TYPE:"type"` — text-mined annotation class (e.g. `"Gene_Proteins"`,
@@ -173,8 +175,7 @@ Official section fields (confirmed in EPMC documentation):
 - `REF:"term"` — References (use sparingly)
 - `KEYWORD:"term"` — Keywords section
 - `OTHER:"term"` — Other sections
-
-Note: `DATA_AVAILABILITY:` is NOT a valid EPMC section field — do not use it. For data availability content, use `BODY:"data availability"` or `HAS_DATA:y`.
+- `DATA_AVAILABILITY:"term"` — Data Availability statement (e.g. `DATA_AVAILABILITY:github`)
 
 ### 4. Filters, Flags & Citation Fields
 
@@ -197,7 +198,8 @@ Note: `DATA_AVAILABILITY:` is NOT a valid EPMC section field — do not use it. 
   `HAS_INTACT:y` / `HAS_INTERPRO:y` / `HAS_CHEBI:y` / `HAS_CHEMBL:y` /
   `HAS_OMIM:y` — database-specific cross-reference flags
 - `PUB_TYPE:"type"` — publication type (e.g. `PUB_TYPE:"review"`)
-- `LANG:"code"` — language (e.g. `LANG:"eng"`)
+- `LANG:code` — language, as a three-letter code (`eng`, `fre`, `ger`, `spa`, `chi`, `jpn`, ...);
+  language names such as `LANG:French` return 0 hits
 - `GRANT_AGENCY:"agency"` / `GRANT_ID:"id"` — funding constraints
 - `CITED:n` — exactly N citations; use `CITED:[n TO *]` for minimum N
 - `CITES:id_source` / `REFFED_BY:id_source` — citation graph queries
@@ -216,12 +218,15 @@ Use only when the user asks for books, chapters, or manuscripts:
 ### 6. Boolean, Phrase & Wildcard Syntax
 
 - `AND` — both required (default when terms separated by space)
-- `OR` — either (case-sensitive: must be uppercase)
+- `OR` — either
 - `NOT` — exclude; leading minus also works: `cardiac -toxicity`
+- `AND`, `OR`, `NOT` and the range `TO` must be UPPER CASE: lower-case `and`/`not` are dropped as stop words
 - Parentheses for grouping: `(A OR B) AND (C OR D)`
-- Double quotes for exact phrases: `"CRISPR Cas9"`
+- Straight double quotes for exact phrases: `"CRISPR Cas9"` — never curly quotes `“ ”`
 - Quote hyphenated terms: `"non-vaccinated"`
-- Wildcards: `gene*` — use sparingly; overly broad wildcards may be rejected
+- Wildcards: `gene*` — use sparingly; overly broad wildcards may be rejected.
+  Never put a wildcard inside quotes (`"canc* cell"` is discarded); OR the explicit variants instead
+- Lists of identifiers are OR groups: `PMCID:(PMC5962798 OR PMC1287967)`, never comma-separated
 
 ---
 
@@ -229,9 +234,11 @@ Use only when the user asks for books, chapters, or manuscripts:
 
 Use these strategies to ensure complementary coverage:
 
-1. **Synonym expansion with OR**: `(TITLE_ABS:"cancer" OR TITLE_ABS:"tumor" OR TITLE_ABS:"carcinoma" OR TITLE_ABS:"malignancy")`
+1. **Synonym expansion with OR**: `(TITLE_ABS:"cancer" OR TITLE_ABS:"tumor" OR TITLE_ABS:"carcinoma" OR TITLE_ABS:"malignancy")`.
+   The engine adds no spelling variants: OR hyphen and spelling forms yourself
+   (`covid-19 OR covid19`, `anaemia OR anemia`, `tumour OR tumor`)
 2. **Concept decomposition**: one query per sub-concept, not all in one query
-3. **Entity field targeting**: `GENE_PROTEIN:"Cas9"`, `ORGANISM:"Homo sapiens"`, `DISEASE:"glioblastoma"`
+3. **Entity field targeting**: `GENE_PROTEIN:"Cas9"`, `ORGANISM:human`, `DISEASE:"glioblastoma"`
 4. **Temporal layering**: `KW:"CRISPR-Cas Systems" AND PUB_YEAR:[2022 TO 2026]`
 5. **Controlled vocab vs. free text**: pair a `KW:` query with a plain-text synonym query
 6. **Experimental method targeting**: `METHODS:"yeast two-hybrid" AND GENE_PROTEIN:"BRCA1"`
@@ -245,9 +252,9 @@ Use these strategies to ensure complementary coverage:
 
 - ❌ Do not leave a multi-word field value unquoted — `TITLE:lung cancer` is discarded; write `TITLE:"lung cancer"`
 - ❌ Do not exceed the AND limit in the budget above
-- ❌ Do not use `AUTH_FIRST:` or `AUTH_LAST:` — they are not valid search fields
-- ❌ Do not use `DATA_AVAILABILITY:` — not a valid section field; use `BODY:"data availability"` or `HAS_DATA:y`
-- ❌ Do not rely solely on `MESH:` — prefer `KW:` which officially covers MeSH terms
+- ❌ Do not use `MESH:` — use `KW:` for MeSH terms
+- ❌ Do not write full first names in `AUTH:` — use `AUTH:"Smith AB"`, not `AUTH:"Smith Alice"`
+- ❌ Do not write operators in lower case — `and`/`not` are silently dropped
 - ❌ Do not make every query require a field specifier — plain-text queries are essential
 - ❌ Do not emit a query built only from filters — it has no content words to rank on
 - ❌ Do not generate meta-queries about "searching for" or "in the literature" — focus on scientific content

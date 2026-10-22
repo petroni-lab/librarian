@@ -8,7 +8,6 @@ from .epmc_rules import (
     BOOLEAN_FIELDS,
     DATE_FIELDS,
     FIXED_VALUE_FIELDS,
-    LANGUAGE_CODE_ALIASES,
     LICENSE_CANONICAL_VALUES,
     VALID_EPMC_FIELDS,
     YEAR_ONLY_DATE_FIELDS,
@@ -32,7 +31,6 @@ PURE_WILDCARD_RESTRICTED_FIELDS = {
     "CHEBITERM",
     "GOTERM",
     "CHEM",
-    "MESH",
 }
 
 
@@ -246,15 +244,9 @@ class ValidationService:
             errors.append(f"Invalid value for AUTHOR_ROLES: '{normalized}'")
 
     def _validate_language(self, normalized: str, errors: List[str]) -> None:
-        allowed_lower = {value.lower() for value in FIXED_VALUE_FIELDS["LANG"]}
-        if normalized.lower() in allowed_lower:
-            return
-
-        alias = LANGUAGE_CODE_ALIASES.get(normalized.lower())
-        if alias and alias in FIXED_VALUE_FIELDS["LANG"]:
-            return
-
-        errors.append(f"Invalid value for LANG: '{normalized}'")
+        # Codes only: language names are accepted by Europe PMC but match nothing.
+        if normalized.lower() not in FIXED_VALUE_FIELDS["LANG"]:
+            errors.append(f"Invalid value for LANG: '{normalized}'")
 
     def _validate_license(self, normalized: str, errors: List[str]) -> None:
         canonical = self._canonicalize_license(normalized)
