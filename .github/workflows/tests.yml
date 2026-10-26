@@ -17,7 +17,7 @@ jobs:
       contents: read # checkout only
     steps:
       - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.2 # setup-uv publishes no major-version tag
         with:
           python-version: "3.11" # the version the dev environment and fixtures use
       # The supplementary extra is needed by the supplementary-extraction tests;
