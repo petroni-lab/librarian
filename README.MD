@@ -630,7 +630,9 @@ uv run --extra supplementary pytest tests
 ```
 
 Everything runs offline: no LLM endpoint, network access or credentials. The
-`supplementary` extra is needed by the supplementary-extraction tests.
+`supplementary` extra is needed by the supplementary-extraction tests. The
+[Tests workflow](.github/workflows/tests.yml) runs the same command on every
+pull request and every push to `main`.
 
 `tests/test_recorded_run.py` replays real Librarian runs recorded under
 `tests/fixtures/integration/`. It hands each run's recorded LLM answers and

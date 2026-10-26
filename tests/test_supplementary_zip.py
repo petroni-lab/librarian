@@ -1,10 +1,9 @@
 """Regression tests for supplementary downloads (no network).
 
-uv run python -m unittest discover tests
+uv run --extra supplementary pytest tests
 """
 
 import io
-import unittest
 import zipfile
 from unittest import mock
 
@@ -78,109 +77,103 @@ class DictBackend:
         self.store[key] = value
 
 
-class SupplementaryZipTest(unittest.TestCase):
-    def test_extracted_size_is_capped_across_files(self):
-        # 20 highly compressible 900 KB files: a tiny ZIP, 18 MB uncompressed.
-        body = _zip({f"s{i}.pdf": b"0" * 900_000 for i in range(20)})
-        self.assertLess(len(body), 1_000_000)
-        with mock.patch("requests.get", return_value=_response(body)):
-            files = _fetch_supplementary_zip("PMC1", max_bytes=1_000_000)
-        self.assertLessEqual(sum(map(len, files.values())), 1_000_000)
-
-    def test_corrupt_member_fails_only_the_supplement(self):
-        body = bytearray(_zip({"s1.pdf": b"A" * 1000}, zipfile.ZIP_STORED))
-        body[body.index(b"A" * 1000)] ^= 0xFF  # break the member's CRC
-        listing = _listing({})  # not in the PMC bucket: falls back to the ZIP
-        with mock.patch("requests.get", side_effect=[listing, _response(bytes(body))]):
-            result = fetch_supplementary_outcome(
-                "PMC1", SupplementaryOptions(max_bytes=1_000_000, max_records=40)
-            )
-        self.assertFalse(result.ok)
-        self.assertEqual(result.records, [])
+def test_extracted_size_is_capped_across_files():
+    # 20 highly compressible 900 KB files: a tiny ZIP, 18 MB uncompressed.
+    body = _zip({f"s{i}.pdf": b"0" * 900_000 for i in range(20)})
+    assert len(body) < 1_000_000
+    with mock.patch("requests.get", return_value=_response(body)):
+        files = _fetch_supplementary_zip("PMC1", max_bytes=1_000_000)
+    assert sum(map(len, files.values())) <= 1_000_000
 
 
-class SupplementaryAwsTest(unittest.TestCase):
-    def test_latest_version_documents_within_budget(self):
-        listing = _listing(
-            {
-                "PMC1.1/old.pdf": 10,
-                "PMC1.2/PMC1.2.pdf": 10,  # PMC's own rendition of the article
-                "PMC1.2/fig1.jpg": 10,
-                "PMC1.2/a.docx": 600,
-                "PMC1.2/b.pdf": 600,  # would exceed the 1000-byte budget
-                "PMC1.2/c.xlsx": 300,
-            }
+def test_corrupt_member_fails_only_the_supplement():
+    body = bytearray(_zip({"s1.pdf": b"A" * 1000}, zipfile.ZIP_STORED))
+    body[body.index(b"A" * 1000)] ^= 0xFF  # break the member's CRC
+    listing = _listing({})  # not in the PMC bucket: falls back to the ZIP
+    with mock.patch("requests.get", side_effect=[listing, _response(bytes(body))]):
+        result = fetch_supplementary_outcome(
+            "PMC1", SupplementaryOptions(max_bytes=1_000_000, max_records=40)
         )
-        responses = {"a.docx": b"a" * 600, "c.xlsx": b"c" * 300}
-
-        def get(url, **kwargs):
-            if url.endswith("/"):
-                return listing
-            return _response(responses[url.rsplit("/", 1)[1]])
-
-        with mock.patch("requests.get", side_effect=get) as calls:
-            files = fetch_supplementary("PMC1", max_bytes=1000)
-        self.assertEqual(sorted(files), ["a.docx", "c.xlsx"])
-        self.assertEqual(calls.call_count, 3)  # listing + two downloads
+    assert not result.ok
+    assert result.records == []
 
 
-class SupplementaryAwsListingTest(unittest.TestCase):
-    def test_every_listing_page_is_read_before_choosing_the_version(self):
-        # The latest version only appears on the second page of the listing.
-        first = _listing({"PMC1.1/old.txt": 5}, next_token="page2")
-        second = _listing({"PMC1.2/new.txt": 5})
+def test_latest_version_documents_within_budget():
+    listing = _listing(
+        {
+            "PMC1.1/old.pdf": 10,
+            "PMC1.2/PMC1.2.pdf": 10,  # PMC's own rendition of the article
+            "PMC1.2/fig1.jpg": 10,
+            "PMC1.2/a.docx": 600,
+            "PMC1.2/b.pdf": 600,  # would exceed the 1000-byte budget
+            "PMC1.2/c.xlsx": 300,
+        }
+    )
+    responses = {"a.docx": b"a" * 600, "c.xlsx": b"c" * 300}
 
-        def get(url, params=None, **kwargs):
-            if url.endswith("/"):
-                return second if params.get("continuation-token") == "page2" else first
-            return _response(b"new")
+    def get(url, **kwargs):
+        if url.endswith("/"):
+            return listing
+        return _response(responses[url.rsplit("/", 1)[1]])
 
-        with mock.patch("requests.get", side_effect=get):
-            files = fetch_supplementary("PMC1", max_bytes=1000)
-        self.assertEqual(files, {"new.txt": b"new"})
-
-    def test_one_failed_file_keeps_the_others_and_is_not_cached(self):
-        listing = _listing({"PMC1.1/a.txt": 5, "PMC1.1/b.txt": 5})
-
-        def get(url, **kwargs):
-            if url.endswith("/"):
-                return listing
-            return _not_found() if url.endswith("b.txt") else _response(b"alpha")
-
-        source = CachedSource(EuropePmcSource(), DictBackend())
-        options = SupplementaryOptions(max_bytes=1000, max_records=40)
-        with mock.patch("requests.get", side_effect=get) as calls:
-            first = source.fetch_supplementary_many(["PMC1"], options)["PMC1"]
-            second = source.fetch_supplementary_many(["PMC1"], options)["PMC1"]
-        self.assertTrue(first.ok)
-        self.assertEqual([r["supplementary_file"] for r in first.records], ["a.txt"])
-        self.assertEqual(first.failed, ["b.txt"])
-        self.assertFalse(second.from_cache)  # incomplete: fetched again, not cached
-        self.assertEqual(source.backend.store, {})
-        self.assertEqual(calls.call_count, 6)  # (listing + 2 files) x 2
+    with mock.patch("requests.get", side_effect=get) as calls:
+        files = fetch_supplementary("PMC1", max_bytes=1000)
+    assert sorted(files) == ["a.docx", "c.xlsx"]
+    assert calls.call_count == 3  # listing + two downloads
 
 
-class NestedArchiveTest(unittest.TestCase):
-    def test_docx_unpacking_past_the_budget_is_not_parsed(self):
-        # A .docx is a ZIP too: ~2 MB of text compresses to a few KB, so the
-        # outer download budget alone would let it through.
-        document = docx.Document()
-        document.add_paragraph("gene " * 400_000)
-        buffer = io.BytesIO()
-        document.save(buffer)
-        outer = _zip({"s1.docx": buffer.getvalue()})
-        self.assertLess(len(outer), 100_000)
+def test_every_listing_page_is_read_before_choosing_the_version():
+    # The latest version only appears on the second page of the listing.
+    first = _listing({"PMC1.1/old.txt": 5}, next_token="page2")
+    second = _listing({"PMC1.2/new.txt": 5})
 
-        with mock.patch("requests.get", return_value=_response(outer)):
-            files = _fetch_supplementary_zip("PMC1", max_bytes=1_000_000)
-        self.assertIn("s1.docx", files)
-        with (
-            mock.patch.object(supplementary, "_MAX_PACKAGE_BYTES", 1_000_000),
-            mock.patch("docx.Document", side_effect=AssertionError("parsed")),
-        ):
-            records = supplementary.extract_supplementary_records(files, {}, 40)
-        self.assertEqual(records, [])
+    def get(url, params=None, **kwargs):
+        if url.endswith("/"):
+            return second if params.get("continuation-token") == "page2" else first
+        return _response(b"new")
+
+    with mock.patch("requests.get", side_effect=get):
+        files = fetch_supplementary("PMC1", max_bytes=1000)
+    assert files == {"new.txt": b"new"}
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_one_failed_file_keeps_the_others_and_is_not_cached():
+    listing = _listing({"PMC1.1/a.txt": 5, "PMC1.1/b.txt": 5})
+
+    def get(url, **kwargs):
+        if url.endswith("/"):
+            return listing
+        return _not_found() if url.endswith("b.txt") else _response(b"alpha")
+
+    source = CachedSource(EuropePmcSource(), DictBackend())
+    options = SupplementaryOptions(max_bytes=1000, max_records=40)
+    with mock.patch("requests.get", side_effect=get) as calls:
+        first = source.fetch_supplementary_many(["PMC1"], options)["PMC1"]
+        second = source.fetch_supplementary_many(["PMC1"], options)["PMC1"]
+    assert first.ok
+    assert [r["supplementary_file"] for r in first.records] == ["a.txt"]
+    assert first.failed == ["b.txt"]
+    assert not second.from_cache  # incomplete: fetched again, not cached
+    assert source.backend.store == {}
+    assert calls.call_count == 6  # (listing + 2 files) x 2
+
+
+def test_docx_unpacking_past_the_budget_is_not_parsed():
+    # A .docx is a ZIP too: ~2 MB of text compresses to a few KB, so the
+    # outer download budget alone would let it through.
+    document = docx.Document()
+    document.add_paragraph("gene " * 400_000)
+    buffer = io.BytesIO()
+    document.save(buffer)
+    outer = _zip({"s1.docx": buffer.getvalue()})
+    assert len(outer) < 100_000
+
+    with mock.patch("requests.get", return_value=_response(outer)):
+        files = _fetch_supplementary_zip("PMC1", max_bytes=1_000_000)
+    assert "s1.docx" in files
+    with (
+        mock.patch.object(supplementary, "_MAX_PACKAGE_BYTES", 1_000_000),
+        mock.patch("docx.Document", side_effect=AssertionError("parsed")),
+    ):
+        records = supplementary.extract_supplementary_records(files, {}, 40)
+    assert records == []

@@ -1,9 +1,7 @@
 """Stage-3 judge requests are logged on the run's state with an outcome.
 
-uv run python -m unittest discover tests
+uv run --extra supplementary pytest tests
 """
-
-import unittest
 
 from librarian import LibrarianAgent, load_runtime_config
 from librarian.agent import _RunState
@@ -29,35 +27,33 @@ def _items(n):
     ]
 
 
-class JudgeRequestLogTest(unittest.TestCase):
-    def _evaluate(self, replies, items):
-        agent = LibrarianAgent(load_runtime_config(), llm_client=ScriptedLLM(replies))
-        state = _RunState()
-        ids = agent._evaluate_batch(
-            "q", items, "{user_query} {paragraphs_batch}", state
-        )
-        return ids, state.judge_requests
+def _evaluate(replies, items):
+    agent = LibrarianAgent(load_runtime_config(), llm_client=ScriptedLLM(replies))
+    state = _RunState()
+    ids = agent._evaluate_batch("q", items, "{user_query} {paragraphs_batch}", state)
+    return ids, state.judge_requests
 
-    def test_unparseable_reply_is_split_and_every_outcome_recorded(self):
-        ids, log = self._evaluate(
-            [
-                "not json",
-                TimeoutError("read timed out"),
-                '{"relevant_ids": ["paragraph_1_A"]}',
-            ],
-            _items(2),
-        )
-        self.assertEqual(ids, ["paragraph_1_A"])
-        self.assertEqual(
-            [(r["depth"], r["outcome"]) for r in log],
-            [(0, "unparseable"), (1, "exception"), (1, "ok")],
-        )
-        self.assertIn("TimeoutError", log[1]["error"])
-        self.assertEqual(log[0]["error"], "")
 
-    def test_truncated_reply_is_salvaged(self):
-        ids, log = self._evaluate(
-            ['{"relevant_ids": ["paragraph_0_A", "parag'], _items(1)
-        )
-        self.assertEqual(ids, ["paragraph_0_A"])
-        self.assertEqual([r["outcome"] for r in log], ["salvaged"])
+def test_unparseable_reply_is_split_and_every_outcome_recorded():
+    ids, log = _evaluate(
+        [
+            "not json",
+            TimeoutError("read timed out"),
+            '{"relevant_ids": ["paragraph_1_A"]}',
+        ],
+        _items(2),
+    )
+    assert ids == ["paragraph_1_A"]
+    assert [(r["depth"], r["outcome"]) for r in log] == [
+        (0, "unparseable"),
+        (1, "exception"),
+        (1, "ok"),
+    ]
+    assert "TimeoutError" in log[1]["error"]
+    assert log[0]["error"] == ""
+
+
+def test_truncated_reply_is_salvaged():
+    ids, log = _evaluate(['{"relevant_ids": ["paragraph_0_A", "parag'], _items(1))
+    assert ids == ["paragraph_0_A"]
+    assert [r["outcome"] for r in log] == ["salvaged"]
