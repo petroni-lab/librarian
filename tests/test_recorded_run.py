@@ -276,17 +276,17 @@ def test_stage1_planning_matches_recording(replayed: ReplayedRun) -> None:
 
 
 def test_stage1_asks_the_llm_the_way_it_was_recorded(replayed: ReplayedRun) -> None:
-    """Stage 1 made exactly one planning call and never took the retry branch.
+    """Stage 1 made as many planning and strict-JSON retry calls as the live run.
 
     A replayed answer is returned whatever the request looked like, so how the
-    agent asked can only be checked against the calls it made. The empty-result
-    retry starting to fire would otherwise pass unnoticed: the recording holds a
-    non-empty query list, so the live run never took that branch.
+    agent asked can only be checked against the calls it made. A retry starting
+    (or stopping) to fire would otherwise pass unnoticed, since a recording holds
+    an answer for whichever branch the live run took.
     """
-    planning_calls = replayed.calls.requests_for(fixture_replay.QUERY_GENERATION_KEY)
-    retries = replayed.calls.requests_for(fixture_replay.QUERY_RETRY_KEY)
-    assert len(planning_calls) == 1, "expected exactly one query-generation call"
-    assert retries == [], "the recorded run never needed the strict-JSON retry"
+    for key in (fixture_replay.QUERY_GENERATION_KEY, fixture_replay.QUERY_RETRY_KEY):
+        recorded = [call for call in replayed.case.llm_calls if call["key"] == key]
+        actual = replayed.calls.requests_for(key)
+        assert len(actual) == len(recorded), key
 
 
 def test_llm_calls_use_the_recorded_sampling(replayed: ReplayedRun) -> None:

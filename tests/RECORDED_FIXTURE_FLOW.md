@@ -240,6 +240,13 @@ real. Nothing is written to disk until that run succeeds and returns
 non-empty evidence — a failed recording leaves the previous case (or no case)
 in place, never a partial one.
 
+Two rules keep a recording replayable. `RecordingSource.search` stores a deep
+copy of each search result, taken before the pipeline sees it: Stage 3 writes
+the evidence fields onto those same paper dicts, and a snapshot taken after the
+run would hand replay the evidence it is meant to rebuild. And a paper fetched
+by two sub-queries with different outcomes (one success, one failure) stops the
+recording, because replay answers every fetch of a paper from one file.
+
 The script puts the repository root on `sys.path` itself, like the scripts
 under `evals/`, so it runs as a plain file and can import `fixture_replay`
 from beside it.

@@ -18,6 +18,7 @@ behind; the tests report an incomplete one as such.
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime
 import shutil
 import sys
@@ -103,18 +104,36 @@ class RecordingSource:
         self._recorder = recorder
 
     def search(self, query: str, page_size: int) -> list[dict[str, Any]]:
-        """Record one Europe PMC search, keyed by the sub-query that ran it."""
+        """Record one Europe PMC search, keyed by the sub-query that ran it.
+
+        Snapshotted as returned: Stage 3 later writes the evidence fields onto
+        these same paper dicts, and a recording holding them would hand replay
+        the very evidence it is meant to rebuild.
+        """
         papers = self._inner.search(query, page_size=page_size)
         with self._recorder.lock:
-            self._recorder.search_results[query] = papers
+            self._recorder.search_results[query] = copy.deepcopy(papers)
         return papers
 
     def fetch_fulltext_many(self, pmcids: Iterable[str]) -> dict[str, Fulltext]:
-        """Record each paper's JATS XML in this batch, keyed by the id asked for."""
+        """Record each paper's JATS XML in this batch, keyed by the id asked for.
+
+        Two sub-queries can fetch the same paper. Replay answers both from one
+        file, so a paper whose fetches came back differently (one succeeded, one
+        failed) cannot be replayed, and the recording stops instead.
+
+        :raises RuntimeError: if this paper was already fetched with another outcome.
+        """
         results = self._inner.fetch_fulltext_many(pmcids)
         with self._recorder.lock:
             for pmcid, result in results.items():
-                self._recorder.fulltext_xml[pmcid] = result.xml if result.ok else ""
+                xml_text = result.xml if result.ok else ""
+                recorded = self._recorder.fulltext_xml.setdefault(pmcid, xml_text)
+                if recorded != xml_text:
+                    raise RuntimeError(
+                        f"{pmcid} was fetched twice with different outcomes, which "
+                        f"a replay cannot reproduce. Re-run the recording."
+                    )
         return results
 
 

@@ -1,17 +1,38 @@
 [
   {
+    "affiliation": "Shandong Province Rheumatic Disease Key Speciality Affiliated Hospital of Shandong Second Medical University",
+    "authors": "Chen Q, Li Y, Chen Y, Su Y, Wang X, Guan C.",
+    "doi": "",
+    "epmcId": "PMC13640525",
+    "epmcSource": "PMC",
+    "evidence_sections": [
+      "IFN‐γ–JAK/STAT Axis: A Potential Inflammatory Signaling Module in SD‐ILD",
+      "IFN‐γ–JAK/STAT Axis: A Potential Inflammatory Signaling Module in SD‐ILD"
+    ],
+    "evidence_snippets": [
+      "Macrophages are well‐established cellular responders to IFN‐γ–JAK/STAT signaling. IFN‐γ can promote STAT1‐dependent transcriptional programs associated with macrophage activation, enhanced antigen‐presentation capacity, and increased inflammatory mediator production [10].",
+      "Experimental studies further indicate that IFN‐γ can promote macrophage polarization toward a pro‐inflammatory phenotype, providing a potential mechanism through which macrophages may contribute to the persistence of inflammatory responses [44]."
+    ],
+    "has_fulltext": true,
+    "journal": "Immunity, inflammation and disease",
+    "paper_id": "PMC:PMC13640525",
+    "pmcid": "PMC13640525",
+    "pmid": "",
+    "title": "IFN‐γ‐Associated Signaling Networks in Interstitial Lung Disease Associated With Sjögren's Disease",
+    "url": "https://europepmc.org/article/PMC/PMC13640525",
+    "year": "2026"
+  },
+  {
     "affiliation": "College of Medicine, Northeast Ohio Medical University, Rootstown, Ohio.",
     "authors": "Guy M, Vidmar D, Wieselthier J, Baron E, Kunzler E.",
     "doi": "10.1016/j.jdcr.2026.08.055",
     "epmcId": "42903902",
     "epmcSource": "MED",
     "evidence_sections": [
-      "Background",
-      "Discussion"
+      "Background"
     ],
     "evidence_snippets": [
-      "Recent studies have identified upregulation of inflammatory cytokines, such as interferon gamma (IFN-γ), contributing to constitutive activation of the janus kinase-signal transducer and activator of transcription (JAK-STAT) signaling pathway in granulomatous diseases.3,4 Targeting this pathway with JAK inhibition provides a promising therapeutic approach to NL, supported by clinical success in granulomatous diseases such as sarcoidosis.3",
-      "The rapid and sustained clinical response observed with topical ruxolitinib suggests involvement of JAK-STAT signaling in the pathogenesis of NL, with constitutive pathway activation contributing to chronic granulomatous inflammation.4 This is supported by prior reports of clinical remission of NL with topical JAK-STAT inhibitor therapy.5,6 Our patient’s response is consistent with molecular network analyses identifying IFN-γ driven JAK-STAT activation as a driver of NL and JAK inhibition as a validated therapeutic intervention.7"
+      "Recent studies have identified upregulation of inflammatory cytokines, such as interferon gamma (IFN-γ), contributing to constitutive activation of the janus kinase-signal transducer and activator of transcription (JAK-STAT) signaling pathway in granulomatous diseases.3,4 Targeting this pathway with JAK inhibition provides a promising therapeutic approach to NL, supported by clinical success in granulomatous diseases such as sarcoidosis.3"
     ],
     "has_fulltext": true,
     "journal": "JAAD case reports",
@@ -20,27 +41,6 @@
     "pmid": "42903902",
     "title": "Clinical improvement of necrobiosis lipoidica with topical ruxolitinib.",
     "url": "https://europepmc.org/article/MED/42903902",
-    "year": "2026"
-  },
-  {
-    "affiliation": "Section for Translational Surgical Oncology and Biobanking, Department of Surgery, University of Luebeck, Luebeck, Kiel, Germany.",
-    "authors": "Ostermann J, Gemoll T, Schnüttgen T, Tischhöfer MT, Plötze-Martin K, Fleckner J, Bruchhage KL, Alban S, Pries R.",
-    "doi": "10.3389/fimmu.2026.1868665",
-    "epmcId": "42756851",
-    "epmcSource": "MED",
-    "evidence_sections": [
-      "Discussion"
-    ],
-    "evidence_snippets": [
-      "Cytokine release experiments indeed confirmed that the native fucoidan from Saccharina latissma as well as degraded fractions with up to 100 times lower MW caused significantly reduced secretion levels of interferon gamma-induced protein 10 (IP-10/CXCL10), macrophage migration inhibitory factor (MIF), and urokinase-type plasminogen activator receptor (uPAR), all of which are known as IFN-γ inducible pro-inflammatory cytokines (59, 60)."
-    ],
-    "has_fulltext": true,
-    "journal": "Frontiers in immunology",
-    "paper_id": "42756851",
-    "pmcid": "PMC13583666",
-    "pmid": "42756851",
-    "title": "Decreased expression of immune activator WARS1 and other pro-inflammatory mediators in type 1-like macrophages as an associated mode of action in response to fucoidan from marine brown algae.",
-    "url": "https://europepmc.org/article/MED/42756851",
     "year": "2026"
   }
 ]
