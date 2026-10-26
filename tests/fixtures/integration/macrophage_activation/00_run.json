@@ -1,0 +1,24 @@
+{
+  "bm25_stemming": true,
+  "full_text_enrichment": true,
+  "model_name": "glm-5.3-flash",
+  "query": "How does interferon-gamma activate inflammatory gene expression in human macrophages?",
+  "reasoning_effort": "low",
+  "recorded_on": "2026-10-26",
+  "runtime_config": {
+    "default_model_name": "glm-5.3-flash",
+    "filter_max_tokens": 8192,
+    "filter_temperature": 0.0,
+    "max_paragraph_words": 250,
+    "max_supplementary_bytes": 15000000,
+    "max_supplementary_records_per_paper": 40,
+    "num_subqueries": 3,
+    "papers_per_subquery": 2,
+    "paragraph_overlap_words": 50,
+    "paragraphs_per_judge_batch": 9,
+    "paragraphs_per_subquery": 3,
+    "query_budget_guidance": "Generate AT MOST {max_queries} complementary queries, spent as follows (recall over precision — a downstream filter handles precision):\n- AT MOST ~2/5 of them as recall queries — broad plain-text baselines, no field tags, core concepts joined with OR synonyms. Your recall safety net. Keep them genuinely different: vary the phrasing and the synonym set, do not re-emit one query three ways.\n- AT MOST ~2/5 of them as coverage queries — distinct angles on the question: a different synonym set, a related sub-concept, or a different field/entity from the syntax reference below. One concept each, at most 1 AND.\n- AT MOST ~1/5 of them as precision queries — targeted structured queries using whichever fields from the reference best fit the co-required concepts (controlled vocabulary, entity, or section fields), at most 1 AND. When an exact answer exists, these find it.",
+    "supplementary_enrichment": false,
+    "supplementary_pdf_extractor": "pypdf"
+  }
+}

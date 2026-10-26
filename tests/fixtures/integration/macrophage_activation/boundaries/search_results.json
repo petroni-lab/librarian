@@ -1,0 +1,517 @@
+{
+  "\"IFN-gamma\" OR \"interferon gamma\" macrophage signaling JAK STAT inflammation": [
+    {
+      "abstract": "",
+      "authorFullNames": [
+        "Qianqian Chen",
+        "Yuhan Li",
+        "Yiming Chen",
+        "Yuhua Su",
+        "Xiaodong Wang",
+        "Chunxiao Guan"
+      ],
+      "authors": "Chen Q, Li Y, Chen Y, Su Y, Wang X, Guan C.",
+      "authorsWithAffiliations": [
+        {
+          "affiliation": "Shandong Province Rheumatic Disease Key Speciality Affiliated Hospital of Shandong Second Medical University",
+          "name": "Qianqian Chen"
+        },
+        {
+          "affiliation": "Shandong Province Rheumatic Disease Key Speciality Affiliated Hospital of Shandong Second Medical University",
+          "name": "Yuhan Li"
+        },
+        {
+          "affiliation": "Shandong Province Rheumatic Disease Key Speciality Affiliated Hospital of Shandong Second Medical University",
+          "name": "Yiming Chen"
+        },
+        {
+          "affiliation": "Shandong Province Rheumatic Disease Key Speciality Affiliated Hospital of Shandong Second Medical University",
+          "name": "Yuhua Su"
+        },
+        {
+          "affiliation": "Shandong Province Rheumatic Disease Key Speciality Affiliated Hospital of Shandong Second Medical University",
+          "name": "Xiaodong Wang"
+        },
+        {
+          "affiliation": "Shandong Province Rheumatic Disease Key Speciality Affiliated Hospital of Shandong Second Medical University",
+          "name": "Chunxiao Guan"
+        }
+      ],
+      "doi": "",
+      "epmcId": "PMC13640525",
+      "epmcSource": "PMC",
+      "fullTextIds": [
+        "PMC13640525"
+      ],
+      "fullTextUrls": [
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "html",
+          "site": "PubMedCentral",
+          "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC13640525/?tool=EBI"
+        },
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "pdf",
+          "site": "PubMedCentral",
+          "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC13640525/pdf/?tool=EBI"
+        },
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "html",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13640525"
+        },
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "pdf",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13640525?pdf=render"
+        }
+      ],
+      "hasFreeFullText": true,
+      "hasPDF": true,
+      "inEPMC": true,
+      "isOpenAccess": true,
+      "journal": "Immunity, inflammation and disease",
+      "pmcid": "PMC13640525",
+      "pmid": "",
+      "source": "Europe PMC",
+      "sourceCode": "PMC",
+      "title": "IFN‐γ‐Associated Signaling Networks in Interstitial Lung Disease Associated With Sjögren's Disease",
+      "url": "https://europepmc.org/article/PMC/PMC13640525",
+      "year": "2026"
+    },
+    {
+      "abstract": "",
+      "authorFullNames": [
+        "Madeline Guy",
+        "Dennis Vidmar",
+        "Janet Wieselthier",
+        "Elma Baron",
+        "Elaine Kunzler"
+      ],
+      "authors": "Guy M, Vidmar D, Wieselthier J, Baron E, Kunzler E.",
+      "authorsWithAffiliations": [
+        {
+          "affiliation": "College of Medicine, Northeast Ohio Medical University, Rootstown, Ohio.",
+          "name": "Madeline Guy"
+        },
+        {
+          "affiliation": "Dermatology Service, Department of Veterans Affairs Louis Stokes Medical Center, Cleveland, Ohio.",
+          "name": "Dennis Vidmar"
+        },
+        {
+          "affiliation": "Dermatology Service, Department of Veterans Affairs Louis Stokes Medical Center, Cleveland, Ohio.",
+          "name": "Janet Wieselthier"
+        },
+        {
+          "affiliation": "Dermatology Service, Department of Veterans Affairs Louis Stokes Medical Center, Cleveland, Ohio.",
+          "name": "Elma Baron"
+        },
+        {
+          "affiliation": "Dermatology Service, Department of Veterans Affairs Louis Stokes Medical Center, Cleveland, Ohio.",
+          "name": "Elaine Kunzler"
+        }
+      ],
+      "doi": "10.1016/j.jdcr.2026.08.055",
+      "epmcId": "42903902",
+      "epmcSource": "MED",
+      "fullTextIds": [
+        "PMC13682464"
+      ],
+      "fullTextUrls": [
+        {
+          "availability": "Subscription required",
+          "availabilityCode": "S",
+          "documentStyle": "doi",
+          "site": "DOI",
+          "url": "https://doi.org/10.1016/j.jdcr.2026.08.055"
+        },
+        {
+          "availability": "Open access",
+          "availabilityCode": "OA",
+          "documentStyle": "html",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13682464"
+        },
+        {
+          "availability": "Open access",
+          "availabilityCode": "OA",
+          "documentStyle": "pdf",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13682464?pdf=render"
+        }
+      ],
+      "hasFreeFullText": true,
+      "hasPDF": true,
+      "inEPMC": true,
+      "isOpenAccess": true,
+      "journal": "JAAD case reports",
+      "pmcid": "PMC13682464",
+      "pmid": "42903902",
+      "source": "Europe PMC",
+      "sourceCode": "MED",
+      "title": "Clinical improvement of necrobiosis lipoidica with topical ruxolitinib.",
+      "url": "https://europepmc.org/article/MED/42903902",
+      "year": "2026"
+    }
+  ],
+  "GENE_PROTEIN:\"IFNG\" AND (TITLE_ABS:macrophage OR TITLE_ABS:monocyte)": [
+    {
+      "abstract": "Although the gut mesentery is anatomically linked to the intestines, the roles of mesentery-resident macrophages and mesentery-recruited monocytes, particularly in gut inflammation, remain poorly defined. Here, we show that mesenteric macrophage-monocyte interactions limit systemic infection during Salmonella Typhimurium (STm)-induced gut inflammation. Using Ccr2-deficient mice and fate-mapping approaches, we identified two distinct granulocyte-monocyte progenitor (GMP)-derived macrophage populations in the gut mesentery, LYVE1hi TIM4(-) and LYVE1lo/- TIM4(-) subsets, alongside embryonically derived LYVE1hi TIM4(+) macrophages. LYVE1lo/- TIM4(-) macrophages, but not LYVE1hi macrophages, removed excessively recruited neutrophils during STm infection, whereas newly mesentery-recruited monocytes were the primary source of inflammatory cytokines. Moreover, depletion of mesentery-resident macrophages in mice lacking Csf1 in serous stromal cells resulted in excessive recruitment of GMP-derived monocytes accompanied by elevated expression of inflammatory cytokines, thereby accelerating mortality during STm infection. Together, our findings reveal that the mesenteric macrophage-monocyte circuit buffers the escalation of gut infection into systemic inflammation.",
+      "authorFullNames": [
+        "Jiseon Kim",
+        "Joseph R Dominguez",
+        "Seung Hyeon Kim",
+        "Zachary White",
+        "Jaewon Cho",
+        "Jungmin Hwang",
+        "Yeonwoo Choi",
+        "Soroush Tahmasebi",
+        "Teruyuki Sano",
+        "Jinki Yeom",
+        "Ki-Wook Kim"
+      ],
+      "authors": "Kim J, Dominguez JR, Kim SH, White Z, Cho J, Hwang J, Choi Y, Tahmasebi S, Sano T, Yeom J, Kim KW.",
+      "authorsWithAffiliations": [
+        {
+          "affiliation": "Department of Pharmacology and Regenerative Medicine, University of Illinois College of Medicine, Chicago, IL, USA.",
+          "name": "Jiseon Kim"
+        },
+        {
+          "affiliation": "Department of Pharmacology and Regenerative Medicine, University of Illinois College of Medicine, Chicago, IL, USA.",
+          "name": "Joseph R Dominguez"
+        },
+        {
+          "affiliation": "Department of Pharmacology and Regenerative Medicine, University of Illinois College of Medicine, Chicago, IL, USA.",
+          "name": "Seung Hyeon Kim"
+        },
+        {
+          "affiliation": "Department of Microbiology and Immunology, University of Illinois College of Medicine., Chicago, IL, USA.",
+          "name": "Zachary White"
+        },
+        {
+          "affiliation": "Department of Pharmacology and Regenerative Medicine, University of Illinois College of Medicine, Chicago, IL, USA.",
+          "name": "Jaewon Cho"
+        },
+        {
+          "affiliation": "Department of Pharmacology and Regenerative Medicine, University of Illinois College of Medicine, Chicago, IL, USA.",
+          "name": "Jungmin Hwang"
+        },
+        {
+          "affiliation": "Department of Pharmacology and Regenerative Medicine, University of Illinois College of Medicine, Chicago, IL, USA.",
+          "name": "Yeonwoo Choi"
+        },
+        {
+          "affiliation": "Department of Pharmacology and Regenerative Medicine, University of Illinois College of Medicine, Chicago, IL, USA.",
+          "name": "Soroush Tahmasebi"
+        },
+        {
+          "affiliation": "Department of Microbiology and Immunology, University of Illinois College of Medicine., Chicago, IL, USA.",
+          "name": "Teruyuki Sano"
+        },
+        {
+          "affiliation": "Department of Microbiology and Immunology, College of Medicine, Seoul National University, Seoul, Republic of Korea.",
+          "name": "Jinki Yeom"
+        },
+        {
+          "affiliation": "Department of Pharmacology and Regenerative Medicine, University of Illinois College of Medicine, Chicago, IL, USA.",
+          "name": "Ki-Wook Kim"
+        }
+      ],
+      "doi": "10.1084/jem.20251492",
+      "epmcId": "42048131",
+      "epmcSource": "MED",
+      "fullTextIds": [
+        "PMC13464463"
+      ],
+      "fullTextUrls": [
+        {
+          "availability": "Subscription required",
+          "availabilityCode": "S",
+          "documentStyle": "doi",
+          "site": "DOI",
+          "url": "https://doi.org/10.1084/jem.20251492"
+        },
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "html",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13464463"
+        },
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "pdf",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13464463?pdf=render"
+        },
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "doi",
+          "site": "DOI",
+          "url": "https://doi.org/10.1084/jem.20251492"
+        }
+      ],
+      "hasFreeFullText": true,
+      "hasPDF": true,
+      "inEPMC": true,
+      "isOpenAccess": false,
+      "journal": "The Journal of experimental medicine",
+      "pmcid": "PMC13464463",
+      "pmid": "42048131",
+      "source": "Europe PMC",
+      "sourceCode": "MED",
+      "title": "Mesenteric macrophage-monocyte circuit controls systemic inflammation during enteric bacterial infection.",
+      "url": "https://europepmc.org/article/MED/42048131",
+      "year": "2026"
+    },
+    {
+      "abstract": "<h4>Background/Objectives</h4>  MS4A4A is associated with M2-like macrophage states, while the MS4A gene cluster modifies soluble TREM2 levels and Alzheimer’s disease risk. We asked whether MS4A4A consistently marks the M2 side of human myeloid activation and whether AlphaFold supports a proposed MS4A4A–MS4A6A interaction. <h4>Methods:</h4> We reanalysed four public human datasets: bulk RNA-seq and ATAC-seq of primary monocyte-derived macrophages from independent three-donor cohorts, and single-cell RNA-seq atlases of healthy liver and severe COVID-19 blood. MS4A4A and an MS4A4A– MS4A6A complex were modelled with AlphaFold 3 and evaluated using pLDDT, predicted aligned error, and ipTM. <h4>Results:</h4> MS4A4A was higher in M2 (IL-4) than in M1 (IFN-γ + LPS) macrophages in all three donors (log2 fold change +2.68, adjusted P = 0.0013). Its promoter showed the highest mean accessibility in M2. MS4A4A was macrophage- enriched in liver and monocyte-enriched in blood, and was detected in 76.7% of M2-like versus 39.3% of M1-like liver macrophages, with the difference driven mainly by the proportion of positive cells. AlphaFold confidently modelled the four transmembrane helices (mean pLDDT 83.1), but the predicted MS4A4A–MS4A6A interface was not supported (ipTM 0.59). <h4>Conclusions:</h4> MS4A4A is consistently associated with the M2 side of human myeloid activation across independent transcriptomic, chromatin, and single- cell datasets. The findings are associative, and the proposed MS4A4A–MS4A6A interface remains an untested structural hypothesis.",
+      "authorFullNames": [
+        "Shi-Ruei Lin",
+        "Mandarina Li",
+        "Sihan Wang",
+        "Eric Li",
+        "Hao Sun",
+        "Liangyu Li"
+      ],
+      "authors": "Lin S, Li M, Wang S, Li E, Sun H, Li L.",
+      "authorsWithAffiliations": [
+        {
+          "affiliation": "",
+          "name": "Shi-Ruei Lin"
+        },
+        {
+          "affiliation": "",
+          "name": "Mandarina Li"
+        },
+        {
+          "affiliation": "",
+          "name": "Sihan Wang"
+        },
+        {
+          "affiliation": "",
+          "name": "Eric Li"
+        },
+        {
+          "affiliation": "",
+          "name": "Hao Sun"
+        },
+        {
+          "affiliation": "",
+          "name": "Liangyu Li"
+        }
+      ],
+      "doi": "10.64898/2026.08.19.745820",
+      "epmcId": "PPR1304013",
+      "epmcSource": "PPR",
+      "fullTextIds": [],
+      "fullTextUrls": [
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "doi",
+          "site": "DOI",
+          "url": "https://doi.org/10.64898/2026.08.19.745820"
+        }
+      ],
+      "hasFreeFullText": false,
+      "hasPDF": false,
+      "inEPMC": false,
+      "isOpenAccess": false,
+      "journal": "",
+      "pmcid": "",
+      "pmid": "",
+      "source": "Europe PMC",
+      "sourceCode": "PPR",
+      "title": "Public-Data Reanalysis Links MS4A4A to M2-like Human Myeloid States and Supports a Predicted Four-Pass Transmembrane Fold",
+      "url": "https://europepmc.org/article/PPR/PPR1304013",
+      "year": "2026"
+    }
+  ],
+  "interferon-gamma macrophage inflammatory gene expression": [
+    {
+      "abstract": "<h4>Background/aim</h4>Macrophages are key regulators of innate and adaptive immune responses through antigen presentation and the production of inflammatory mediators and growth factors. Imbalances in the activation and inhibition of pro-inflammatory type 1-like macrophages (M1) and anti-inflammatory type 2-like macrophages (M2) are closely associated with various autoimmune and chronic inflammatory diseases, underscoring the need for targeted therapeutic approaches. Numerous studies have shown that sulfated polysaccharides from marine algae, especially fucoidans from brown algae, exhibit a wide range of anti-inflammatory activities. This study aims to investigate the anti-inflammatory mode of action of algae-derived fucoidans in monocyte-derived macrophages and to identify the key regulatory proteins and inflammatory mediators involved.<h4>Materials and methods</h4>We applied data-independent mass spectrometry to comprehensively evaluate protein profiles of monocyte-derived M1/M2-like macrophages under the influence of sulfated polysaccharides from different algae species, namely fucoidans from the brown algae <i>Saccharina latissima</i>, <i>Fucus evanescens</i>, and <i>Laminaria digitata</i>, as well as the sulfated xylogalactan from the red alga <i>Delesseria sanguinea</i>. Furthermore, a series of gradually depolymerized fractions of the fucoidan from <i>Saccharina latissima</i> was investigated to elucidate the impact of molecular weight (MW) on protein expression levels and cytokine secretion patterns using membrane-based cytokine arrays and ELISA measurements.<h4>Results</h4>Among the tested sulfated polysaccharides, especially the fucoidan from <i>Saccharina latissima</i> showed anti-inflammatory effects. They significantly reduced expression levels of pro-inflammatory tryptophanyl-tRNA synthetase (WARS1), the cytokines interferon gamma-induced protein 10 (IP-10, syn. CXCL10) and macrophage migration inhibitory factor (MIF), as well as urokinase-type plasminogen activator receptor (uPAR) in pro-inflammatory M1-like macrophages, whereby their effects turned out to be independent of the MW.<h4>Conclusion</h4>Our study provides novel insights into the anti-inflammatory mode of action of fucoidan from <i>Saccharina latissimima</i> on monocyte-derived macrophages. Further <i>in vitro</i> and <i>in vivo</i> studies are required to better understand the underlying molecular pathways, the associated mechanism and to evaluate potential medical applications.",
+      "authorFullNames": [
+        "Jasmin Ostermann",
+        "Timo Gemoll",
+        "Tabea Schnüttgen",
+        "Marie-Theres Tischhöfer",
+        "Kirstin Plötze-Martin",
+        "Jonas Fleckner",
+        "Karl-Ludwig Bruchhage",
+        "Susanne Alban",
+        "Ralph Pries"
+      ],
+      "authors": "Ostermann J, Gemoll T, Schnüttgen T, Tischhöfer MT, Plötze-Martin K, Fleckner J, Bruchhage KL, Alban S, Pries R.",
+      "authorsWithAffiliations": [
+        {
+          "affiliation": "Section for Translational Surgical Oncology and Biobanking, Department of Surgery, University of Luebeck, Luebeck, Kiel, Germany.",
+          "name": "Jasmin Ostermann"
+        },
+        {
+          "affiliation": "Section for Translational Surgical Oncology and Biobanking, Department of Surgery, University of Luebeck, Luebeck, Kiel, Germany.",
+          "name": "Timo Gemoll"
+        },
+        {
+          "affiliation": "Department of Otorhinolaryngology, University of Luebeck, Luebeck, Kiel, Germany.",
+          "name": "Tabea Schnüttgen"
+        },
+        {
+          "affiliation": "Pharmaceutical Institute, University of Kiel, Luebeck, Kiel, Germany.",
+          "name": "Marie-Theres Tischhöfer"
+        },
+        {
+          "affiliation": "Department of Otorhinolaryngology, University of Luebeck, Luebeck, Kiel, Germany.",
+          "name": "Kirstin Plötze-Martin"
+        },
+        {
+          "affiliation": "Department of Otorhinolaryngology, University of Luebeck, Luebeck, Kiel, Germany.",
+          "name": "Jonas Fleckner"
+        },
+        {
+          "affiliation": "Department of Otorhinolaryngology, University of Luebeck, Luebeck, Kiel, Germany.",
+          "name": "Karl-Ludwig Bruchhage"
+        },
+        {
+          "affiliation": "Pharmaceutical Institute, University of Kiel, Luebeck, Kiel, Germany.",
+          "name": "Susanne Alban"
+        },
+        {
+          "affiliation": "Department of Otorhinolaryngology, University of Luebeck, Luebeck, Kiel, Germany.",
+          "name": "Ralph Pries"
+        }
+      ],
+      "doi": "10.3389/fimmu.2026.1868665",
+      "epmcId": "42756851",
+      "epmcSource": "MED",
+      "fullTextIds": [
+        "PMC13583666"
+      ],
+      "fullTextUrls": [
+        {
+          "availability": "Subscription required",
+          "availabilityCode": "S",
+          "documentStyle": "doi",
+          "site": "DOI",
+          "url": "https://doi.org/10.3389/fimmu.2026.1868665"
+        },
+        {
+          "availability": "Open access",
+          "availabilityCode": "OA",
+          "documentStyle": "html",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13583666"
+        },
+        {
+          "availability": "Open access",
+          "availabilityCode": "OA",
+          "documentStyle": "pdf",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13583666?pdf=render"
+        }
+      ],
+      "hasFreeFullText": true,
+      "hasPDF": true,
+      "inEPMC": true,
+      "isOpenAccess": true,
+      "journal": "Frontiers in immunology",
+      "pmcid": "PMC13583666",
+      "pmid": "42756851",
+      "source": "Europe PMC",
+      "sourceCode": "MED",
+      "title": "Decreased expression of immune activator WARS1 and other pro-inflammatory mediators in type 1-like macrophages as an associated mode of action in response to fucoidan from marine brown algae.",
+      "url": "https://europepmc.org/article/MED/42756851",
+      "year": "2026"
+    },
+    {
+      "abstract": "",
+      "authorFullNames": [
+        "Taoli Suo",
+        "Jing Zhang",
+        "Yanli Chen",
+        "Hongyu Shi",
+        "Haiyan Lu"
+      ],
+      "authors": "Suo T, Zhang J, Chen Y, Shi H, Lu H.",
+      "authorsWithAffiliations": [
+        {
+          "affiliation": "Department of Hematology, Children’s Hospital of Shanxi, Women Health Center of Shanxi , , , ",
+          "name": "Taoli Suo"
+        },
+        {
+          "affiliation": "Department of Hematology, Children’s Hospital of Shanxi, Women Health Center of Shanxi , , , ",
+          "name": "Jing Zhang"
+        },
+        {
+          "affiliation": "Department of Hematology, Children’s Hospital of Shanxi, Women Health Center of Shanxi , , , ",
+          "name": "Yanli Chen"
+        },
+        {
+          "affiliation": "Department of Hematology, Children’s Hospital of Shanxi, Women Health Center of Shanxi , , , ",
+          "name": "Hongyu Shi"
+        },
+        {
+          "affiliation": "Department of Hematology, Children’s Hospital of Shanxi, Women Health Center of Shanxi , , , ",
+          "name": "Haiyan Lu"
+        }
+      ],
+      "doi": "",
+      "epmcId": "PMC13668529",
+      "epmcSource": "PMC",
+      "fullTextIds": [
+        "PMC13668529"
+      ],
+      "fullTextUrls": [
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "html",
+          "site": "PubMedCentral",
+          "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC13668529/?tool=EBI"
+        },
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "pdf",
+          "site": "PubMedCentral",
+          "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC13668529/pdf/?tool=EBI"
+        },
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "html",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13668529"
+        },
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "pdf",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13668529?pdf=render"
+        }
+      ],
+      "hasFreeFullText": true,
+      "hasPDF": true,
+      "inEPMC": true,
+      "isOpenAccess": true,
+      "journal": "Frontiers in cellular and infection microbiology",
+      "pmcid": "PMC13668529",
+      "pmid": "",
+      "source": "Europe PMC",
+      "sourceCode": "PMC",
+      "title": "Transcriptomic evidence of an IFN-gamma-associated inflammatory state in active visceral leishmaniasis: an exploratory comparison with pediatric HLH",
+      "url": "https://europepmc.org/article/PMC/PMC13668529",
+      "year": ""
+    }
+  ]
+}

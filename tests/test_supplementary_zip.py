@@ -15,9 +15,9 @@ from librarian import supplementary
 from librarian.fulltext_cache import CachedSource
 from librarian.literature_search import (
     EuropePmcSource,
+    SupplementaryOptions,
     _fetch_supplementary_zip,
     fetch_supplementary,
-    SupplementaryOptions,
     fetch_supplementary_outcome,
 )
 

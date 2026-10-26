@@ -1,0 +1,14 @@
+[
+  {
+    "key": "query_generation",
+    "max_tokens": 8192,
+    "response": "{\"queries\": [\"interferon-gamma macrophage inflammatory gene expression\", \"\\\"IFN-gamma\\\" OR \\\"interferon gamma\\\" macrophage signaling JAK STAT inflammation\", \"GENE_PROTEIN:\\\"IFNG\\\" AND (TITLE_ABS:macrophage OR TITLE_ABS:monocyte)\"]}",
+    "temperature": 0.3
+  },
+  {
+    "key": "judge:paragraph_0,paragraph_1,paragraph_2,paragraph_3,paragraph_4,paragraph_5,paragraph_6,paragraph_7",
+    "max_tokens": 8192,
+    "response": "{\"relevant_ids\": [\"paragraph_5_B\", \"paragraph_5_A\", \"paragraph_5_D\", \"paragraph_3_B\"]}",
+    "temperature": 0.0
+  }
+]

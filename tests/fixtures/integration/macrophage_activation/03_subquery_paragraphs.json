@@ -1,0 +1,25 @@
+[
+  {
+    "paragraphs": [
+      "42756851 | p340000 w0-86 | 86 words | body:Protein profiles in the course of monocyte-derived macrophage differentiation | GSEA using the MSigDB Hallmark gene set revealed significant downregulation of p",
+      "42756851 | p540000 w0-146 | 146 words | discussion:Discussion | Due to all the known effects of WARS1, its suppression as observed with fucoidan",
+      "42756851 | p350000 w0-112 | 112 words | body:Protein profiles in the course of monocyte-derived macrophage differentiation | Attenuated inflammatory signaling through fucoidan treatment in M1-like macropha"
+    ],
+    "query": "interferon-gamma macrophage inflammatory gene expression"
+  },
+  {
+    "paragraphs": [
+      "42903902 | p10000 w0-91 | 91 words | body:Background | Granulomatous inflammatory disorders such as NL occur via macrophage activation ",
+      "PMC:PMC13640525 | p90000 w0-76 | 76 words | body:Literature Search Strategy | The initial search combined terms related to IFN‐γ, Sjögren's disease, and inter",
+      "PMC:PMC13640525 | p200000 w0-72 | 72 words | body:IFN‐γ–JAK/STAT Axis: A Potential Inflammatory Signaling Module in SD‐ILD | Macrophages are well‐established cellular responders to IFN‐γ–JAK/STAT signaling"
+    ],
+    "query": "\"IFN-gamma\" OR \"interferon gamma\" macrophage signaling JAK STAT inflammation"
+  },
+  {
+    "paragraphs": [
+      "42048131 | p0 w0-148 | 148 words | abstract:Abstract | Although the gut mesentery is anatomically linked to the intestines, the roles o",
+      "PPR:PPR1304013 | p0 w0-216 | 216 words | abstract:Abstract | <h4>Background/Objectives</h4>  MS4A4A is associated with M2-like macrophage sta"
+    ],
+    "query": "GENE_PROTEIN:\"IFNG\" AND (TITLE_ABS:macrophage OR TITLE_ABS:monocyte)"
+  }
+]

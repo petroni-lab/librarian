@@ -1,0 +1,5 @@
+[
+  "interferon-gamma macrophage inflammatory gene expression",
+  "\"IFN-gamma\" OR \"interferon gamma\" macrophage signaling JAK STAT inflammation",
+  "GENE_PROTEIN:\"IFNG\" AND (TITLE_ABS:macrophage OR TITLE_ABS:monocyte)"
+]

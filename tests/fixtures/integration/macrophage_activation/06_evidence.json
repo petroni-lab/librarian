@@ -1,0 +1,46 @@
+[
+  {
+    "affiliation": "Shandong Province Rheumatic Disease Key Speciality Affiliated Hospital of Shandong Second Medical University",
+    "authors": "Chen Q, Li Y, Chen Y, Su Y, Wang X, Guan C.",
+    "doi": "",
+    "epmcId": "PMC13640525",
+    "epmcSource": "PMC",
+    "evidence_sections": [
+      "IFN‐γ–JAK/STAT Axis: A Potential Inflammatory Signaling Module in SD‐ILD",
+      "IFN‐γ–JAK/STAT Axis: A Potential Inflammatory Signaling Module in SD‐ILD"
+    ],
+    "evidence_snippets": [
+      "Macrophages are well‐established cellular responders to IFN‐γ–JAK/STAT signaling. IFN‐γ can promote STAT1‐dependent transcriptional programs associated with macrophage activation, enhanced antigen‐presentation capacity, and increased inflammatory mediator production [10].",
+      "Experimental studies further indicate that IFN‐γ can promote macrophage polarization toward a pro‐inflammatory phenotype, providing a potential mechanism through which macrophages may contribute to the persistence of inflammatory responses [44]."
+    ],
+    "has_fulltext": true,
+    "journal": "Immunity, inflammation and disease",
+    "paper_id": "PMC:PMC13640525",
+    "pmcid": "PMC13640525",
+    "pmid": "",
+    "title": "IFN‐γ‐Associated Signaling Networks in Interstitial Lung Disease Associated With Sjögren's Disease",
+    "url": "https://europepmc.org/article/PMC/PMC13640525",
+    "year": "2026"
+  },
+  {
+    "affiliation": "College of Medicine, Northeast Ohio Medical University, Rootstown, Ohio.",
+    "authors": "Guy M, Vidmar D, Wieselthier J, Baron E, Kunzler E.",
+    "doi": "10.1016/j.jdcr.2026.08.055",
+    "epmcId": "42903902",
+    "epmcSource": "MED",
+    "evidence_sections": [
+      "Background"
+    ],
+    "evidence_snippets": [
+      "Recent studies have identified upregulation of inflammatory cytokines, such as interferon gamma (IFN-γ), contributing to constitutive activation of the janus kinase-signal transducer and activator of transcription (JAK-STAT) signaling pathway in granulomatous diseases.3,4 Targeting this pathway with JAK inhibition provides a promising therapeutic approach to NL, supported by clinical success in granulomatous diseases such as sarcoidosis.3"
+    ],
+    "has_fulltext": true,
+    "journal": "JAAD case reports",
+    "paper_id": "42903902",
+    "pmcid": "PMC13682464",
+    "pmid": "42903902",
+    "title": "Clinical improvement of necrobiosis lipoidica with topical ruxolitinib.",
+    "url": "https://europepmc.org/article/MED/42903902",
+    "year": "2026"
+  }
+]

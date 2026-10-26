@@ -14,6 +14,7 @@ import tempfile
 import time
 import types
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from librarian import _docling_worker, supplementary
@@ -94,7 +95,7 @@ class DoclingRecordsTest(unittest.TestCase):
             )
             with worker, env, late:
                 records = _extract({"s.pdf": b"%PDF"})
-            source, max_pages, _ = open(args).read().split(" ")
+            source, max_pages, _ = Path(args).read_text().split(" ")
         self.assertEqual(max_pages, str(supplementary._DOCLING_MAX_PAGES))
         self.assertTrue(source.endswith("input.pdf"))
         self.assertEqual(
@@ -210,7 +211,7 @@ class DoclingIsolationTest(unittest.TestCase):
                 self.assertLogs("librarian.supplementary", "WARNING") as logs,
             ):
                 _extract({"s.pdf": b"%PDF"}, failed=failed)
-            worker, grandchild = map(int, open(pids).read().split())
+            worker, grandchild = map(int, Path(pids).read_text().split())
         self.assertLess(time.monotonic() - started, 20)
         self.assertEqual(failed, ["s.pdf"])
         self.assertIn("timed out after 2s on s.pdf", " ".join(logs.output))

@@ -1,0 +1,40 @@
+# Librarian runtime configuration for recording replay fixtures.
+#
+# Schema + what each knob means: LibrarianRuntimeConfig in librarian/config.py.
+# Values here are sized so one recorded case stays small enough to commit and
+# review: a few papers and full texts, one judge call. Change them and every case
+# must be re-recorded, since 00_run.json carries the config it was recorded with.
+
+default_model_name = "glm-5.3-flash"
+
+# Same role split as librarian/config.toml; at 3 that is one recall, one coverage,
+# one precision query.
+query_budget_guidance = """
+Generate AT MOST {max_queries} complementary queries, spent as follows (recall over precision — a downstream filter handles precision):
+- AT MOST ~2/5 of them as recall queries — broad plain-text baselines, no field tags, core concepts joined with OR synonyms. Your recall safety net. Keep them genuinely different: vary the phrasing and the synonym set, do not re-emit one query three ways.
+- AT MOST ~2/5 of them as coverage queries — distinct angles on the question: a different synonym set, a related sub-concept, or a different field/entity from the syntax reference below. One concept each, at most 1 AND.
+- AT MOST ~1/5 of them as precision queries — targeted structured queries using whichever fields from the reference best fit the co-required concepts (controlled vocabulary, entity, or section fields), at most 1 AND. When an exact answer exists, these find it."""
+
+# The minimum config.MIN_SUBQUERIES allows.
+num_subqueries = 3
+# 2 × 3 = at most 6 papers, and so at most 6 JATS files under boundaries/fulltext.
+papers_per_subquery = 2
+paragraphs_per_subquery = 3
+# 3 × 3 = 9 — the whole pool judged in one call (see config.py).
+paragraphs_per_judge_batch = 9
+
+# Same as librarian/config.toml.
+max_paragraph_words = 250
+paragraph_overlap_words = 50
+# 0 so the recorded judge answer is as reproducible as the model allows.
+filter_temperature = 0.0
+# Same as librarian/config.toml.
+filter_max_tokens = 8192
+
+# Off, as shipped: supplementary files are not recorded, so replay cannot answer
+# for them (record_fixture.py refuses this config with it on). The other three
+# knobs are inert while it is off, and set to the shipped values.
+supplementary_enrichment = false
+max_supplementary_bytes = 15_000_000
+max_supplementary_records_per_paper = 40
+supplementary_pdf_extractor = "pypdf"
