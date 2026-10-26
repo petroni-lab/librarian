@@ -45,3 +45,13 @@ packages = ["librarian"]
 # itself into the dev venv, which runs straight from the checkout.
 [tool.uv]
 package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+# The project isn't installed (package = false above), so put the checkout on
+# sys.path for `uv run pytest tests`.
+[tool.pytest.ini_options]
+pythonpath = ["."]

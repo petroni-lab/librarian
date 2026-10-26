@@ -46,12 +46,12 @@ class StableCoordinatesTest(unittest.TestCase):
 
         texts = ["alpha finding.", "shared alpha beta finding.", "beta finding."]
         records = [
-            dict(
-                text=text,
-                section_title="Supplementary: s.txt",
-                section_type="supplementary",
-                supplementary_file="s.txt",
-            )
+            {
+                "text": text,
+                "section_title": "Supplementary: s.txt",
+                "section_type": "supplementary",
+                "supplementary_file": "s.txt",
+            }
             for text in texts
         ]
         outcome = Supplementary("PMC1", records=records, status=200)
@@ -62,7 +62,7 @@ class StableCoordinatesTest(unittest.TestCase):
             max_supplementary_records_per_paper=2,
         )
         librarian = LibrarianAgent(config, llm_client=object())
-        paper = dict(pmid="1", pmcid="PMC1", isOpenAccess=True)
+        paper = {"pmid": "1", "pmcid": "PMC1", "isOpenAccess": True}
         fulltexts = {
             "PMC1": Fulltext("PMC1", xml="<article><body><p>body</p></body></article>")
         }
@@ -101,12 +101,12 @@ class StableCoordinatesTest(unittest.TestCase):
         from librarian.literature_search import Supplementary
 
         records = [
-            dict(
-                text="only finding.",
-                section_type="supplementary",
-                section_title="Supplementary: s.txt",
-                supplementary_file="s.txt",
-            )
+            {
+                "text": "only finding.",
+                "section_type": "supplementary",
+                "section_title": "Supplementary: s.txt",
+                "supplementary_file": "s.txt",
+            }
         ]
         outcome = Supplementary("PMC1", records=records, status=200)
         cached = copy.deepcopy(records)

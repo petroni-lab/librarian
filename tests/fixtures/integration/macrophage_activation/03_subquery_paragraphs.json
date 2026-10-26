@@ -1,0 +1,26 @@
+[
+  {
+    "paragraphs": [
+      "42756851 | p340000 w0-86 | 86 words | body:Protein profiles in the course of monocyte-derived macrophage differentiation | GSEA using the MSigDB Hallmark gene set revealed significant downregulation of p",
+      "42756851 | p540000 w0-146 | 146 words | discussion:Discussion | Due to all the known effects of WARS1, its suppression as observed with fucoidan",
+      "42756851 | p350000 w0-112 | 112 words | body:Protein profiles in the course of monocyte-derived macrophage differentiation | Attenuated inflammatory signaling through fucoidan treatment in M1-like macropha"
+    ],
+    "query": "interferon-gamma macrophage inflammatory gene expression"
+  },
+  {
+    "paragraphs": [
+      "42903902 | p10000 w0-91 | 91 words | body:Background | Granulomatous inflammatory disorders such as NL occur via macrophage activation ",
+      "42903902 | p90000 w0-89 | 89 words | body:Discussion | In this case, the patient’s NL was refractory to various treatment modalities fo",
+      "42636599 | p0 w0-250 | 250 words | abstract:Abstract | Visceral leishmaniasis (VL) is associated with impaired Th1 responses, yet the i"
+    ],
+    "query": "\"IFN-gamma\" OR \"interferon gamma\" macrophage signaling JAK-STAT"
+  },
+  {
+    "paragraphs": [
+      "42697123 | p0 w0-250 | 250 words | abstract:Abstract | <h4>Background</h4>Pulmonary macrophages are central orchestrators of inflammato",
+      "42722241 | p0 w0-202 | 202 words | abstract:Abstract | Ulcerative colitis (UC) is a chronic relapsing inflammatory disease with limited",
+      "42697123 | p0 w200-292 | 92 words | abstract:Abstract | Spatially distinct distributions between sexes suggested convergent responses to"
+    ],
+    "query": "GENE_PROTEIN:\"IFNG\" AND TITLE_ABS:macrophage"
+  }
+]

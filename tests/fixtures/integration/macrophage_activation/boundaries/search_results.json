@@ -1,0 +1,497 @@
+{
+  "\"IFN-gamma\" OR \"interferon gamma\" macrophage signaling JAK-STAT": [
+    {
+      "abstract": "",
+      "authorFullNames": [
+        "Madeline Guy",
+        "Dennis Vidmar",
+        "Janet Wieselthier",
+        "Elma Baron",
+        "Elaine Kunzler"
+      ],
+      "authors": "Guy M, Vidmar D, Wieselthier J, Baron E, Kunzler E.",
+      "authorsWithAffiliations": [
+        {
+          "affiliation": "College of Medicine, Northeast Ohio Medical University, Rootstown, Ohio.",
+          "name": "Madeline Guy"
+        },
+        {
+          "affiliation": "Dermatology Service, Department of Veterans Affairs Louis Stokes Medical Center, Cleveland, Ohio.",
+          "name": "Dennis Vidmar"
+        },
+        {
+          "affiliation": "Dermatology Service, Department of Veterans Affairs Louis Stokes Medical Center, Cleveland, Ohio.",
+          "name": "Janet Wieselthier"
+        },
+        {
+          "affiliation": "Dermatology Service, Department of Veterans Affairs Louis Stokes Medical Center, Cleveland, Ohio.",
+          "name": "Elma Baron"
+        },
+        {
+          "affiliation": "Dermatology Service, Department of Veterans Affairs Louis Stokes Medical Center, Cleveland, Ohio.",
+          "name": "Elaine Kunzler"
+        }
+      ],
+      "doi": "10.1016/j.jdcr.2026.08.055",
+      "epmcId": "42903902",
+      "epmcSource": "MED",
+      "evidence_section_types": [
+        "",
+        ""
+      ],
+      "evidence_sections": [
+        "Background",
+        "Discussion"
+      ],
+      "evidence_sentences_full_text": [
+        "Recent studies have identified upregulation of inflammatory cytokines, such as interferon gamma (IFN-γ), contributing to constitutive activation of the janus kinase-signal transducer and activator of transcription (JAK-STAT) signaling pathway in granulomatous diseases.3,4 Targeting this pathway with JAK inhibition provides a promising therapeutic approach to NL, supported by clinical success in granulomatous diseases such as sarcoidosis.3",
+        "The rapid and sustained clinical response observed with topical ruxolitinib suggests involvement of JAK-STAT signaling in the pathogenesis of NL, with constitutive pathway activation contributing to chronic granulomatous inflammation.4 This is supported by prior reports of clinical remission of NL with topical JAK-STAT inhibitor therapy.5,6 Our patient’s response is consistent with molecular network analyses identifying IFN-γ driven JAK-STAT activation as a driver of NL and JAK inhibition as a validated therapeutic intervention.7"
+      ],
+      "fullTextIds": [
+        "PMC13682464"
+      ],
+      "fullTextUrls": [
+        {
+          "availability": "Subscription required",
+          "availabilityCode": "S",
+          "documentStyle": "doi",
+          "site": "DOI",
+          "url": "https://doi.org/10.1016/j.jdcr.2026.08.055"
+        },
+        {
+          "availability": "Open access",
+          "availabilityCode": "OA",
+          "documentStyle": "html",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13682464"
+        },
+        {
+          "availability": "Open access",
+          "availabilityCode": "OA",
+          "documentStyle": "pdf",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13682464?pdf=render"
+        }
+      ],
+      "hasFreeFullText": true,
+      "hasPDF": true,
+      "inEPMC": true,
+      "isOpenAccess": true,
+      "journal": "JAAD case reports",
+      "pmcid": "PMC13682464",
+      "pmid": "42903902",
+      "source": "Europe PMC",
+      "sourceCode": "MED",
+      "title": "Clinical improvement of necrobiosis lipoidica with topical ruxolitinib.",
+      "url": "https://europepmc.org/article/MED/42903902",
+      "year": "2026"
+    },
+    {
+      "abstract": "Visceral leishmaniasis (VL) is associated with impaired Th1 responses, yet the intracellular signalling events linking immunosuppressive pathways to effector dysfunction remain poorly defined. We studied 150 adults in endemic northern Nigeria (50 active VL, 50 healed VL, 50 endemic controls) using flow cytometry, cytokine profiling, targeted RT-qPCR of 13 JAK-STAT pathway genes with dual reference gene normalisation, ex vivo checkpoint blockade, and phospho-flow cytometry for STAT1/STAT3 in both CD4+ T cells and CD14+ macrophages. Active VL was associated with reduced antigen-specific IFN-γ (220 versus 940 pg/mL in healed VL; P < 0.001), elevated IL-10, expanded regulatory T cells, transcriptional upregulation of STAT3 (2.66-fold, adjusted P < 0.001), and downregulation of its negative regulator SOCS3 (0.56-fold, adjusted P = 0.001). A STAT3-dominant phosphorylation profile was present in both CD4+ T cells (pSTAT1/pSTAT3 ratio 1.33) and, more prominently, CD14+ macrophages (ratio 0.51; Kruskal-Wallis P < 0.001 across disease groups). CD14+ pSTAT3 correlated with macrophage infection index (Spearman ρ = 0.52, P < 0.001), linking signalling state to effector function. Combined IL-10 and PD-1 blockade reversed the signalling imbalance in both compartments, restored IFN-γ production up to 4.8-fold, and reduced macrophage infection index by 42%. Pharmacological STAT3 inhibition with Stattic confirmed pSTAT3 reduction by phospho-flow cytometry (-33%, P < 0.001), reproduced transcriptional reprogramming comparable to checkpoint blockade for 9 of 13 genes, and enhanced macrophage parasite clearance (infection index -36%, P < 0.001). These findings across phosphoprotein, transcript, and functional levels identify a STAT3-dominant signalling signature spanning T-cell and macrophage compartments as a consistent feature of immune suppression in human VL and a candidate therapeutic target warranting investigation.",
+      "authorFullNames": [
+        "Peter Mac Asaga",
+        "Axel Kroeger",
+        "Philomena Airohuodion",
+        "Chukwuma Anyaike",
+        "Ishaku Bako",
+        "James Makpo",
+        "Deborah Buba",
+        "Dakul Anthony Danaan"
+      ],
+      "authors": "Asaga PM, Kroeger A, Airohuodion P, Anyaike C, Bako I, Makpo J, Buba D, Danaan DA.",
+      "authorsWithAffiliations": [
+        {
+          "affiliation": "Institute for Infection Prevention and Control, University Medical Centre, Freiburg, Faculty of Medicine, Breisacher str 115 b, 79016 Freiburg, Germany; Centre for Medicine and Society, Universitätsklinikum Freiburg, Germany.",
+          "name": "Peter Mac Asaga"
+        },
+        {
+          "affiliation": "Centre for Medicine and Society, Universitätsklinikum Freiburg, Germany.",
+          "name": "Axel Kroeger"
+        },
+        {
+          "affiliation": "WHO/TDR, Geneva, Switzerland.",
+          "name": "Philomena Airohuodion"
+        },
+        {
+          "affiliation": "Federal Ministry of Health, Abuja, Nigeria.",
+          "name": "Chukwuma Anyaike"
+        },
+        {
+          "affiliation": "Faculty of Medicine, Federal University of Lafia, Nigeria.",
+          "name": "Ishaku Bako"
+        },
+        {
+          "affiliation": "Department of Zoology, Nasarawa State University, Keffi, Nigeria.",
+          "name": "James Makpo"
+        },
+        {
+          "affiliation": "Faculty of Veterinary Medicine, University of Jos, Nigeria.",
+          "name": "Deborah Buba"
+        },
+        {
+          "affiliation": "Department of Parasitology, University of Jos, Nigeria.",
+          "name": "Dakul Anthony Danaan"
+        }
+      ],
+      "doi": "10.1016/j.cyto.2026.157204",
+      "epmcId": "42636599",
+      "epmcSource": "MED",
+      "fullTextIds": [],
+      "fullTextUrls": [
+        {
+          "availability": "Subscription required",
+          "availabilityCode": "S",
+          "documentStyle": "doi",
+          "site": "DOI",
+          "url": "https://doi.org/10.1016/j.cyto.2026.157204"
+        }
+      ],
+      "hasFreeFullText": false,
+      "hasPDF": false,
+      "inEPMC": false,
+      "isOpenAccess": false,
+      "journal": "Cytokine",
+      "pmcid": "",
+      "pmid": "42636599",
+      "source": "Europe PMC",
+      "sourceCode": "MED",
+      "title": "A STAT3-dominant signalling signature associated with immune suppression in human visceral leishmaniasis is reversed by checkpoint blockade and STAT3 inhibition.",
+      "url": "https://europepmc.org/article/MED/42636599",
+      "year": "2026"
+    }
+  ],
+  "GENE_PROTEIN:\"IFNG\" AND TITLE_ABS:macrophage": [
+    {
+      "abstract": "<h4>Background</h4>Pulmonary macrophages are central orchestrators of inflammatory resolution and tissue repair in the lung. Whether vaping-associated macrophage dysregulation is spatially organized, sex-dimorphic, or detectable by bulk transcriptomic approaches remains poorly understood.<h4>Methods</h4>We performed a targeted re-analysis of a published spatial transcriptomics dataset of vaping-exposed murine lung, isolating macrophage-associated spots and applying unsupervised Leiden clustering to identify transcriptionally distinct macrophage microenvironments. Macrophage polarization was assessed using SMaRTspot, a novel adaptation of the validated SMaRT framework enabling polarization scoring at the spatial microenvironment level. Cell-type-specific differential gene expression analysis was performed against a purpose-built curated macrophage gene universe.<h4>Results</h4>In the vaped animals, the conserved homeostatic macrophage program of non-vaped lung was replaced with multiple transcriptionally distinct microenvironments. These microenvironments exhibited strong sexual dimorphism and were undetectable by bulk transcriptomic analysis. Vaped male microenvironments showed progressive homeostatic identity loss, inflammatory polarization signatures, senescence-associated biology, and fibrotic remodeling potential. Suppression of IFN-γ-responsive genes, including Ciita was a consistent feature of all vaped male-containing microenvironments regardless of polarization state. Vaped female macrophage microenvironments showed preserved homeostatic identity with alternative activation marked by a de novo lipid synthesis signature. A shared cross-sex microenvironment exhibited TLR4-associated inflammasome priming, senescence-associated secretory phenotype activation, and estrogen receptor upregulation in both sexes. Spatially distinct distributions between sexes suggested convergent responses to distinct local stimuli rather than a shared paracrine mechanism.<h4>Conclusions</h4>Vaping was associated with spatially organized, sex-dimorphic macrophage microenvironmental reprogramming invisible to bulk approaches. SMaRTspot extends validated macrophage polarization scoring to spatial transcriptomics and reveals opposing sex-specific polarization trajectories: male-associated suppression of IFN-γ responsiveness and antigen presentation capacity, and female-associated lipid-reprogrammed alternative activation with preserved homeostatic identity. These alterations may play a key role in vaping-associated pulmonary injury. As a re-analysis of a single-animal-per-condition dataset, these findings define testable hypotheses for confirmation in larger cohorts.",
+      "authorFullNames": [
+        "Joy A Phillips",
+        "Ashley V Schwartz",
+        "Anh D Nguyen",
+        "Oscar Echeagaray",
+        "Mark A Sussman",
+        "Uduak Z George"
+      ],
+      "authors": "Phillips JA, Schwartz AV, Nguyen AD, Echeagaray O, Sussman MA, George UZ.",
+      "authorsWithAffiliations": [
+        {
+          "affiliation": "College of Sciences, San Diego State University, San Diego, CA, United States; Department of Biology, San Diego State University, San Diego, CA, United States. Electronic address: jphillips@sdsu.edu.",
+          "name": "Joy A Phillips"
+        },
+        {
+          "affiliation": "Department of Mathematics and Biostatistics, San Diego State University, San Diego, CA, United States.",
+          "name": "Ashley V Schwartz"
+        },
+        {
+          "affiliation": "Department of Mathematics and Biostatistics, San Diego State University, San Diego, CA, United States.",
+          "name": "Anh D Nguyen"
+        },
+        {
+          "affiliation": "Department of Biology, San Diego State University, San Diego, CA, United States.",
+          "name": "Oscar Echeagaray"
+        },
+        {
+          "affiliation": "Department of Biology, San Diego State University, San Diego, CA, United States.",
+          "name": "Mark A Sussman"
+        },
+        {
+          "affiliation": "Department of Mathematics and Biostatistics, San Diego State University, San Diego, CA, United States.",
+          "name": "Uduak Z George"
+        }
+      ],
+      "doi": "10.1016/j.molimm.2026.08.013",
+      "epmcId": "42697123",
+      "epmcSource": "MED",
+      "fullTextIds": [],
+      "fullTextUrls": [
+        {
+          "availability": "Subscription required",
+          "availabilityCode": "S",
+          "documentStyle": "doi",
+          "site": "DOI",
+          "url": "https://doi.org/10.1016/j.molimm.2026.08.013"
+        }
+      ],
+      "hasFreeFullText": false,
+      "hasPDF": false,
+      "inEPMC": false,
+      "isOpenAccess": false,
+      "journal": "Molecular immunology",
+      "pmcid": "",
+      "pmid": "42697123",
+      "source": "Europe PMC",
+      "sourceCode": "MED",
+      "title": "Vaping reorganizes the pulmonary macrophage landscape into multiple sex-dimorphic microenvironments.",
+      "url": "https://europepmc.org/article/MED/42697123",
+      "year": "2026"
+    },
+    {
+      "abstract": "Ulcerative colitis (UC) is a chronic relapsing inflammatory disease with limited efficacy in achieving durable mucosal healing and preventing dysplasia. Macrophage-intestinal stem cell (ISC) crosstalk plays a central role in epithelial regeneration and tumorigenic transition but remains therapeutically underexplored. Here, we show that Dioscin, a natural steroidal saponin from Dioscoreae Rhizoma, alleviates DSS-induced acute colitis and AOM/DSS-induced chronic colitis-associated dysplasia by reprogramming macrophage-dependent ISC homeostasis. Dioscin significantly reduced disease severity, suppressed inflammatory macrophage infiltration, and restored Lgr5⁺ ISC compartments, whereas macrophage depletion abolished these protective effects. In vitro, Dioscin inhibited M1 polarization of LPS/IFN-γ-stimulated macrophages, improved epithelial barrier integrity, and enhanced ISC proliferation in organoid systems via modulation of macrophage-conditioned signaling. Mechanistically, IL-1β was identified as a key macrophage-derived mediator linking inflammatory activation to ISC dysfunction. Importantly, Dioscin directly interacted with catalytic α1 subunit of AMP-activated protein kinase (AMPKα1), activated AMPK/Raptor signaling, and suppressed mTORC1-dependent inflammatory responses, while pharmacological inhibition with Compound C or myeloid-specific deletion of AMPKα1 (Prkaa1ᶠˡ/ᶠˡ, nLysM-Cre) abrogated its effects. Collectively, Dioscin ameliorates experimental colitis and dysplasia by activating myeloid AMPK signaling, inhibiting IL-1β-driven macrophage-ISC dysregulation, and restoring epithelial regeneration, highlighting macrophage metabolic reprogramming as a therapeutic strategy and identifying myeloid AMPK as a potential target for UC intervention.",
+      "authorFullNames": [
+        "Ni Huang",
+        "Shuru Lu",
+        "Qiuwei Zhong",
+        "Chutian Mai",
+        "BeiYang Cong",
+        "LongJu Wang",
+        "Baoyuan Huang",
+        "Bo Liu",
+        "Ying Hu",
+        "Xiaojun Zhang"
+      ],
+      "authors": "Huang N, Lu S, Zhong Q, Mai C, Cong B, Wang L, Huang B, Liu B, Hu Y, Zhang X.",
+      "authorsWithAffiliations": [
+        {
+          "affiliation": "School of Phmaceutical Science, State Key Laboratory of Traditional Chinese Medicine Syndrome, State Key Laboratory of Dampness Syndrome, Guangdong Provincial Academy of Chinese Medical Sciences, Guangzhou University of Chinese Medicine, Guangzhou, 510006, China; Pharmacy Department, Zhongshan Hospital of Traditional Chinese Medicine, No.3 Kangxin Road, West District, Zhongshan, Guangdong, China.",
+          "name": "Ni Huang"
+        },
+        {
+          "affiliation": "School of Phmaceutical Science, State Key Laboratory of Traditional Chinese Medicine Syndrome, State Key Laboratory of Dampness Syndrome, Guangdong Provincial Academy of Chinese Medical Sciences, Guangzhou University of Chinese Medicine, Guangzhou, 510006, China; The Tenth Affiliated Hospital, Southern Medical University (Dongguan People's Hospital), Dongguan, Guangdong, China.",
+          "name": "Shuru Lu"
+        },
+        {
+          "affiliation": "School of Phmaceutical Science, State Key Laboratory of Traditional Chinese Medicine Syndrome, State Key Laboratory of Dampness Syndrome, Guangdong Provincial Academy of Chinese Medical Sciences, Guangzhou University of Chinese Medicine, Guangzhou, 510006, China.",
+          "name": "Qiuwei Zhong"
+        },
+        {
+          "affiliation": "School of Phmaceutical Science, State Key Laboratory of Traditional Chinese Medicine Syndrome, State Key Laboratory of Dampness Syndrome, Guangdong Provincial Academy of Chinese Medical Sciences, Guangzhou University of Chinese Medicine, Guangzhou, 510006, China; Shenzhen Bao'an Authentic TCM Therapy Hospital, Shenzhen, China.",
+          "name": "Chutian Mai"
+        },
+        {
+          "affiliation": "School of Phmaceutical Science, State Key Laboratory of Traditional Chinese Medicine Syndrome, State Key Laboratory of Dampness Syndrome, Guangdong Provincial Academy of Chinese Medical Sciences, Guangzhou University of Chinese Medicine, Guangzhou, 510006, China.",
+          "name": "BeiYang Cong"
+        },
+        {
+          "affiliation": "School of Phmaceutical Science, State Key Laboratory of Traditional Chinese Medicine Syndrome, State Key Laboratory of Dampness Syndrome, Guangdong Provincial Academy of Chinese Medical Sciences, Guangzhou University of Chinese Medicine, Guangzhou, 510006, China.",
+          "name": "LongJu Wang"
+        },
+        {
+          "affiliation": "School of Phmaceutical Science, State Key Laboratory of Traditional Chinese Medicine Syndrome, State Key Laboratory of Dampness Syndrome, Guangdong Provincial Academy of Chinese Medical Sciences, Guangzhou University of Chinese Medicine, Guangzhou, 510006, China; The First Affiliated Hospital of Guangzhou University of Chinese Medicine, Guangdong Province Lingnan Characteristic Hospital Preparation Transformation Engineering Technology Research Center, Guangzhou, China.",
+          "name": "Baoyuan Huang"
+        },
+        {
+          "affiliation": "State Key Laboratory of Chinese Medicine, The Second Affiliated Hospital of Guangzhou University of Chinese Medicine, Guangzhou, China. Electronic address: doctliu@gzucm.edu.cn.",
+          "name": "Bo Liu"
+        },
+        {
+          "affiliation": "Pharmacy Department, Zhongshan Hospital of Traditional Chinese Medicine, No.3 Kangxin Road, West District, Zhongshan, Guangdong, China. Electronic address: 64460266@qq.com.",
+          "name": "Ying Hu"
+        },
+        {
+          "affiliation": "School of Phmaceutical Science, State Key Laboratory of Traditional Chinese Medicine Syndrome, State Key Laboratory of Dampness Syndrome, Guangdong Provincial Academy of Chinese Medical Sciences, Guangzhou University of Chinese Medicine, Guangzhou, 510006, China; Pharmacy Department, Zhongshan Hospital of Traditional Chinese Medicine, No.3 Kangxin Road, West District, Zhongshan, Guangdong, China. Electronic address: zhangxj@gzucm.edu.cn.",
+          "name": "Xiaojun Zhang"
+        }
+      ],
+      "doi": "10.1016/j.phrs.2026.108447",
+      "epmcId": "42722241",
+      "epmcSource": "MED",
+      "fullTextIds": [],
+      "fullTextUrls": [
+        {
+          "availability": "Subscription required",
+          "availabilityCode": "S",
+          "documentStyle": "doi",
+          "site": "DOI",
+          "url": "https://doi.org/10.1016/j.phrs.2026.108447"
+        }
+      ],
+      "hasFreeFullText": false,
+      "hasPDF": false,
+      "inEPMC": false,
+      "isOpenAccess": false,
+      "journal": "Pharmacological research",
+      "pmcid": "",
+      "pmid": "42722241",
+      "source": "Europe PMC",
+      "sourceCode": "MED",
+      "title": "Dioscin activates myeloid AMPK to restore Lgr5⁺ stem cell homeostasis and promote mucosal repair in ulcerative colitis.",
+      "url": "https://europepmc.org/article/MED/42722241",
+      "year": "2026"
+    }
+  ],
+  "interferon-gamma macrophage inflammatory gene expression": [
+    {
+      "abstract": "",
+      "authorFullNames": [
+        "Taoli Suo",
+        "Jing Zhang",
+        "Yanli Chen",
+        "Hongyu Shi",
+        "Haiyan Lu"
+      ],
+      "authors": "Suo T, Zhang J, Chen Y, Shi H, Lu H.",
+      "authorsWithAffiliations": [
+        {
+          "affiliation": "Department of Hematology, Children’s Hospital of Shanxi, Women Health Center of Shanxi , , , ",
+          "name": "Taoli Suo"
+        },
+        {
+          "affiliation": "Department of Hematology, Children’s Hospital of Shanxi, Women Health Center of Shanxi , , , ",
+          "name": "Jing Zhang"
+        },
+        {
+          "affiliation": "Department of Hematology, Children’s Hospital of Shanxi, Women Health Center of Shanxi , , , ",
+          "name": "Yanli Chen"
+        },
+        {
+          "affiliation": "Department of Hematology, Children’s Hospital of Shanxi, Women Health Center of Shanxi , , , ",
+          "name": "Hongyu Shi"
+        },
+        {
+          "affiliation": "Department of Hematology, Children’s Hospital of Shanxi, Women Health Center of Shanxi , , , ",
+          "name": "Haiyan Lu"
+        }
+      ],
+      "doi": "",
+      "epmcId": "PMC13668529",
+      "epmcSource": "PMC",
+      "fullTextIds": [
+        "PMC13668529"
+      ],
+      "fullTextUrls": [
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "html",
+          "site": "PubMedCentral",
+          "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC13668529/?tool=EBI"
+        },
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "pdf",
+          "site": "PubMedCentral",
+          "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC13668529/pdf/?tool=EBI"
+        },
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "html",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13668529"
+        },
+        {
+          "availability": "Free",
+          "availabilityCode": "F",
+          "documentStyle": "pdf",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13668529?pdf=render"
+        }
+      ],
+      "hasFreeFullText": true,
+      "hasPDF": true,
+      "inEPMC": true,
+      "isOpenAccess": true,
+      "journal": "Frontiers in cellular and infection microbiology",
+      "pmcid": "PMC13668529",
+      "pmid": "",
+      "source": "Europe PMC",
+      "sourceCode": "PMC",
+      "title": "Transcriptomic evidence of an IFN-gamma-associated inflammatory state in active visceral leishmaniasis: an exploratory comparison with pediatric HLH",
+      "url": "https://europepmc.org/article/PMC/PMC13668529",
+      "year": ""
+    },
+    {
+      "abstract": "<h4>Background/aim</h4>Macrophages are key regulators of innate and adaptive immune responses through antigen presentation and the production of inflammatory mediators and growth factors. Imbalances in the activation and inhibition of pro-inflammatory type 1-like macrophages (M1) and anti-inflammatory type 2-like macrophages (M2) are closely associated with various autoimmune and chronic inflammatory diseases, underscoring the need for targeted therapeutic approaches. Numerous studies have shown that sulfated polysaccharides from marine algae, especially fucoidans from brown algae, exhibit a wide range of anti-inflammatory activities. This study aims to investigate the anti-inflammatory mode of action of algae-derived fucoidans in monocyte-derived macrophages and to identify the key regulatory proteins and inflammatory mediators involved.<h4>Materials and methods</h4>We applied data-independent mass spectrometry to comprehensively evaluate protein profiles of monocyte-derived M1/M2-like macrophages under the influence of sulfated polysaccharides from different algae species, namely fucoidans from the brown algae <i>Saccharina latissima</i>, <i>Fucus evanescens</i>, and <i>Laminaria digitata</i>, as well as the sulfated xylogalactan from the red alga <i>Delesseria sanguinea</i>. Furthermore, a series of gradually depolymerized fractions of the fucoidan from <i>Saccharina latissima</i> was investigated to elucidate the impact of molecular weight (MW) on protein expression levels and cytokine secretion patterns using membrane-based cytokine arrays and ELISA measurements.<h4>Results</h4>Among the tested sulfated polysaccharides, especially the fucoidan from <i>Saccharina latissima</i> showed anti-inflammatory effects. They significantly reduced expression levels of pro-inflammatory tryptophanyl-tRNA synthetase (WARS1), the cytokines interferon gamma-induced protein 10 (IP-10, syn. CXCL10) and macrophage migration inhibitory factor (MIF), as well as urokinase-type plasminogen activator receptor (uPAR) in pro-inflammatory M1-like macrophages, whereby their effects turned out to be independent of the MW.<h4>Conclusion</h4>Our study provides novel insights into the anti-inflammatory mode of action of fucoidan from <i>Saccharina latissimima</i> on monocyte-derived macrophages. Further <i>in vitro</i> and <i>in vivo</i> studies are required to better understand the underlying molecular pathways, the associated mechanism and to evaluate potential medical applications.",
+      "authorFullNames": [
+        "Jasmin Ostermann",
+        "Timo Gemoll",
+        "Tabea Schnüttgen",
+        "Marie-Theres Tischhöfer",
+        "Kirstin Plötze-Martin",
+        "Jonas Fleckner",
+        "Karl-Ludwig Bruchhage",
+        "Susanne Alban",
+        "Ralph Pries"
+      ],
+      "authors": "Ostermann J, Gemoll T, Schnüttgen T, Tischhöfer MT, Plötze-Martin K, Fleckner J, Bruchhage KL, Alban S, Pries R.",
+      "authorsWithAffiliations": [
+        {
+          "affiliation": "Section for Translational Surgical Oncology and Biobanking, Department of Surgery, University of Luebeck, Luebeck, Kiel, Germany.",
+          "name": "Jasmin Ostermann"
+        },
+        {
+          "affiliation": "Section for Translational Surgical Oncology and Biobanking, Department of Surgery, University of Luebeck, Luebeck, Kiel, Germany.",
+          "name": "Timo Gemoll"
+        },
+        {
+          "affiliation": "Department of Otorhinolaryngology, University of Luebeck, Luebeck, Kiel, Germany.",
+          "name": "Tabea Schnüttgen"
+        },
+        {
+          "affiliation": "Pharmaceutical Institute, University of Kiel, Luebeck, Kiel, Germany.",
+          "name": "Marie-Theres Tischhöfer"
+        },
+        {
+          "affiliation": "Department of Otorhinolaryngology, University of Luebeck, Luebeck, Kiel, Germany.",
+          "name": "Kirstin Plötze-Martin"
+        },
+        {
+          "affiliation": "Department of Otorhinolaryngology, University of Luebeck, Luebeck, Kiel, Germany.",
+          "name": "Jonas Fleckner"
+        },
+        {
+          "affiliation": "Department of Otorhinolaryngology, University of Luebeck, Luebeck, Kiel, Germany.",
+          "name": "Karl-Ludwig Bruchhage"
+        },
+        {
+          "affiliation": "Pharmaceutical Institute, University of Kiel, Luebeck, Kiel, Germany.",
+          "name": "Susanne Alban"
+        },
+        {
+          "affiliation": "Department of Otorhinolaryngology, University of Luebeck, Luebeck, Kiel, Germany.",
+          "name": "Ralph Pries"
+        }
+      ],
+      "doi": "10.3389/fimmu.2026.1868665",
+      "epmcId": "42756851",
+      "epmcSource": "MED",
+      "evidence_section_types": [
+        "discussion"
+      ],
+      "evidence_sections": [
+        "Discussion"
+      ],
+      "evidence_sentences_full_text": [
+        "Cytokine release experiments indeed confirmed that the native fucoidan from Saccharina latissma as well as degraded fractions with up to 100 times lower MW caused significantly reduced secretion levels of interferon gamma-induced protein 10 (IP-10/CXCL10), macrophage migration inhibitory factor (MIF), and urokinase-type plasminogen activator receptor (uPAR), all of which are known as IFN-γ inducible pro-inflammatory cytokines (59, 60)."
+      ],
+      "fullTextIds": [
+        "PMC13583666"
+      ],
+      "fullTextUrls": [
+        {
+          "availability": "Subscription required",
+          "availabilityCode": "S",
+          "documentStyle": "doi",
+          "site": "DOI",
+          "url": "https://doi.org/10.3389/fimmu.2026.1868665"
+        },
+        {
+          "availability": "Open access",
+          "availabilityCode": "OA",
+          "documentStyle": "html",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13583666"
+        },
+        {
+          "availability": "Open access",
+          "availabilityCode": "OA",
+          "documentStyle": "pdf",
+          "site": "Europe_PMC",
+          "url": "https://europepmc.org/articles/PMC13583666?pdf=render"
+        }
+      ],
+      "hasFreeFullText": true,
+      "hasPDF": true,
+      "inEPMC": true,
+      "isOpenAccess": true,
+      "journal": "Frontiers in immunology",
+      "pmcid": "PMC13583666",
+      "pmid": "42756851",
+      "source": "Europe PMC",
+      "sourceCode": "MED",
+      "title": "Decreased expression of immune activator WARS1 and other pro-inflammatory mediators in type 1-like macrophages as an associated mode of action in response to fucoidan from marine brown algae.",
+      "url": "https://europepmc.org/article/MED/42756851",
+      "year": "2026"
+    }
+  ]
+}

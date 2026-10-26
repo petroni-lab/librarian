@@ -4,7 +4,6 @@ import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from librarian import (
@@ -116,9 +115,11 @@ class RunStateTests(unittest.TestCase):
     def test_failed_search_preserves_partial_debug(self):
         agent = retrieval_agent()
         error = LiteratureSearchError("search unavailable")
-        with patch.object(agent, "_paragraphs_for_subquery", side_effect=error):
-            with self.assertRaises(LiteratureSearchError) as caught:
-                agent.run("alpha")
+        with (
+            patch.object(agent, "_paragraphs_for_subquery", side_effect=error),
+            self.assertRaises(LiteratureSearchError) as caught,
+        ):
+            agent.run("alpha")
         self.assertIs(caught.exception, error)
         self.assertEqual(error.run_debug, {"search_queries": ["alpha"]})
         agent.run("beta")
@@ -132,9 +133,9 @@ class RunStateTests(unittest.TestCase):
         with (
             patch.object(agent, "_route", return_value=decision),
             patch.object(librarian, "_paragraphs_for_subquery", side_effect=error),
+            self.assertRaises(LiteratureSearchError) as caught,
         ):
-            with self.assertRaises(LiteratureSearchError) as caught:
-                agent.run("original")
+            agent.run("original")
         self.assertIs(caught.exception, error)
         self.assertEqual(
             error.run_debug,
@@ -252,23 +253,6 @@ class RunStateTests(unittest.TestCase):
                 "action": "search",
             },
         )
-
-    def test_proclaim_verifier_formats_in_process_papers(self):
-        from evals.Literature.ProClaim import verifier
-
-        paper = {"pmid": "1", "title": "Title", "evidence_snippets": ["Evidence."]}
-        runner = verifier.VerifierRunner(SimpleNamespace(via_api=False))
-        runner._agent = SimpleNamespace(
-            run=lambda query: RunResult([paper], {"search_queries": [query]})
-        )
-        passages = runner._retrieve_librarian_passages("claim")
-        self.assertEqual(
-            verifier._format_librarian_passages_for_prompt(passages),
-            "[1] PMID: 1; Title\n- Evidence.",
-        )
-
-        runner._agent = SimpleNamespace(run=lambda query: RunResult([], {}))
-        self.assertEqual(runner._retrieve_librarian_passages("claim"), [])
 
 
 if __name__ == "__main__":

@@ -586,15 +586,17 @@ librarian/
   progress.py                  stdlib terminal spinner for live progress
   prompts/                     query planner, relevance-judge, router, scope, summarizer prompts
   query_validation/            deterministic Europe PMC query validation
+tests/                         pytest suite; tests/fixtures/ holds recorded runs replayed offline
 evals/Literature/              evaluation harness: one locked environment per benchmark suite
 assets/                        README images and install GIFs
 ```
 
 </details>
 
-Library and skill regression tests are maintained by downstream consumers and
-run against pinned Librarian revisions, including native Windows launcher and
-macOS sandbox checks.
+Pipeline regression tests (the recorded run, paragraph merging, judge requests
+and the rest of `tests/`) live in this repository; see [Testing](#-testing).
+Skill and launcher tests (native Windows PowerShell, macOS sandbox) are
+maintained by downstream consumers and run against pinned Librarian revisions.
 
 ---
 
@@ -618,6 +620,39 @@ Worth knowing before you plug Librarian into a pipeline:
   times slower. Legacy `.doc` files are converted with `antiword` (Linux:
   `apt install antiword`) or macOS's built-in `textutil`; with neither on the `PATH`
   they contribute no text, and the only sign is a debug log.
+
+---
+
+## 🧪 Testing
+
+```bash
+uv run --extra supplementary pytest tests
+```
+
+Everything runs offline: no LLM endpoint, network access or credentials. The
+`supplementary` extra is needed by the supplementary-extraction tests.
+
+`tests/test_recorded_run.py` replays real Librarian runs recorded under
+`tests/fixtures/integration/`. It hands each run's recorded LLM answers and
+Europe PMC results back to the agent through its `llm_client` and
+`literature_source` arguments and checks that every stage lands where it
+landed when recorded. A replay catches regressions; it does not establish that
+the recorded output was correct.
+
+Re-record a case after any intended change to the prompts, sub-query planning,
+ranking, chunking, paragraph merging, the judge, or `LibrarianRuntimeConfig`'s
+fields, in the same pull request:
+
+```bash
+uv run python tests/record_fixture.py --overwrite \
+  --case macrophage_activation \
+  --query "How does interferon-gamma activate inflammatory gene expression in human macrophages?"
+```
+
+Recording needs a reachable OpenAI-compatible endpoint (`--llm-base-url`,
+default `http://127.0.0.1:8000/v1`; `LLM_API_KEY` if it needs a key) and
+Europe PMC. See [`tests/RECORDED_FIXTURE_FLOW.md`](tests/RECORDED_FIXTURE_FLOW.md)
+for how recording and replay work.
 
 ---
 
