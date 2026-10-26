@@ -1,0 +1,26 @@
+# Runs the test suite on every pull request and every push to main. Fully offline:
+# recorded runs are replayed from tests/fixtures/, so no LLM endpoint, Europe PMC
+# access or secrets are needed.
+name: Tests
+on:
+  pull_request:
+  push:
+    branches: [main]
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true # a newer push to the same branch supersedes this run
+permissions: {}
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout only
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.11" # the version the dev environment and fixtures use
+      # The supplementary extra is needed by the supplementary-extraction tests;
+      # the dev group (pytest) is included by default. --locked fails on a stale uv.lock.
+      - run: uv sync --locked --extra supplementary
+      - run: uv run pytest tests
