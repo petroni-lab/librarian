@@ -311,6 +311,10 @@ def _bm25_rank(query: str, paragraphs: List[str]) -> List[Tuple[int, float]]:
     Query and corpus are tokenized with the SAME stemmer (see
     ``_BM25_STEMMER``) so stemmed query terms match stemmed corpus terms;
     stemming both is required or the two token spaces never line up.
+
+    Equal scores are in document order. ``bm25s`` returns ties in reverse
+    index order, so without this an all-zero ranking (a sub-query sharing no
+    term with the paper) would keep a paper's *last* records, not its first.
     """
     if not paragraphs:
         return []
@@ -326,7 +330,8 @@ def _bm25_rank(query: str, paragraphs: List[str]) -> List[Tuple[int, float]]:
     idxs, scores = retriever.retrieve(
         query_tokens, k=len(paragraphs), show_progress=False
     )
-    return [(int(idxs[0][i]), float(scores[0][i])) for i in range(len(idxs[0]))]
+    ranked = [(int(idxs[0][i]), float(scores[0][i])) for i in range(len(idxs[0]))]
+    return sorted(ranked, key=lambda pair: (-pair[1], pair[0]))
 
 
 # Paper metadata mixed into a paragraph's BM25 document (scoring only — never
@@ -367,7 +372,8 @@ def _top_supplementary(
     adjacent. Each is a copy tagged with ``supplementary_index``, its position
     among all the paper's records, so its paragraph coordinates are the same
     whichever sub-query selected it; the outcome itself (shared, possibly
-    cached) is not modified.
+    cached) is not modified. When no record matches the sub-query, the first
+    *k* are kept (``_bm25_rank`` orders ties by position).
     """
     records = supplementary.records
     keep: Iterable[int] = range(len(records))
