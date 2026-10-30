@@ -5,7 +5,7 @@ evidence passages from Europe PMC, and ``SynthesisAgent`` writes a cited answer
 over those passages.
 """
 
-from librarian.agent import LibrarianAgent, RunResult
+from librarian.agent import LibrarianAgent, RunResult, SearchPlan
 from librarian.config import LibrarianRuntimeConfig, load_runtime_config
 from librarian.scope_port import ZeroShotScopeGuard
 from librarian.synthesis import SynthesisAgent, SynthesisResult
@@ -14,6 +14,7 @@ __all__ = [
     "LibrarianAgent",
     "LibrarianRuntimeConfig",
     "RunResult",
+    "SearchPlan",
     "SynthesisAgent",
     "SynthesisResult",
     "ZeroShotScopeGuard",

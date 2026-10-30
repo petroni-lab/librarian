@@ -341,24 +341,27 @@ class StageCapture:
         merge_selected = librarian_module._merge_selected_paragraphs
         relevance_filter = agent._relevance_filter
 
-        def capture_generated(query: str, *args: Any, **kwargs: Any) -> list[str]:
+        def capture_generated(query: str, *args: Any, **kwargs: Any) -> Any:
             """Stage 1: the planner's parsed, deduplicated, capped sub-queries."""
-            self.generated_queries = generate_queries(query, *args, **kwargs)
-            return self.generated_queries
+            plan = generate_queries(query, *args, **kwargs)
+            self.generated_queries = plan.queries
+            return plan
 
         def capture_validated(queries: list[str]) -> list[str]:
             """Stage 1: the sub-queries that survived Europe PMC syntax validation."""
             self.validated_queries = validate_queries(queries)
             return self.validated_queries
 
-        def capture_subquery(subquery: str) -> list[dict[str, Any]]:
+        def capture_subquery(
+            subquery: str, ranking_terms: Any = ()
+        ) -> list[dict[str, Any]]:
             """Stage 2: one sub-query's top-k paragraphs, rendered before Stage 3.
 
             Rendered here rather than after the run because Stage 3 later writes
             ``evidence_sentences_full_text`` onto the very paper dicts these
             records point at, which would otherwise leak into a Stage 2 fixture.
             """
-            paragraphs = paragraphs_for_subquery(subquery)
+            paragraphs = paragraphs_for_subquery(subquery, ranking_terms)
             lines = [paragraph_line(paragraph) for paragraph in paragraphs]
             with lock:
                 self.subquery_paragraphs.append(

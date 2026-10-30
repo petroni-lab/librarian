@@ -15,8 +15,8 @@ run is one arm, chosen with ``--arm``:
 Questions whose paper has no PMC id in Europe PMC are skipped by every arm. As
 upstream, the question is prefixed with the paper title and DOI, and the same
 text is the librarian's query. ``--queries-from <supp run dir>`` makes the main
-arm reuse the supp arm's Stage-1 sub-queries, so the two differ only in the
-supplementary files. The relevance filter runs at temperature 0 for the same
+arm reuse the supp arm's Stage-1 sub-queries and ranking terms, so the two
+differ only in the supplementary files. The relevance filter runs at temperature 0 for the same
 reason.
 
 Choices are shuffled, prompted, parsed and scored as in ``LabBench``. Each run
@@ -59,7 +59,7 @@ from evals.Literature.LabBench.labbench_compat import (  # noqa: E402
     randomize_choices,
     score_prediction,
 )
-from librarian.agent import LibrarianAgent  # noqa: E402
+from librarian.agent import LibrarianAgent, SearchPlan  # noqa: E402
 from librarian.config import load_runtime_config  # noqa: E402
 from librarian.jats import (  # noqa: E402
     extract_body_paragraphs,
@@ -258,7 +258,7 @@ class InstrumentedAgent(LibrarianAgent):
         self._stats_lock = threading.Lock()
         self.begin({}, None)
 
-    def begin(self, question: dict[str, Any], fixed_queries: list[str] | None) -> None:
+    def begin(self, question: dict[str, Any], fixed_queries: SearchPlan | None) -> None:
         """Reset the per-run counters for ``question``."""
         self.question = question
         self.fixed_queries = fixed_queries
@@ -296,7 +296,7 @@ class InstrumentedAgent(LibrarianAgent):
         start = time.perf_counter()
         try:
             if self.fixed_queries:
-                return list(self.fixed_queries)
+                return self.fixed_queries
             return super()._generate_queries(query, previous_evidences)
         finally:
             self.stage1_seconds = time.perf_counter() - start
@@ -308,8 +308,8 @@ class InstrumentedAgent(LibrarianAgent):
         self._note("pool", paper, records)
         return records
 
-    def _paragraphs_for_subquery(self, subquery):
-        top = super()._paragraphs_for_subquery(subquery)
+    def _paragraphs_for_subquery(self, subquery, ranking_terms=()):
+        top = super()._paragraphs_for_subquery(subquery, ranking_terms)
         by_paper: dict[int, list[dict]] = defaultdict(list)
         for record in top:
             by_paper[id(record["paper"])].append(record)
@@ -360,6 +360,7 @@ def retrieval_stats(agent: InstrumentedAgent, budget: int) -> dict[str, Any]:
     seconds = dict(agent._tracer.seconds)
     return {
         "search_queries": debug.get("search_queries", []),
+        "ranking_terms": debug.get("ranking_terms", []),
         "stage1_seconds": round(agent.stage1_seconds, 3),
         "run_seconds": round(seconds.get("librarian.run", 0.0), 3),
         "span_seconds": {k: round(v, 3) for k, v in seconds.items()},
@@ -485,7 +486,9 @@ def run(args: argparse.Namespace) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     predictions = out_dir / "predictions.jsonl"
     args.fixed_queries = {
-        r["id"]: r["retrieval"]["search_queries"]
+        r["id"]: SearchPlan(
+            r["retrieval"]["search_queries"], r["retrieval"].get("ranking_terms", [])
+        )
         for r in _read_rows(Path(args.queries_from) / "predictions.jsonl")
         if r.get("retrieval") and not r.get("error")
     } if args.queries_from else {}
@@ -551,7 +554,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "Supplementary spans come last in a paper's evidence, so LabBench's 1500 "
         "cuts them first.",
     )
-    parser.add_argument("--queries-from", help="Run dir whose Stage-1 sub-queries to replay.")
+    parser.add_argument("--queries-from", help="Run dir whose Stage-1 sub-queries and ranking terms to replay.")
     parser.add_argument(
         "--pdf-extractor",
         choices=("pypdf", "docling"),

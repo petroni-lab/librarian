@@ -281,6 +281,31 @@ Precision — structured queries:
 
 ---
 
+## RANKING TERMS
+
+Besides the queries, list 3–8 `ranking_terms`. They are NEVER searched: they rank the
+paragraphs and supplementary table rows of the papers your queries find, so that the one
+passage holding the answer is kept. Answers often sit in a data table whose wording differs
+from the question: the question says "never smokers", the table's row says `Smoke | No`.
+
+Write the words such a table or passage would use for the ONE attribute the question asks
+about:
+- its column or row labels and their usual variants, e.g. for "How many patients were
+  HPV-positive?": `HPV status`, `HPV positive`, `HPV negative`, `p16`, `HPV`
+- the category values the answer is counted in, in short and long forms
+
+Do NOT include:
+- generic study words that match every table: `n`, `number`, `patients`, `cohort`,
+  `sample size`, `total`, `characteristics`, `baseline`, `table`
+- the disease, dataset, method or paper names already in your queries (`TCGA`, `GEO`,
+  `lung adenocarcinoma`, `lncRNA`) — they match the whole paper, not the answer
+- Europe PMC syntax (field names, quotes, AND/OR)
+
+Plain words or short phrases only. If the question asks about no specific attribute,
+return an empty array.
+
+---
+
 ## CONVERSATION
 
 Here is the conversation between the user and the assistant, in order of oldest to newest:
@@ -293,5 +318,6 @@ Here is the conversation between the user and the assistant, in order of oldest 
 {additional_context}
 </additional_context>
 
-Respond with a JSON object containing a "queries" array ONLY. No other text.
-Example format: {"queries": ["<query>", "<query>", "..."]}
+Respond with a JSON object containing a "queries" array and a "ranking_terms" array ONLY.
+No other text.
+Example format: {"queries": ["<query>", "<query>", "..."], "ranking_terms": ["<term>", "<term>", "..."]}
