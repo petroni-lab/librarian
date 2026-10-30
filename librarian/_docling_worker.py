@@ -30,11 +30,38 @@ def payload(document) -> dict:
     return {"texts": texts, "tables": tables}
 
 
+def cuda_unusable() -> bool:
+    """Whether torch sees a GPU it cannot run kernels on.
+
+    A torch build without kernels for the GPU's compute capability (e.g. a CUDA
+    13 wheel on a Tesla P40) still reports ``cuda.is_available()``, so Docling's
+    ``auto`` device picks it and every conversion fails with "no kernel image is
+    available". Running one tiny kernel is the only reliable check.
+    """
+    try:
+        import torch
+    except ImportError:
+        return False
+    if not torch.cuda.is_available():
+        return False
+    try:
+        torch.zeros(1, device="cuda").add_(1)
+        torch.cuda.synchronize()
+    except Exception:
+        return True
+    return False
+
+
 def main(argv) -> None:
     source, max_pages, output = argv[1], int(argv[2]), argv[3]
+    from docling.datamodel.base_models import InputFormat
     from docling.document_converter import DocumentConverter
 
-    document = DocumentConverter().convert(source, page_range=(1, max_pages)).document
+    converter = DocumentConverter()
+    if cuda_unusable():
+        options = converter.format_to_options[InputFormat.PDF].pipeline_options
+        options.accelerator_options.device = "cpu"
+    document = converter.convert(source, page_range=(1, max_pages)).document
     with open(output, "w", encoding="utf-8") as handle:
         json.dump(payload(document), handle)
 

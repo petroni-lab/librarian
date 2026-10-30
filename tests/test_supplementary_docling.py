@@ -127,6 +127,79 @@ def test_the_worker_maps_a_docling_document_to_texts_and_table_rows():
     }
 
 
+def _torch(available=True, kernel_error=None):
+    def zeros(*_args, **_kwargs):
+        if kernel_error is not None:
+            raise kernel_error
+        return types.SimpleNamespace(add_=lambda _value: None)
+
+    cuda = types.SimpleNamespace(
+        is_available=lambda: available, synchronize=lambda: None
+    )
+    return mock.patch.dict(
+        sys.modules, {"torch": types.SimpleNamespace(cuda=cuda, zeros=zeros)}
+    )
+
+
+def test_cuda_is_unusable_only_when_a_kernel_fails_on_the_gpu():
+    no_kernel = RuntimeError("CUDA error: no kernel image is available")
+    with _torch(kernel_error=no_kernel):
+        assert _docling_worker.cuda_unusable()
+    with _torch():
+        assert not _docling_worker.cuda_unusable()
+    with _torch(available=False, kernel_error=no_kernel):
+        assert not _docling_worker.cuda_unusable()
+    with mock.patch.dict(sys.modules, {"torch": None}):
+        assert not _docling_worker.cuda_unusable()
+
+
+def _fake_docling(converted):
+    """docling modules whose converter records its PDF device at convert time."""
+    pdf = object()
+
+    class Converter:
+        def __init__(self):
+            accelerator = types.SimpleNamespace(device="auto")
+            options = types.SimpleNamespace(accelerator_options=accelerator)
+            self.format_to_options = {
+                pdf: types.SimpleNamespace(pipeline_options=options)
+            }
+
+        def convert(self, source, page_range):
+            options = self.format_to_options[pdf].pipeline_options
+            converted.append(options.accelerator_options.device)
+            return types.SimpleNamespace(
+                document=types.SimpleNamespace(texts=[], tables=[])
+            )
+
+    base_models = types.ModuleType("docling.datamodel.base_models")
+    base_models.InputFormat = types.SimpleNamespace(PDF=pdf)
+    document_converter = types.ModuleType("docling.document_converter")
+    document_converter.DocumentConverter = Converter
+    return mock.patch.dict(
+        sys.modules,
+        {
+            "docling": types.ModuleType("docling"),
+            "docling.datamodel": types.ModuleType("docling.datamodel"),
+            "docling.datamodel.base_models": base_models,
+            "docling.document_converter": document_converter,
+        },
+    )
+
+
+def test_the_worker_converts_on_cpu_when_the_gpu_cannot_run_kernels():
+    converted = []
+    with tempfile.TemporaryDirectory() as folder, _fake_docling(converted):
+        output = os.path.join(folder, "out.json")
+        for unusable in (True, False):
+            with mock.patch.object(
+                _docling_worker, "cuda_unusable", return_value=unusable
+            ):
+                _docling_worker.main(["worker", "in.pdf", "20", output])
+        assert json.loads(Path(output).read_text()) == {"texts": [], "tables": []}
+    assert converted == ["cpu", "auto"]
+
+
 def test_a_crashing_worker_fails_only_its_file(caplog):
     failed = []
     with (
