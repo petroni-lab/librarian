@@ -5,6 +5,8 @@ uv run --extra supplementary pytest tests
 
 import json
 
+import pytest
+
 from librarian import LibrarianAgent, SearchPlan, agent, load_runtime_config
 
 
@@ -153,7 +155,7 @@ def _competing_paper(n):
     return abstract, body
 
 
-def _stage2(ranking_terms):
+def _stage2(ranking_terms, competing_paper=_competing_paper):
     """The real Stage 2 for one sub-query: (cut-1 indices kept, cut-2 texts kept)."""
     from dataclasses import replace
 
@@ -182,7 +184,7 @@ def _stage2(ranking_terms):
     )
     for n in range(30):
         pmcid = f"PMC9{n:06d}"
-        abstract, body = _competing_paper(n)
+        abstract, body = competing_paper(n)
         papers.append(
             {
                 "pmid": str(n),
@@ -245,3 +247,18 @@ def test_q23_row_survives_both_cuts_with_ranking_terms_unchanged():
     assert kept, "the Table S1 row must reach Stage 3"
     # The judge is shown the record as extracted: the terms only rank it.
     assert all(cell in kept[0] for cell in ("23 (18.1%)", "33 (7.5%)", "Smoke ; No"))
+
+
+# Known limit, reproduced in the #97 review and seen live in q23 run 3 (broad
+# sub-query, rank 28 of 5072): when every competing paper's body discusses
+# smoking, those passages match both channels and outvote the row, which matches
+# the terms only. It survives the per-paper cut but not the top 16. Strict, so
+# the test fails once a ranking change fixes this, and must then become a plain
+# assertion.
+@pytest.mark.xfail(
+    strict=True, reason="#91: the row loses the top-16 cut to passages matching both channels"
+)
+def test_q23_row_survives_the_second_cut_when_every_competitor_discusses_smoking():
+    cut1, cut2 = _stage2(_TERMS, lambda n: _competing_paper(n * 10))
+    assert _ROW_INDEX in cut1
+    assert any("123 (50.0%)" in text for text in cut2)
