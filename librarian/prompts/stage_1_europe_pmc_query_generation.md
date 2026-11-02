@@ -286,7 +286,7 @@ Precision — structured queries:
 Besides the queries, list 3–8 `ranking_terms`. They are NEVER searched: they rank the
 paragraphs and supplementary table rows of the papers your queries find, so that the one
 passage holding the answer is kept. Answers often sit in a data table whose wording differs
-from the question: the question says "never smokers", the table's row says `Smoke | No`.
+from the question: the question says "women", the table's row says `Sex | F`.
 
 Write the words such a table or passage would use for the ONE attribute the question asks
 about:
@@ -297,8 +297,8 @@ about:
 Do NOT include:
 - generic study words that match every table: `n`, `number`, `patients`, `cohort`,
   `sample size`, `total`, `characteristics`, `baseline`, `table`
-- the disease, dataset, method or paper names already in your queries (`TCGA`, `GEO`,
-  `lung adenocarcinoma`, `lncRNA`) — they match the whole paper, not the answer
+- the disease, dataset, method or paper names already in your queries (`UK Biobank`,
+  `type 2 diabetes`, `RNA-seq`) — they match the whole paper, not the answer
 - Europe PMC syntax (field names, quotes, AND/OR)
 
 Plain words or short phrases only. If the question asks about no specific attribute,
