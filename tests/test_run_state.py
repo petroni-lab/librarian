@@ -36,7 +36,11 @@ def retrieval_agent(barrier=None):
             return []
         return [
             {
-                "paper": {"pmid": f"{query}-{i}", "title": query},
+                "paper": {
+                    "pmid": f"{query}-{i}",
+                    "title": query,
+                    "fulltext_status": "extracted",
+                },
                 "text": f"Evidence for {query}.",
                 "source_paragraph_index": 0,
                 "word_start": 0,

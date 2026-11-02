@@ -15,6 +15,8 @@
       "Thus, for apoptosis-resistant THP-1 cells in an in vitro model of a pro-inflammatory microenvironment, it is characteristic to have positive enrichment of interferon-induced gene sets, increased expression of the IFNG gene, phosphorylation of the transcription factor STAT1, and accumulation of extracellular forms of interferon-induced chemokines, which may be associated with the activation of interferon-associated signaling pathways, most likely mediated by interferon gamma.",
       "of STAT pathway activation is observed in THP-1 HDC cells, presumably mediated by IFN-γ [53,136,142]. We suggest that in the case of THP-1 HDC cells, Stat1 phosphorylation leads to the formation of a Stat1 homodimer (GAF), which binds to gamma-activated site (GAS) sequences, activating ISG transcription [52,143]."
     ],
+    "fulltext_note": "",
+    "fulltext_status": "extracted",
     "has_fulltext": true,
     "journal": "Biology",
     "paper_id": "42939477",
@@ -38,6 +40,8 @@
       "Although WARS1 secretion has not been formally associated with IFN-γ in human macrophages, there is clear evidence of it being an IFN-γ target gene in other cells (57) and WARS1 expression levels have been shown to correlate with transcription factors involved in IFN-γ signaling such as STAT1 (58). This also accords with the GSEA using MSigDB Hallmark that showed a significant downregulation of pro-inflammatory pathways in M1-like macrophages in response to fucoidan, in particular the interferon gamma and interferon alpha responses.",
       "Cytokine release experiments indeed confirmed that the native fucoidan from Saccharina latissma as well as degraded fractions with up to 100 times lower MW caused significantly reduced secretion levels of interferon gamma-induced protein 10 (IP-10/CXCL10), macrophage migration inhibitory factor (MIF), and urokinase-type plasminogen activator receptor (uPAR), all of which are known as IFN-γ inducible pro-inflammatory cytokines (59, 60)."
     ],
+    "fulltext_note": "",
+    "fulltext_status": "extracted",
     "has_fulltext": true,
     "journal": "Frontiers in immunology",
     "paper_id": "42756851",
