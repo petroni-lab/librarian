@@ -34,7 +34,7 @@ from dotenv import load_dotenv
 from librarian import LibrarianAgent, SynthesisAgent, load_runtime_config
 from librarian.citations import citation_keys
 from librarian.config import LibrarianRuntimeConfig, load_research_loop_config
-from librarian.llm_client import create_llm_client
+from librarian.llm_client import ContentOnlyLLMClient
 from librarian.progress import Spinner
 from librarian.research_loop import (
     DEFAULT_LOOP_PROMPT_PATH,
@@ -274,7 +274,7 @@ def _run_loop(
     prompt_path = args.loop_prompt or DEFAULT_LOOP_PROMPT_PATH
     template = prompt_path.read_text(encoding="utf-8")
     retrievers = build_retrievers(config, loop_config, verbose=not interactive)
-    planner = create_llm_client(model_name=config.default_model_name)
+    planner = ContentOnlyLLMClient(model_name=config.default_model_name)
     with Spinner() as spinner:
         loop = ResearchLoop(
             retrievers, planner, template, loop_config, on_progress=spinner.update

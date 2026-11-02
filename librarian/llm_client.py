@@ -93,8 +93,8 @@ class LLMClient:
         }
 
     @staticmethod
-    def _extract_content(choice: dict) -> str:
-        """Pull the assistant text out of a choice, tolerating content-block formats."""
+    def _message_content(choice: dict) -> str:
+        """The message's ``content`` alone, tolerating content-block formats."""
         message = choice.get("message") or {}
         content = message.get("content", "")
         if isinstance(content, list):
@@ -107,6 +107,13 @@ class LLMClient:
             content = "\n".join(p for p in parts if p)
         elif content is None:
             content = ""
+        return str(content)
+
+    @staticmethod
+    def _extract_content(choice: dict) -> str:
+        """Pull the assistant text out of a choice, tolerating content-block formats."""
+        message = choice.get("message") or {}
+        content = LLMClient._message_content(choice)
         if not content:
             # Some reasoning backends put the answer in a different field.
             content = (
@@ -218,6 +225,19 @@ class LLMClient:
                 pass
         wait = min(2**attempt, 120)
         return max(1.0, wait + wait * 0.25 * (2 * random.random() - 1))
+
+
+class ContentOnlyLLMClient(LLMClient):
+    """An ``LLMClient`` that returns the message ``content`` alone.
+
+    For callers that parse the reply as a decision (the research-loop planner):
+    a reasoning model cut off by the token cap returns empty content, and the
+    base client's fallback to ``reasoning_content`` would hand back its trace,
+    where a draft JSON could pass for the answer. Here that reply stays empty
+    and fails parsing.
+    """
+
+    _extract_content = staticmethod(LLMClient._message_content)
 
 
 def create_llm_client(

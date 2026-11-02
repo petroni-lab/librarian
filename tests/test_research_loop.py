@@ -10,6 +10,7 @@ import pytest
 
 from librarian.agent import RunResult
 from librarian.config import load_research_loop_config, load_runtime_config
+from librarian.llm_client import ContentOnlyLLMClient, LLMClient
 from librarian.research_loop import DEFAULT_LOOP_PROMPT_PATH, ResearchLoop
 
 # The shipped prompt's placeholders, with a marker between the two evidence blocks.
@@ -134,6 +135,13 @@ def test_invalid_replies_are_retried_twice_then_raise():
     loop, _ = _loop({"seed": ["1"]}, [over_budget] * 3, max_context_queries=1)
     with pytest.raises(ValueError, match="budget"):
         loop.run("seed")
+
+
+def test_planner_client_ignores_reasoning_content():
+    choice = {"message": {"content": "", "reasoning_content": '{"draft": 1}'}}
+    # Called on instances, as chat_completion does.
+    assert LLMClient(model_name="m")._extract_content(choice) == '{"draft": 1}'
+    assert ContentOnlyLLMClient(model_name="m")._extract_content(choice) == ""
 
 
 def test_failed_retrieval_is_recorded_and_failed_seed_raises():
