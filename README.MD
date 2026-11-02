@@ -246,13 +246,12 @@ the ranked passages and raw JSON instead). `.env` is loaded automatically.
 uv run main.py "does metformin extend lifespan in mammals?"
 ```
 
-**Research loop** — for questions one retrieval cannot cover (reconstructing a
-pathway, mapping a mechanism), `--research-loop` runs
+**Research loop** — for questions one retrieval cannot cover, `--research-loop` runs
 [`research_loop.py`](librarian/research_loop.py) instead: the query seeds one
 retrieval, then each of five rounds lets an LLM planner select the useful papers of
 the latest *context* searches into a ledger and ask new questions of two kinds —
 *context* questions that explore the topic and *specific* questions about one
-claim or pair each — run as separate librarian retrievals with their own sizes. A
+precise point each — run as separate librarian retrievals with their own sizes. A
 final call reviews the last batch. It prints the selected context evidence plus
 every specific result (first 3 papers each), with no synthesis: what to extract
 from it is up to you. Budgets are the `[research_loop]` table in
@@ -262,7 +261,7 @@ from it is up to you. Budgets are the `[research_loop]` table in
 A loop runs dozens of retrievals, so expect tens of minutes.
 
 ```bash
-uv run main.py "How does EGF signal from its receptor to transcription?" --research-loop --save-json loop.json
+uv run main.py "How does the gut microbiome affect response to cancer immunotherapy?" --research-loop --save-json loop.json
 ```
 
 **Python:**

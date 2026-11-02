@@ -70,15 +70,15 @@ supplementary_pdf_extractor = "pypdf"
 # ── Research loop (librarian/research_loop.py) ──────────────────────────────
 # Read by load_research_loop_config(); LibrarianRuntimeConfig ignores this table.
 # It must stay last: every key after a [table] header belongs to that table.
-# The values are bio-agents' pathway-reconstruction budgets (evals/Pathway), the
-# workflow this loop was ported from; they were not tuned for other questions.
+# The values come from bio-agents' evaluation runs, where this loop was first
+# used; they have not been tuned on other questions.
 [research_loop]
 # Five rounds after the seed, then one selection-only review of the last batch.
 max_rounds = 5
 # Safety ceilings, not targets: the prompt asks for fewer when gaps run out.
 max_context_queries = 16
 max_specific_queries = 64
-# A specific question names its pair, so its first three papers carry the answer.
+# A specific question asks about one point, so its first three papers carry the answer.
 specific_max_papers = 3
 planner_temperature = 1.0
 # Reasoning models spend most of the budget thinking: at 32000 about a quarter
@@ -97,14 +97,14 @@ papers_per_subquery = 50
 paragraphs_per_subquery = 32
 paragraphs_per_judge_batch = 256
 
-# Context questions explore branches and architecture: several angles, a wide pool.
+# Context questions explore the topic: several angles, a wide pool.
 [research_loop.context]
 num_subqueries = 4
 papers_per_subquery = 50
 paragraphs_per_subquery = 24
 paragraphs_per_judge_batch = 96
 
-# Specific questions name one pair: the minimum three sub-queries cover synonyms.
+# Specific questions ask about one point: the minimum three sub-queries cover synonyms.
 [research_loop.specific]
 num_subqueries = 3
 papers_per_subquery = 30

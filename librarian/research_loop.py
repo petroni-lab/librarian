@@ -1,14 +1,13 @@
 """Research loop: iterative retrieval over a PMID ledger, without synthesis.
 
-Ported from bio-agents' pathway-reconstruction agent (``evals/Pathway``), whose
-behaviour it keeps:
+For questions one retrieval cannot cover:
 
 1. **Seed.** The first query gets one librarian run (``[research_loop.seed]``
    shape); all of its papers form the first unreviewed *context* batch.
 2. **Rounds 1..max_rounds.** One planner call reads the history and the latest
    batch, selects the useful papers of the latest context searches into the
    ledger, and plans *context* questions (explore the topic) and *specific*
-   questions (one claim or pair each) under independent ceilings. Both run in
+   questions (one precise point each) under independent ceilings. Both run in
    the same round, one librarian run per question, each type with its own
    retrieval shape. A specific result keeps only its first papers in the
    judge's ranking. A round that asks nothing still counts.
@@ -23,7 +22,7 @@ write from it is the caller's task.
 
 One librarian run per question rather than one run with many sub-queries is the
 point: each question gets its own relevance judge, so a specific question's
-evidence is about its own claim.
+evidence is about its own point.
 """
 
 from __future__ import annotations
