@@ -588,12 +588,24 @@ def answer_row(args: argparse.Namespace, q: dict[str, Any]) -> dict[str, Any]:
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
-def _command() -> list[str]:
-    """The command line, with any API key value masked."""
+def _command(api_key: str | None) -> list[str]:
+    """The command line, with *api_key* masked wherever it was passed.
+
+    Masks the parsed value rather than matching the flag, so ``--api-key KEY``,
+    ``--api-key=KEY`` and argparse's abbreviations (``--api KEY``) are all caught.
+    """
     argv = [sys.executable, *sys.argv]
-    return [
-        "***" if i and argv[i - 1] == "--api-key" else a for i, a in enumerate(argv)
-    ]
+    if not api_key:
+        return argv
+    masked = []
+    for arg in argv:
+        flag, sep, value = arg.partition("=")
+        if arg == api_key:
+            arg = "***"
+        elif sep and value == api_key:
+            arg = f"{flag}=***"
+        masked.append(arg)
+    return masked
 
 
 def _git(*command: str) -> str:
@@ -655,7 +667,7 @@ def run(args: argparse.Namespace) -> None:
         json.dumps(
             {
                 **{k: v for k, v in vars(args).items() if k not in {"fixed_queries", "api_key"}},
-                "command": _command(),
+                "command": _command(args.api_key),
                 "git": git_provenance(out_dir),
                 "n_questions": len(questions),
                 "question_ids": [q["id"] for q in questions],
