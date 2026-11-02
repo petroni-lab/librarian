@@ -275,6 +275,15 @@ def test_stage1_planning_matches_recording(replayed: ReplayedRun) -> None:
     assert actual_validated == expected_validated
 
 
+def test_stage1_ranking_terms_match_recording(replayed: ReplayedRun) -> None:
+    """Stage 1: the ranking terms parsed from the same planner reply (#91).
+
+    Stage 2 ranks with them, so a difference here shows up in the selections too.
+    """
+    actual = replayed.stages.ranking_terms
+    assert actual == replayed.case.expected(fixture_replay.RANKING_TERMS_FILE)
+
+
 def test_stage1_asks_the_llm_the_way_it_was_recorded(replayed: ReplayedRun) -> None:
     """Stage 1 made as many planning and strict-JSON retry calls as the live run.
 

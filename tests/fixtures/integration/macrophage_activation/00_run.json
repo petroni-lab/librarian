@@ -4,7 +4,7 @@
   "model_name": "glm-5.3-flash",
   "query": "How does interferon-gamma activate inflammatory gene expression in human macrophages?",
   "reasoning_effort": "low",
-  "recorded_on": "2026-10-26",
+  "recorded_on": "2026-11-02",
   "runtime_config": {
     "default_model_name": "glm-5.3-flash",
     "filter_max_tokens": 8192,

@@ -51,6 +51,7 @@ integration/<case>/
 ├── 00_run.json                    query, date, model, agent construction, config,
 │                                  BM25 stemming
 ├── 01_generated_queries.json      Stage 1: parsed, deduplicated, capped sub-queries
+├── 01b_ranking_terms.json         Stage 1: ranking terms from the same planner reply
 ├── 02_validated_queries.json      Stage 1: those that passed EPMC syntax validation
 ├── 03_subquery_paragraphs.json    Stage 2: each sub-query's top-k selections
 ├── 04_merged_paragraphs.json      Stage 2: the merged pool Stage 3 judges
