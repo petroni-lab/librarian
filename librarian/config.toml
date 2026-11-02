@@ -73,8 +73,9 @@ supplementary_pdf_extractor = "pypdf"
 # The values come from bio-agents' evaluation runs, where this loop was first
 # used; they have not been tuned on other questions.
 [research_loop]
-# Five rounds after the seed, then one selection-only review of the last batch.
-max_rounds = 5
+# Three rounds after the seed (bio-agents runs five), then one selection-only
+# review of the last batch.
+max_rounds = 3
 # Safety ceilings, not targets: the prompt asks for fewer when gaps run out.
 max_context_queries = 16
 max_specific_queries = 64

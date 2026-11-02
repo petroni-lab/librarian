@@ -248,7 +248,7 @@ uv run main.py "does metformin extend lifespan in mammals?"
 
 **Research loop** — for questions one retrieval cannot cover, `--research-loop` runs
 [`research_loop.py`](librarian/research_loop.py) instead: the query seeds one
-retrieval, then each of five rounds lets an LLM planner select the useful papers of
+retrieval, then each of three rounds lets an LLM planner select the useful papers of
 the latest *context* searches into a ledger and ask new questions of two kinds —
 *context* questions that explore the topic and *specific* questions about one
 precise point each — run as separate librarian retrievals with their own sizes. A
