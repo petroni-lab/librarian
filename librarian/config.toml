@@ -70,11 +70,9 @@ supplementary_pdf_extractor = "pypdf"
 # ── Research loop (librarian/research_loop.py) ──────────────────────────────
 # Read by load_research_loop_config(); LibrarianRuntimeConfig ignores this table.
 # It must stay last: every key after a [table] header belongs to that table.
-# The values come from bio-agents' evaluation runs, where this loop was first
-# used; they have not been tuned on other questions.
+# Starting budgets: they have not been tuned across question types.
 [research_loop]
-# Three rounds after the seed (bio-agents runs five), then one selection-only
-# review of the last batch.
+# Three rounds after the seed, then one selection-only review of the last batch.
 max_rounds = 3
 # Safety ceilings, not targets: the prompt asks for fewer when gaps run out.
 max_context_queries = 16
@@ -83,7 +81,7 @@ max_specific_queries = 64
 specific_max_papers = 3
 planner_temperature = 1.0
 # Reasoning models spend most of the budget thinking: at 32000 about a quarter
-# of the calls returned no reply (bio-agents, 2026-10-07).
+# of the planner calls returned no reply.
 planner_max_tokens = 64000
 planner_timeout_seconds = 3600
 # Two more attempts after a reply that does not parse, then the run fails.

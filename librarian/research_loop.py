@@ -314,7 +314,7 @@ def parse_planner_reply(
     """
     payload = parse_json_response(raw_response)
     if payload is None:
-        # The one repair bio-agents applies to planner objects: a trailing comma.
+        # Repair only a trailing comma: any wider repair could alter the plan.
         payload = parse_json_response(re.sub(r",(\s*[}\]])", r"\1", raw_response))
     if not isinstance(payload, dict):
         raise ValueError("planner must return a JSON object")
