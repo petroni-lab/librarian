@@ -21,17 +21,23 @@ reason.
 
 Choices are shuffled, prompted, parsed and scored as in ``LabBench``. Each run
 writes ``predictions.jsonl`` to ``--out-dir``; ``analyze_suppqa.py`` turns run
-directories into tables.
+directories into tables. ``run_config.json`` records the command, the git commit
+(with ``uncommitted.patch`` beside it when the tree is dirty) and the librarian
+config the agent was actually built with. Each prediction's ``retrieval.searches``
+lists, per sub-query, the papers Europe PMC returned and what became of each one's
+full text and supplementary files.
 """
 
 from __future__ import annotations
 
 import argparse
 import functools
+import hashlib
 import json
 import logging
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -59,7 +65,7 @@ from evals.Literature.LabBench.labbench_compat import (  # noqa: E402
     randomize_choices,
     score_prediction,
 )
-from librarian.agent import LibrarianAgent, SearchPlan  # noqa: E402
+from librarian.agent import LibrarianAgent, SearchPlan, _fulltext_pmcid  # noqa: E402
 from librarian.config import load_runtime_config  # noqa: E402
 from librarian.jats import (  # noqa: E402
     extract_body_paragraphs,
@@ -241,6 +247,93 @@ class SpanTimer:
         return fn
 
 
+def _paper_ids(paper: dict[str, Any]) -> dict[str, str]:
+    """A returned paper's ids, with the full-text id the agent will fetch ("" when it won't)."""
+    fulltext_pmcid = _fulltext_pmcid(paper)
+    return {
+        "pmid": str(paper.get("pmid") or ""),
+        "pmcid": str(paper.get("pmcid") or ""),
+        "doi": str(paper.get("doi") or "").lower(),
+        "fulltext": "requested" if fulltext_pmcid else "not open access: abstract only",
+        "fulltext_pmcid": fulltext_pmcid,
+    }
+
+
+def _outcome(result: Any) -> str:
+    """One full-text or supplementary outcome as a short string."""
+    if result.error:
+        return f"error: {result.error}"
+    cached = " (cached)" if result.from_cache else ""
+    records = getattr(result, "records", None)
+    if records is None:
+        return f"ok{cached}"
+    failed = f", unreadable {sorted(result.failed)}" if result.failed else ""
+    return f"{len(records)} records{cached}{failed}"
+
+
+class SearchLog:
+    """Literature source wrapper that records, per sub-query, what came back.
+
+    A sub-query's search, full-text and supplementary calls all run in the
+    thread that searched it, so the latest search on a thread owns the fetches
+    that follow. A search that raises is recorded with its error and re-raised.
+    Europe PMC's total hit count is not exposed by ``search``, so only the
+    returned page is recorded.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+        self.entries: list[dict[str, Any]] = []
+        self._lock = threading.Lock()
+        self._local = threading.local()
+        if getattr(inner, "fetch_supplementary_many", None) is None:
+            self.fetch_supplementary_many = None
+
+    def search(self, query: str, page_size: int) -> list[dict[str, Any]]:
+        entry: dict[str, Any] = {"query": query, "page_size": page_size}
+        self._local.entry = entry
+        with self._lock:
+            self.entries.append(entry)
+        start = time.perf_counter()
+        try:
+            papers = self.inner.search(query, page_size)
+        except Exception as exc:
+            entry["error"] = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            entry["seconds"] = round(time.perf_counter() - start, 3)
+        entry["papers"] = [_paper_ids(p) for p in papers]
+        return papers
+
+    def _papers_by_pmcid(self) -> dict[str, dict[str, Any]]:
+        entry = getattr(self._local, "entry", None) or {}
+        return {
+            p["fulltext_pmcid"]: p
+            for p in entry.get("papers", [])
+            if p["fulltext_pmcid"]
+        }
+
+    def fetch_fulltext_many(self, pmcids):
+        results = self.inner.fetch_fulltext_many(pmcids)
+        papers = self._papers_by_pmcid()
+        for pmcid, result in results.items():
+            if pmcid in papers:
+                papers[pmcid]["fulltext"] = _outcome(result)
+                if result.ok:
+                    papers[pmcid]["supplementary"] = (
+                        "declared" if declares_supplementary(result.xml) else "none declared"
+                    )
+        return results
+
+    def fetch_supplementary_many(self, pmcids, options):
+        results = self.inner.fetch_supplementary_many(pmcids, options)
+        papers = self._papers_by_pmcid()
+        for pmcid, result in results.items():
+            if pmcid in papers:
+                papers[pmcid]["supplementary"] = _outcome(result)
+        return results
+
+
 def _kind(record: dict[str, Any]) -> str:
     return "supp" if record.get("section_type") == SUPPLEMENTARY_SECTION_TYPE else "main"
 
@@ -255,6 +348,7 @@ class InstrumentedAgent(LibrarianAgent):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        self._source = SearchLog(self._source)
         self._stats_lock = threading.Lock()
         self.begin({}, None)
 
@@ -268,6 +362,7 @@ class InstrumentedAgent(LibrarianAgent):
         self.passages: list[dict[str, Any]] = []
         self.debug: dict[str, Any] = {}
         self._tracer.seconds.clear()
+        self._source.entries.clear()
 
     def _is_target(self, paper: dict[str, Any]) -> bool:
         doi = str(paper.get("doi") or "").lower()
@@ -369,12 +464,38 @@ def retrieval_stats(agent: InstrumentedAgent, budget: int) -> dict[str, Any]:
         "key": {k: round(v, 3) for k, v in key.items()},
         "longest_passage_chars": debug.get("longest_passage_chars", 0),
         "judge_requests": debug.get("judge_requests", []),
+        "searches": _searches(agent),
     }
+
+
+def _searches(agent: InstrumentedAgent) -> list[dict[str, Any]]:
+    """``SearchLog`` entries, each with the target paper's rank in its results (or None)."""
+    searches = []
+    for entry in agent._source.entries:
+        papers = entry.get("papers", [])
+        rank = next(
+            (n for n, p in enumerate(papers) if agent._is_target(p)), None
+        )
+        searches.append({**entry, "returned": len(papers), "target_rank": rank})
+    return searches
 
 
 # ── Answering ────────────────────────────────────────────────────────────────
 
 _thread_local = threading.local()
+
+
+def librarian_config(args: argparse.Namespace):
+    """The runtime config the librarian runs with: ``config.toml`` plus this arm's overrides."""
+    config = load_runtime_config()
+    if args.arm not in ("main", "supp"):
+        return config
+    config = replace(
+        config, supplementary_enrichment=args.arm == "supp", filter_temperature=0.0
+    )
+    if args.pdf_extractor:
+        config = replace(config, supplementary_pdf_extractor=args.pdf_extractor)
+    return config
 
 
 def _worker(args: argparse.Namespace):
@@ -395,15 +516,8 @@ def _worker(args: argparse.Namespace):
     if args.arm == "baseline":
         solver = BaselineSolver(**common)
     else:
-        config = replace(
-            load_runtime_config(),
-            supplementary_enrichment=args.arm == "supp",
-            filter_temperature=0.0,
-        )
-        if args.pdf_extractor:
-            config = replace(config, supplementary_pdf_extractor=args.pdf_extractor)
         agent = InstrumentedAgent(
-            runtime_config=config,
+            runtime_config=librarian_config(args),
             llm_base_url=args.agent_base_url,
             llm_model_name=args.agent_model,
             tracer=SpanTimer(),
@@ -474,6 +588,41 @@ def answer_row(args: argparse.Namespace, q: dict[str, Any]) -> dict[str, Any]:
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
+def _command() -> list[str]:
+    """The command line, with any API key value masked."""
+    argv = [sys.executable, *sys.argv]
+    return [
+        "***" if i and argv[i - 1] == "--api-key" else a for i, a in enumerate(argv)
+    ]
+
+
+def _git(*command: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(PROJECT_ROOT), *command],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def git_provenance(out_dir: Path) -> dict[str, Any]:
+    """The checkout's commit and dirty status; a dirty tree's diff goes to ``uncommitted.patch``."""
+    try:
+        sha = _git("rev-parse", "HEAD").strip()
+        status = _git("status", "--porcelain")
+        patch = _git("diff", "HEAD", "--binary")
+    except (OSError, subprocess.CalledProcessError) as exc:
+        return {"error": str(exc)}
+    info: dict[str, Any] = {"sha": sha, "dirty": bool(status.strip())}
+    if info["dirty"]:
+        (out_dir / "uncommitted.patch").write_text(patch, encoding="utf-8")
+        info["patch_sha256"] = hashlib.sha256(patch.encode("utf-8")).hexdigest()
+        info["untracked"] = [
+            line[3:] for line in status.splitlines() if line.startswith("??")
+        ]
+    return info
+
+
 def _read_rows(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
@@ -502,13 +651,16 @@ def run(args: argparse.Namespace) -> None:
     pending = [q for q in questions if q["id"] not in done]
     LOGGER.info("%d done, %d to run.", len(done), len(pending))
 
-    config = load_runtime_config()
     (out_dir / "run_config.json").write_text(
         json.dumps(
             {
                 **{k: v for k, v in vars(args).items() if k not in {"fixed_queries", "api_key"}},
+                "command": _command(),
+                "git": git_provenance(out_dir),
                 "n_questions": len(questions),
-                "librarian_config": asdict(config),
+                "question_ids": [q["id"] for q in questions],
+                # What the agent is built with, arm overrides applied.
+                "librarian_config": asdict(librarian_config(args)),
             },
             indent=2,
         ),
