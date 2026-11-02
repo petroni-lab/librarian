@@ -102,8 +102,9 @@ _OTHER_SMOKE_RECORDS = {
 }
 _ROW_INDEX = 68
 _SUBQUERY = 'TITLE:"lncRNA signature" AND TITLE:"lung adenocarcinoma"'
-# What the live planner (glm-5.3-flash) returned for q23 with this prompt.
-_TERMS = ["never smokers", "smoking status", "non-smoker", "smoker", "tobacco"]
+# What the live planner (glm-5.3-flash) returned for q23 with this prompt, whose
+# example is not q23's. "smoking" stems to "smoke", the row's only smoking word.
+_TERMS = ["never smokers", "never smoker", "smoking status", "non-smoker", "smoker"]
 
 
 def _paper_records():
