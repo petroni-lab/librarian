@@ -5,10 +5,16 @@ Usage:
     python main.py "..." --retrieval-only    # ranked evidence, no synthesized answer
     python main.py "..." --supplementary     # also search supplementary PDF/Word files
     python main.py "..." --save-json out.json  # also save this run's evidence + answer
+    python main.py "..." --research-loop     # iterative retrieval, selected evidence only
+    python main.py "..." --research-loop --loop-prompt my_loop.md
 
 By default the retrieved evidence is synthesized into a cited answer. Pass
 ``--retrieval-only`` to stop after retrieval and print the ranked passages plus
-the raw JSON instead.
+the raw JSON instead. ``--research-loop`` runs ``librarian.research_loop``
+instead of one retrieval: the query seeds the loop, the planner prompt comes from
+``--loop-prompt`` (default ``librarian/prompts/research_loop.md``), budgets from
+``[research_loop]`` in ``librarian/config.toml``, and the selected evidence is
+printed without synthesis.
 
 Configure the LLM backend in a `.env` file (copy `.env.example`) or via env vars:
     LLM_BASE_URL   e.g. http://localhost:8000/v1   (default)
@@ -27,7 +33,15 @@ from dotenv import load_dotenv
 
 from librarian import LibrarianAgent, SynthesisAgent, load_runtime_config
 from librarian.citations import citation_keys
+from librarian.config import LibrarianRuntimeConfig, load_research_loop_config
+from librarian.llm_client import create_llm_client
 from librarian.progress import Spinner
+from librarian.research_loop import (
+    DEFAULT_LOOP_PROMPT_PATH,
+    LoopResult,
+    ResearchLoop,
+    build_retrievers,
+)
 
 # Load LLM_BASE_URL / LLM_MODEL / LLM_API_KEY from a .env file if present.
 load_dotenv()
@@ -74,14 +88,38 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--research-loop",
+        action="store_true",
+        help=(
+            "run the iterative research loop seeded by the query and print the "
+            "selected evidence, without synthesis"
+        ),
+    )
+    parser.add_argument(
+        "--loop-prompt",
+        metavar="PATH",
+        type=Path,
+        help=(
+            "planner prompt for --research-loop "
+            f"(default: {DEFAULT_LOOP_PROMPT_PATH.name} shipped with the package)"
+        ),
+    )
+    parser.add_argument(
         "--save-json",
         metavar="PATH",
         help=(
             "also write this run's evidence (with the section each snippet came "
-            "from), counts, and answer to a JSON file"
+            "from), counts, and answer to a JSON file; with --research-loop, the "
+            "whole loop (searches, ledger, planner traces, selected evidence)"
         ),
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    # The loop never synthesizes, so --retrieval-only would be a silent no-op.
+    if args.research_loop and args.retrieval_only:
+        parser.error("--research-loop never synthesizes; drop --retrieval-only")
+    if args.loop_prompt and not args.research_loop:
+        parser.error("--loop-prompt needs --research-loop")
+    return args
 
 
 def _print_passages(
@@ -106,13 +144,15 @@ def _print_passages(
             print(f"    - {prefix}{snippet}")
         print()
 
-    print(
-        "Supplementary paragraphs in the Stage-2 pool: "
-        f"{debug.get('supplementary_paragraph_count', 0)} "
-        f"of {debug.get('paragraph_count', 0)}; "
-        "evidence spans cited from supplementary files: "
-        f"{debug.get('supplementary_evidence_count', 0)}\n"
-    )
+    # A research loop merges many runs, so it has no single Stage-2 pool to count.
+    if debug:
+        print(
+            "Supplementary paragraphs in the Stage-2 pool: "
+            f"{debug.get('supplementary_paragraph_count', 0)} "
+            f"of {debug.get('paragraph_count', 0)}; "
+            "evidence spans cited from supplementary files: "
+            f"{debug.get('supplementary_evidence_count', 0)}\n"
+        )
 
     # Full structured output (what a downstream synthesis layer would consume).
     print("=== raw passages (JSON) ===")
@@ -205,6 +245,50 @@ def _save_json(
     )
 
 
+def _print_loop(result: LoopResult) -> None:
+    """The research-loop view: what each round asked, then the selected evidence."""
+    for trace in result.planning:
+        print(
+            f"Round {trace['round']}: {len(trace['context_queries'])} context, "
+            f"{len(trace['specific_queries'])} specific question(s), "
+            f"{len(trace['selected_pmids'])} paper(s) selected"
+        )
+    failed = [
+        search
+        for search in result.context_searches + result.specific_searches
+        if search.error
+    ]
+    if failed:
+        print(f"WARNING: {len(failed)} question(s) failed retrieval", file=sys.stderr)
+    _print_passages(result.question, result.passages, {})
+
+
+def _run_loop(
+    args: argparse.Namespace,
+    query: str,
+    config: LibrarianRuntimeConfig,
+    interactive: bool,
+) -> None:
+    """Run the research loop and print (and optionally save) its result."""
+    loop_config = load_research_loop_config()
+    prompt_path = args.loop_prompt or DEFAULT_LOOP_PROMPT_PATH
+    template = prompt_path.read_text(encoding="utf-8")
+    retrievers = build_retrievers(config, loop_config, verbose=not interactive)
+    planner = create_llm_client(model_name=config.default_model_name)
+    with Spinner() as spinner:
+        loop = ResearchLoop(
+            retrievers, planner, template, loop_config, on_progress=spinner.update
+        )
+        result = loop.run(query)
+    if args.save_json:
+        path = Path(args.save_json)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(result.as_dict(), indent=2, ensure_ascii=False)
+        path.write_text(payload, encoding="utf-8")
+        print(f"Saved research loop to {path}", file=sys.stderr)
+    _print_loop(result)
+
+
 def main() -> None:
     args = _parse_args()
     query = " ".join(args.query).strip() or DEFAULT_QUERY
@@ -219,6 +303,9 @@ def main() -> None:
         config = replace(config, supplementary_enrichment=True)
     if config.supplementary_enrichment:
         print(SUPPLEMENTARY_WARNING, file=sys.stderr)
+    if args.research_loop:
+        _run_loop(args, query, config, interactive)
+        return
     librarian = LibrarianAgent(runtime_config=config, verbose=not interactive)
 
     # Spinner disables itself off a TTY and update() is then inert, so both
