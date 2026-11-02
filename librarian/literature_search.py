@@ -25,6 +25,7 @@ JATS declares supplementary material (``declares_supplementary``).
 """
 
 import io
+import logging
 import threading
 import time
 import zipfile
@@ -38,6 +39,8 @@ from urllib.parse import quote
 import requests
 
 from librarian.supplementary import extract_supplementary_records
+
+logger = logging.getLogger(__name__)
 
 _SEARCH_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 # Europe PMC full-text fetch endpoint (PMC id -> JATS XML).
@@ -217,6 +220,13 @@ def search_scientific_literature_structured(
                 exc, requests.exceptions.ConnectionError
             )
             if attempt < max_attempts - 1 and retryable:
+                logger.warning(
+                    "Europe PMC search retry %d/%d for %r: %s",
+                    attempt + 1,
+                    max_attempts - 1,
+                    query,
+                    exc,
+                )
                 time.sleep(2**attempt)
                 continue
             raise LiteratureSearchError(f"Europe PMC request failed: {exc}") from exc

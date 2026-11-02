@@ -93,6 +93,7 @@ must agree on, nothing that belongs to just one of them.
 integration/<case>/
 ├── 00_run.json                 query, agent construction settings, BM25 stemming
 ├── 01_generated_queries.json   Stage 1 after parsing, deduplication, and cap
+├── 01b_ranking_terms.json      Stage 1 ranking terms from the same planner reply
 ├── 02_validated_queries.json   Stage 1 after Europe PMC syntax validation
 ├── 03_subquery_paragraphs.json Stage 2 top paragraphs per validated sub-query
 ├── 04_merged_paragraphs.json   Stage 2 pool passed to the relevance judge
@@ -270,6 +271,7 @@ answer:
 | Test area | Detects divergence in |
 | --- | --- |
 | Stage 1 output | LLM response parsing, deduplication/capping, or validation |
+| Stage 1 ranking terms | ranking-term parsing from the planner reply |
 | Stage 1 request | planner call count, retry behaviour, prompt substitution |
 | LLM sampling | every call's `temperature` and `max_tokens` against the recording |
 | Stage 2 boundary use | validated sub-query fan-out to Europe PMC |

@@ -10,6 +10,7 @@ import pytest
 from librarian import (
     LibrarianAgent,
     RunResult,
+    SearchPlan,
     SynthesisAgent,
     SynthesisResult,
     load_runtime_config,
@@ -28,9 +29,9 @@ def retrieval_agent(barrier=None):
     def generate(query):
         if barrier:
             barrier.wait(timeout=10)
-        return [query]
+        return SearchPlan([query])
 
-    def paragraphs(query):
+    def paragraphs(query, ranking_terms=()):
         if query == "empty":
             return []
         return [
@@ -99,7 +100,7 @@ def test_empty_and_failed_runs_do_not_change_previous_result():
     agent = retrieval_agent()
     first = agent.run("alpha")
     empty = agent.run("empty")
-    assert empty == RunResult([], {"search_queries": ["empty"]})
+    assert empty == RunResult([], {"search_queries": ["empty"], "ranking_terms": []})
 
     def cancel(step):
         raise RuntimeError("cancelled")
@@ -120,9 +121,9 @@ def test_failed_search_preserves_partial_debug():
     ):
         agent.run("alpha")
     assert caught.value is error
-    assert error.run_debug == {"search_queries": ["alpha"]}
+    assert error.run_debug == {"search_queries": ["alpha"], "ranking_terms": []}
     agent.run("beta")
-    assert error.run_debug == {"search_queries": ["alpha"]}
+    assert error.run_debug == {"search_queries": ["alpha"], "ranking_terms": []}
 
 
 def test_failed_synthesis_search_preserves_route_and_subqueries():

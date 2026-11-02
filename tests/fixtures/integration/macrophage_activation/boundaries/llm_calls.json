@@ -2,13 +2,13 @@
   {
     "key": "query_generation",
     "max_tokens": 8192,
-    "response": "{\"queries\": [\"interferon-gamma macrophage inflammatory gene expression\", \"\\\"IFN-gamma\\\" OR \\\"interferon gamma\\\" macrophage signaling JAK STAT inflammation\", \"GENE_PROTEIN:\\\"IFNG\\\" AND (TITLE_ABS:macrophage OR TITLE_ABS:monocyte)\"]}",
+    "response": "```json\n{\n  \"queries\": [\n    \"interferon-gamma macrophage inflammatory gene expression\",\n    \"(IFN-gamma OR interferon-gamma) macrophage signaling JAK-STAT\",\n    \"GENE_PROTEIN:\\\"IFNG\\\" AND TITLE_ABS:macrophage\"\n  ],\n  \"ranking_terms\": [\n    \"IFN-gamma\",\n    \"IFNG\",\n    \"JAK1\",\n    \"JAK2\",\n    \"STAT1\",\n    \"gamma-activated factor\",\n    \"GAF\",\n    \"IRF1\"\n  ]\n}\n```",
     "temperature": 0.3
   },
   {
     "key": "judge:paragraph_0,paragraph_1,paragraph_2,paragraph_3,paragraph_4,paragraph_5,paragraph_6,paragraph_7",
     "max_tokens": 8192,
-    "response": "{\"relevant_ids\": [\"paragraph_5_B\", \"paragraph_5_A\", \"paragraph_5_D\", \"paragraph_3_B\"]}",
+    "response": "{\"relevant_ids\": [\"paragraph_3_B\", \"paragraph_4_F\", \"paragraph_4_B\", \"paragraph_5_A\", \"paragraph_3_A\", \"paragraph_1_D\", \"paragraph_0_B\", \"paragraph_1_E\", \"paragraph_4_C\", \"paragraph_4_D\", \"paragraph_4_E\"]}",
     "temperature": 0.0
   }
 ]

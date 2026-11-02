@@ -171,6 +171,7 @@ def _write_case(
     write = fixture_replay.write_json
     write(target / fixture_replay.RUN_FILE, run_metadata)
     write(target / fixture_replay.GENERATED_QUERIES_FILE, stages.generated_queries)
+    write(target / fixture_replay.RANKING_TERMS_FILE, stages.ranking_terms)
     write(target / fixture_replay.VALIDATED_QUERIES_FILE, stages.validated_queries)
     write(
         target / fixture_replay.SUBQUERY_PARAGRAPHS_FILE,

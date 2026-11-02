@@ -30,17 +30,18 @@ class CliSessionError(RuntimeError):
 
 
 # Codex and AGY need a fixed reply schema, but the agent's prompts do not say
-# which reply they want in a machine-readable way. One schema carries both keys
-# the agent reads (query planning: ``queries``; judge: ``relevant_ids``); the
-# prompt names the one to fill, and the other comes back empty and is ignored.
-# Codex's strict schemas require every property, hence both in ``required``.
+# which reply they want in a machine-readable way. One schema carries every key
+# the agent reads (query planning: ``queries`` and ``ranking_terms``; judge:
+# ``relevant_ids``); the prompt names the ones to fill, and the rest come back
+# empty and are ignored. Codex's strict schemas require every property, hence
+# all of them in ``required``.
 _RESPONSE_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
         key: {"type": "array", "items": {"type": "string"}}
-        for key in ("queries", "relevant_ids")
+        for key in ("queries", "ranking_terms", "relevant_ids")
     },
-    "required": ["queries", "relevant_ids"],
+    "required": ["queries", "ranking_terms", "relevant_ids"],
     "additionalProperties": False,
 }
 

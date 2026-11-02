@@ -147,7 +147,7 @@ def _stage2_pool(files, subquery="query", everything=False, **config_overrides):
 
     pool = []
 
-    def capture(subquery, records, k):
+    def capture(subquery, records, k, ranking_terms=()):
         pool.extend(records)
         return []
 

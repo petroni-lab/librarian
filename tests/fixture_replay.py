@@ -46,6 +46,7 @@ CASE_ROOT = Path(__file__).parent / "fixtures" / "integration"
 # Stage files say what the pipeline produced, and exist to localize a failure.
 RUN_FILE = "00_run.json"
 GENERATED_QUERIES_FILE = "01_generated_queries.json"
+RANKING_TERMS_FILE = "01b_ranking_terms.json"
 VALIDATED_QUERIES_FILE = "02_validated_queries.json"
 SUBQUERY_PARAGRAPHS_FILE = "03_subquery_paragraphs.json"
 MERGED_PARAGRAPHS_FILE = "04_merged_paragraphs.json"
@@ -64,6 +65,7 @@ FULLTEXT_DIR = "boundaries/fulltext"
 CASE_FILES = (
     RUN_FILE,
     GENERATED_QUERIES_FILE,
+    RANKING_TERMS_FILE,
     VALIDATED_QUERIES_FILE,
     SUBQUERY_PARAGRAPHS_FILE,
     MERGED_PARAGRAPHS_FILE,
@@ -314,6 +316,7 @@ class StageCapture:
     """
 
     generated_queries: list[str] = field(default_factory=list)
+    ranking_terms: list[str] = field(default_factory=list)
     validated_queries: list[str] = field(default_factory=list)
     # (sub-query, its selected paragraph lines), in the order Stage 2's threads
     # finished; re-ordered to the sub-query order by subquery_paragraphs_in_order.
@@ -341,24 +344,28 @@ class StageCapture:
         merge_selected = librarian_module._merge_selected_paragraphs
         relevance_filter = agent._relevance_filter
 
-        def capture_generated(query: str, *args: Any, **kwargs: Any) -> list[str]:
-            """Stage 1: the planner's parsed, deduplicated, capped sub-queries."""
-            self.generated_queries = generate_queries(query, *args, **kwargs)
-            return self.generated_queries
+        def capture_generated(query: str, *args: Any, **kwargs: Any) -> Any:
+            """Stage 1: the planner's parsed sub-queries and ranking terms."""
+            plan = generate_queries(query, *args, **kwargs)
+            self.generated_queries = plan.queries
+            self.ranking_terms = list(plan.ranking_terms)
+            return plan
 
         def capture_validated(queries: list[str]) -> list[str]:
             """Stage 1: the sub-queries that survived Europe PMC syntax validation."""
             self.validated_queries = validate_queries(queries)
             return self.validated_queries
 
-        def capture_subquery(subquery: str) -> list[dict[str, Any]]:
+        def capture_subquery(
+            subquery: str, ranking_terms: Any = ()
+        ) -> list[dict[str, Any]]:
             """Stage 2: one sub-query's top-k paragraphs, rendered before Stage 3.
 
             Rendered here rather than after the run because Stage 3 later writes
             ``evidence_sentences_full_text`` onto the very paper dicts these
             records point at, which would otherwise leak into a Stage 2 fixture.
             """
-            paragraphs = paragraphs_for_subquery(subquery)
+            paragraphs = paragraphs_for_subquery(subquery, ranking_terms)
             lines = [paragraph_line(paragraph) for paragraph in paragraphs]
             with lock:
                 self.subquery_paragraphs.append(

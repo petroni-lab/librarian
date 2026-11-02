@@ -4,14 +4,17 @@ Single-pass pipeline (max_loops=1, the only supported mode):
 
   Stage 1 — Subquery generation (_generate_queries + _validate_queries):
       LLM turns the user question into N Europe PMC sub-queries; drop those
-      whose Europe PMC field syntax is broken.
+      whose Europe PMC field syntax is broken. The same reply also names ranking
+      terms: the words a table answering the question would use, never searched,
+      only used to rank Stage 2's paragraphs.
   Stage 2 — Paper-level retrieval + paragraph BM25 ranking (_paragraphs_for_subquery,
       one thread per sub-query):
         - search the sub-query against Europe PMC (papers_per_subquery papers),
         - fetch the open-access full texts of those papers in one batch,
         - decompose every paper into paragraphs (abstract + full-text body chunks
           + supplementary-document chunks when supplementary_enrichment is on,
-          no distinction), BM25-rank the pool against the sub-query, keep the top k
+          no distinction), BM25-rank the pool against the sub-query (fused with
+          the ranking terms, see ``_fused_rank``), keep the top k
           (paragraphs_per_subquery).
       ``run`` concatenates every sub-query's paragraphs into one flat pool and
       merges duplicate or overlapping selections by source coordinates.
@@ -334,6 +337,39 @@ def _bm25_rank(query: str, paragraphs: List[str]) -> List[Tuple[int, float]]:
     return sorted(ranked, key=lambda pair: (-pair[1], pair[0]))
 
 
+# Reciprocal-rank-fusion constant (Cormack et al., 2009): damps the head of each
+# ranking so one channel's top hit cannot outvote agreement between channels.
+_RRF_K = 60
+
+
+def _fused_rank(
+    subquery: str, ranking_terms: Iterable[str], documents: List[str]
+) -> List[Tuple[int, float]]:
+    """``_bm25_rank`` for *subquery*, fused with a ranking for the Stage-1 terms.
+
+    A sub-query names what to *search* for, in a paper's words (``never
+    smokers``); a data table that answers it is often worded differently
+    (``Smoke | No``), so BM25 against the sub-query alone scores it 0. The
+    ranking terms are the planner's guess at the table's words. Each channel is
+    BM25-ranked on its own and the two rankings are combined by reciprocal-rank
+    fusion, ``1 / (_RRF_K + rank)`` per channel, so neither channel's raw BM25
+    scale dominates. A channel only votes for documents it scores above zero:
+    a document matching neither still scores 0, so callers can still tell
+    "matched" from "fallback". Ties stay in document order.
+
+    Without ranking terms this is exactly ``_bm25_rank(subquery, documents)``.
+    """
+    terms = " ".join(t for t in ranking_terms if t.strip())
+    if not terms:
+        return _bm25_rank(subquery, documents)
+    fused = [0.0] * len(documents)
+    for query in (subquery, terms):
+        for rank, (index, score) in enumerate(_bm25_rank(query, documents)):
+            if score > 0:
+                fused[index] += 1.0 / (_RRF_K + rank + 1)
+    return sorted(enumerate(fused), key=lambda pair: (-pair[1], pair[0]))
+
+
 # Paper metadata mixed into a paragraph's BM25 document (scoring only — never
 # the returned evidence text), so a sub-query naming it matches at retrieval
 # too. The abstract carries the whole citation (also the fields the Stage-3
@@ -364,9 +400,15 @@ _PIECES_PER_RECORD = 10_000
 
 
 def _top_supplementary(
-    subquery: str, supplementary: Supplementary, k: int
+    subquery: str,
+    supplementary: Supplementary,
+    k: int,
+    ranking_terms: Iterable[str] = (),
 ) -> Supplementary:
     """*supplementary* with only its *k* best records for *subquery*, by BM25.
+
+    Ranked with ``_fused_rank``, so a record matching only the Stage-1
+    *ranking_terms* can still be kept.
 
     The kept records stay in document order, so adjacent cited pages remain
     adjacent. Each is a copy tagged with ``supplementary_index``, its position
@@ -378,7 +420,9 @@ def _top_supplementary(
     records = supplementary.records
     keep: Iterable[int] = range(len(records))
     if len(records) > k:
-        ranked = _bm25_rank(subquery, [_bm25_doc(r) for r in records])
+        ranked = _fused_rank(
+            subquery, ranking_terms, [_bm25_doc(r) for r in records]
+        )
         keep = sorted(index for index, _ in ranked[:k])
     return replace(
         supplementary,
@@ -399,7 +443,10 @@ def _bm25_doc(record: Dict[str, Any]) -> str:
 
 
 def _rank_paragraphs_for_subquery(
-    subquery: str, records: List[Dict[str, Any]], k: int
+    subquery: str,
+    records: List[Dict[str, Any]],
+    k: int,
+    ranking_terms: Iterable[str] = (),
 ) -> List[Dict[str, Any]]:
     """Top ``k`` paragraph records BM25-scored against ONE sub-query.
 
@@ -418,10 +465,14 @@ def _rank_paragraphs_for_subquery(
     downstream judge budget once. Positive-scoring records are preferred; if
     none score above zero the leading ``k`` records are returned as a recall
     fallback.
+
+    The Stage-1 *ranking_terms* are fused in with ``_fused_rank``, the same
+    ranking ``_top_supplementary`` uses, so a supplementary record that matched
+    only the terms there is not dropped here.
     """
     if not records or k <= 0:
         return []
-    ranked = _bm25_rank(subquery, [_bm25_doc(r) for r in records])
+    ranked = _fused_rank(subquery, ranking_terms, [_bm25_doc(r) for r in records])
     positive = [i for i, score in ranked if score > 0]
     order = positive if positive else [i for i, _ in ranked]
     return [records[i] for i in order[:k]]
@@ -718,6 +769,43 @@ def _contiguous_runs(sentences: List[_Sentence]) -> List[List[_Sentence]]:
 # ── Agent ────────────────────────────────────────────────────────────────────
 
 
+# Most ranking terms kept from the planner's reply. Each one is a BM25 query
+# token for every paragraph of every sub-query, so a long list dilutes the
+# words that actually name the answer.
+_MAX_RANKING_TERMS = 12
+
+
+@dataclass(frozen=True)
+class SearchPlan:
+    """Stage 1's output: the sub-queries to search, and the terms to rank by.
+
+    ``ranking_terms`` are never searched. They are the words a table or
+    passage that answers the question would use (``smoking status``,
+    ``non-smoker``), fused into both Stage-2 cuts by ``_fused_rank``.
+    """
+
+    queries: List[str]
+    ranking_terms: List[str] = field(default_factory=list)
+
+
+def _parse_ranking_terms(parsed: Any) -> List[str]:
+    """The reply's ``ranking_terms`` as stripped, case-deduplicated strings, capped.
+
+    A missing or malformed key is no terms, so ranking falls back to the
+    sub-query alone rather than failing Stage 1.
+    """
+    raw = parsed.get("ranking_terms") if isinstance(parsed, dict) else None
+    if not isinstance(raw, list):
+        return []
+    seen, terms = set(), []
+    for term in raw:
+        term = str(term).strip() if isinstance(term, (str, int, float)) else ""
+        if term and term.lower() not in seen:
+            seen.add(term.lower())
+            terms.append(term)
+    return terms[:_MAX_RANKING_TERMS]
+
+
 @dataclass
 class RunResult:
     """Ranked evidence and debug details belonging to one retrieval call."""
@@ -872,8 +960,12 @@ class LibrarianAgent:
         self,
         query: str,
         previous_evidences: Optional[List[str]] = None,
-    ) -> List[str]:
-        """Ask the LLM for diverse Europe PMC sub-queries for ``query``."""
+    ) -> SearchPlan:
+        """Ask the LLM for diverse Europe PMC sub-queries for ``query``.
+
+        The same reply carries the ranking terms (see ``SearchPlan``), so they
+        cost no extra LLM call.
+        """
         today = datetime.date.today()
         additional_context = ""
         if previous_evidences:
@@ -924,7 +1016,9 @@ class LibrarianAgent:
                         "role": "system",
                         "content": (
                             "Return only valid JSON with a 'queries' array of Europe "
-                            'PMC query strings, e.g. {"queries": ["q1", "q2"]}. '
+                            "PMC query strings and a 'ranking_terms' array of words "
+                            'a table answering the question would use, e.g. {"queries": '
+                            '["q1", "q2"], "ranking_terms": ["t1", "t2"]}. '
                             "No prose, no markdown."
                         ),
                     },
@@ -947,16 +1041,19 @@ class LibrarianAgent:
                     seen.add(q)
                     unique.append(q)
             result = unique[: self._num_subqueries]
+            ranking_terms = _parse_ranking_terms(parsed)
             self._tracer.set_span_attributes(
                 span,
                 {
                     "search.query_count": len(result),
-                    "output.value": self._trace_json({"queries": result}),
+                    "output.value": self._trace_json(
+                        {"queries": result, "ranking_terms": ranking_terms}
+                    ),
                     "output.mime_type": "application/json",
                 },
             )
-        self._log(f"generated {len(result)} queries")
-        return result
+        self._log(f"generated {len(result)} queries, ranking terms {ranking_terms}")
+        return SearchPlan(result, ranking_terms)
 
     # ── Step 2: query validation ─────────────────────────────────────────────
 
@@ -1053,7 +1150,9 @@ class LibrarianAgent:
             record["paper"] = paper
         return chunked
 
-    def _paragraphs_for_subquery(self, subquery: str) -> List[Dict[str, Any]]:
+    def _paragraphs_for_subquery(
+        self, subquery: str, ranking_terms: Iterable[str] = ()
+    ) -> List[Dict[str, Any]]:
         """One sub-query → its top-``k`` paragraphs, end to end in this thread.
 
         Search the literature source for the sub-query, fetch the returned
@@ -1062,7 +1161,8 @@ class LibrarianAgent:
         pool against the sub-query, and keep the top
         ``paragraphs_per_subquery``. Runs entirely in the calling thread so
         ``run`` can fan these out, one thread per sub-query, with no shared
-        state.
+        state. *ranking_terms*, from Stage 1, are fused into both the
+        per-paper supplementary cut and the top-k cut.
         """
         # One parent span per sub-query so a trace groups this thread's network
         # and CPU children together instead of interleaving them under stage2.
@@ -1137,7 +1237,10 @@ class LibrarianAgent:
                     ) as supplementary_span:
                         supplementaries = {
                             pmcid: _top_supplementary(
-                                subquery, outcome, self._max_supplementary_records
+                                subquery,
+                                outcome,
+                                self._max_supplementary_records,
+                                ranking_terms,
                             )
                             for pmcid, outcome in fetch_supplementary(
                                 wanted, self._supplementary_options
@@ -1171,7 +1274,7 @@ class LibrarianAgent:
                     )
 
                 top = _rank_paragraphs_for_subquery(
-                    subquery, pool, self._paragraphs_per_subquery
+                    subquery, pool, self._paragraphs_per_subquery, ranking_terms
                 )
                 self._tracer.set_span_attributes(
                     rank_span,
@@ -1648,10 +1751,12 @@ class LibrarianAgent:
         if progress_callback:
             progress_callback(0)
         state.progress("Generating search queries")
-        generated = self._generate_queries(query)
+        plan = self._generate_queries(query)
         state.progress("Validating queries")
-        queries = self._validate_queries(generated)
+        queries = self._validate_queries(plan.queries)
+        ranking_terms = list(plan.ranking_terms)
         debug["search_queries"] = queries
+        debug["ranking_terms"] = ranking_terms
         if progress_callback:
             progress_callback(1)
 
@@ -1678,7 +1783,9 @@ class LibrarianAgent:
             # oversubscribe a small container.
             stage2_workers = min(max(len(queries), 1), _available_cpus())
             with ThreadPoolExecutor(max_workers=stage2_workers) as pool:
-                per_subquery = pool.map(bound_stage2, queries)
+                per_subquery = pool.map(
+                    lambda subquery: bound_stage2(subquery, ranking_terms), queries
+                )
             paragraphs = _merge_selected_paragraphs(
                 [para for subquery_paras in per_subquery for para in subquery_paras]
             )
