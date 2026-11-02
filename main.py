@@ -275,18 +275,30 @@ def _run_loop(
     template = prompt_path.read_text(encoding="utf-8")
     retrievers = build_retrievers(config, loop_config, verbose=not interactive)
     planner = ContentOnlyLLMClient(model_name=config.default_model_name)
-    with Spinner() as spinner:
-        loop = ResearchLoop(
-            retrievers, planner, template, loop_config, on_progress=spinner.update
-        )
-        result = loop.run(query)
+    try:
+        with Spinner() as spinner:
+            loop = ResearchLoop(
+                retrievers, planner, template, loop_config, on_progress=spinner.update
+            )
+            result = loop.run(query)
+    except BaseException as exc:
+        # Save the partial loop (planner failure included) before failing.
+        partial = getattr(exc, "loop_result", None)
+        if args.save_json and partial is not None:
+            _save_loop(Path(args.save_json), partial, partial=True)
+        raise
     if args.save_json:
-        path = Path(args.save_json)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(result.as_dict(), indent=2, ensure_ascii=False)
-        path.write_text(payload, encoding="utf-8")
-        print(f"Saved research loop to {path}", file=sys.stderr)
+        _save_loop(Path(args.save_json), result, partial=False)
     _print_loop(result)
+
+
+def _save_loop(path: Path, result: LoopResult, partial: bool) -> None:
+    """Write the whole loop (searches, ledger, planner traces, evidence) to JSON."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(result.as_dict(), indent=2, ensure_ascii=False)
+    path.write_text(payload, encoding="utf-8")
+    state = "partial research loop" if partial else "research loop"
+    print(f"Saved {state} to {path}", file=sys.stderr)
 
 
 def main() -> None:

@@ -133,8 +133,12 @@ def test_invalid_replies_are_retried_twice_then_raise():
 
     over_budget = _reply(context=["A", "B"])
     loop, _ = _loop({"seed": ["1"]}, [over_budget] * 3, max_context_queries=1)
-    with pytest.raises(ValueError, match="budget"):
+    with pytest.raises(ValueError, match="budget") as raised:
         loop.run("seed")
+    # The partial result survives, with the seed and every failed attempt.
+    partial = raised.value.loop_result
+    assert partial.context_searches[0].question == "seed"
+    assert len(partial.planner_failure["failed_attempts"]) == 3
 
 
 def test_planner_client_ignores_reasoning_content():

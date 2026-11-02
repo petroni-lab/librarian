@@ -113,6 +113,8 @@ class LoopResult:
     :param planning: One planner trace per round.
     :param final_selection: The selection-only review's trace, or None when the
         last round asked no context question.
+    :param planner_failure: The round and every invalid reply when the planner
+        gave up, which ends the run; None otherwise.
     :param passages: Selected context evidence and every specific result,
         merged per paper; filled when the loop ends.
     """
@@ -124,6 +126,7 @@ class LoopResult:
     reviewed_context_count: int = 0
     planning: List[Dict[str, Any]] = field(default_factory=list)
     final_selection: Optional[Dict[str, Any]] = None
+    planner_failure: Optional[Dict[str, Any]] = None
     passages: List[Dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> Dict[str, Any]:
@@ -430,8 +433,21 @@ class ResearchLoop:
             history would then read as empty literature.
         :raises ValueError: if the planner's reply stays invalid after
             ``planner_max_retries`` more attempts.
+
+        Whatever is raised (Ctrl-C included) carries the partial result as
+        ``exc.loop_result``, so a caller can still save the rounds it paid for.
         """
         result = LoopResult(question=first_query)
+        try:
+            self._run(result)
+        except BaseException as exc:
+            exc.loop_result = result
+            raise
+        return result
+
+    def _run(self, result: LoopResult) -> None:
+        # The loop itself; fills *result* in place so a failure leaves it partial.
+        first_query = result.question
         self._progress("Seed retrieval")
         seed = self._retrieve_one("seed", first_query, 0)
         if seed.error:
@@ -475,7 +491,6 @@ class ResearchLoop:
         passage_groups = [s.passages for s in selected_context if s.passages]
         passage_groups.extend(s.passages for s in result.specific_searches)
         result.passages = merge_passages(passage_groups)
-        return result
 
     def render_prompt(
         self, result: LoopResult, max_context: int, max_specific: int
@@ -562,6 +577,10 @@ class ResearchLoop:
                 trace["parse_error"] = str(exc)
                 attempts.append(trace)
                 if attempt == max_attempts:
+                    result.planner_failure = {
+                        "round": round_index,
+                        "failed_attempts": attempts,
+                    }
                     raise
                 logger.warning("Invalid planner reply (%s); retrying", exc)
                 continue
