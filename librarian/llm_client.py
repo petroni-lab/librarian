@@ -243,11 +243,17 @@ def create_llm_client(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     model_name: Optional[str] = None,
+    content_only: bool = False,
 ) -> LLMClient:
     """Build the LLM client. Kept as a factory so the agent's call site stays
-    unchanged even if construction ever grows more logic."""
+    unchanged even if construction ever grows more logic.
+
+    :param content_only: Return the message ``content`` alone; see ``LLMClient``.
+    :type content_only: bool
+    """
     return LLMClient(
         base_url=base_url,
         api_key=api_key,
         model_name=model_name,
+        content_only=content_only,
     )

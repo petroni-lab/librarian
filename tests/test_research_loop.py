@@ -19,6 +19,8 @@ from librarian.research_loop import (
     DEFAULT_LOOP_PROMPT_PATH,
     LoopResult,
     ResearchLoop,
+    SearchRecord,
+    _numeric_pmids,
     merge_passages,
 )
 from librarian.tracing_port import NullTracer
@@ -318,3 +320,13 @@ def test_prompt_contract_and_config():
     # The [research_loop] table leaves the runtime config loadable.
     assert load_runtime_config().num_subqueries >= 3
     assert loop_config.planner_max_retries == 2
+    with pytest.raises(ValueError, match="max_concurrent_retrievals"):
+        replace(loop_config, max_concurrent_retrievals=0)
+    with pytest.raises(ValueError, match="max_rounds"):
+        replace(loop_config, max_rounds=0)
+
+
+def test_only_numeric_pmid_fields_are_selectable():
+    papers = [{"pmid": " 12 "}, {"pmid": "", "paper_id": "345"}, {"pmid": "PMC9"}]
+    search = SearchRecord(1, "context", "q", passages=papers)
+    assert _numeric_pmids([search]) == {"12"}

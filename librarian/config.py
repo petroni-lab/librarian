@@ -155,6 +155,29 @@ class ResearchLoopConfig:
     context: RetrievalShape
     specific: RetrievalShape
 
+    def __post_init__(self) -> None:
+        """Reject budgets the loop cannot run with.
+
+        Runs on ``from_toml()`` and on ``dataclasses.replace()`` alike, like
+        ``LibrarianRuntimeConfig.__post_init__``.
+
+        :raises ValueError: naming the first field below its minimum.
+        """
+        minimums = {
+            "max_rounds": 1,
+            "max_context_queries": 0,
+            "max_specific_queries": 0,
+            "specific_max_papers": 0,
+            "planner_max_tokens": 1,
+            "planner_timeout_seconds": 1,
+            "planner_max_retries": 0,
+            "max_concurrent_retrievals": 1,
+        }
+        for name, minimum in minimums.items():
+            value = getattr(self, name)
+            if value < minimum:
+                raise ValueError(f"{name} must be >= {minimum}, got {value}.")
+
 
 @dataclass(frozen=True)
 class _ResearchLoopFile(DataClassTOMLMixin):

@@ -36,7 +36,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -180,10 +179,13 @@ def passage_key(passage: Dict[str, Any]) -> str:
     :return: Its numeric PMID, else its ``paper_id``, else an empty string.
     :rtype: str
     """
+    return _numeric_pmid(passage) or str(passage.get("paper_id") or "").strip()
+
+
+def _numeric_pmid(passage: Dict[str, Any]) -> str:
+    # The paper's ``pmid`` field when it is numeric, else an empty string.
     pmid = str(passage.get("pmid") or "").strip()
-    if pmid.isdigit():
-        return pmid
-    return str(passage.get("paper_id") or "").strip()
+    return pmid if pmid.isdigit() else ""
 
 
 def merge_passages(passage_groups: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
@@ -297,11 +299,10 @@ def _merged_evidence(result: LoopResult) -> List[Dict[str, Any]]:
 
 
 def _numeric_pmids(searches: List[SearchRecord]) -> set[str]:
-    # The PMIDs the planner may select: numeric ``pmid`` fields of these searches.
-    pmids = {
-        str(paper.get("pmid") or "") for search in searches for paper in search.passages
-    }
-    return {pmid for pmid in pmids if pmid.isdigit()}
+    # The PMIDs the planner may select. Not passage_key: a paper without a PMID
+    # can have an all-digit paper_id (an EPMC id, or the id() last resort).
+    pmids = {_numeric_pmid(paper) for search in searches for paper in search.passages}
+    return pmids - {""}
 
 
 def _normalized_new(candidates: List[str], seen: set[str]) -> List[str]:
@@ -432,9 +433,9 @@ class ResearchLoop:
         :param prompt_template: Planner prompt. It must contain
             ``{previous_searches}`` and ``{last_searches}``; the loop also fills
             ``{research_question}``, ``{eligible_context_pmids}``,
-            ``{max_context_queries}``, ``{max_specific_queries}`` and
-            ``{max_questions}`` where present. Fill any placeholder of your own
-            before passing the template.
+            ``{max_context_queries}`` and ``{max_specific_queries}`` where
+            present. Fill any placeholder of your own before passing the
+            template.
         :type prompt_template: str
         :param config: Round count, ceilings, planner and retrieval budgets.
         :type config: ResearchLoopConfig
@@ -459,8 +460,6 @@ class ResearchLoop:
         self._config = config
         self._on_progress = on_progress
         self._tracer: TracingPort = tracer if tracer is not None else NullTracer()
-        # Bounds librarian runs in flight across both query types of a round.
-        self._gate = threading.BoundedSemaphore(config.max_concurrent_retrievals)
 
     def run(self, result: LoopResult) -> None:
         """Run the seed, every round and the final review, filling *result*.
@@ -613,8 +612,7 @@ class ResearchLoop:
         rendered = rendered.replace("{last_searches}", latest)
         rendered = rendered.replace("{eligible_context_pmids}", json.dumps(eligible))
         rendered = rendered.replace("{max_context_queries}", str(max_context))
-        rendered = rendered.replace("{max_specific_queries}", str(max_specific))
-        return rendered.replace("{max_questions}", str(max_context + max_specific))
+        return rendered.replace("{max_specific_queries}", str(max_specific))
 
     def _progress(self, message: str) -> None:
         # Status line for the caller's spinner, if any.
@@ -733,7 +731,7 @@ class ResearchLoop:
         specific: List[str],
         round_index: int,
     ) -> None:
-        # Both kinds run in one pool; the gate caps the runs actually in flight.
+        # Both kinds run in one pool, whose width caps the runs in flight.
         # Records land in *result* in ask order, specific ones capped.
         jobs: List[tuple[QueryKind, str]] = [("context", q) for q in context]
         jobs.extend(("specific", q) for q in specific)
@@ -779,8 +777,7 @@ class ResearchLoop:
         # that was never answered must stay distinct from one that found nothing.
         record_kind: SearchKind = "specific" if kind == "specific" else "context"
         try:
-            with self._gate:
-                run_result = self._retrievers[kind].run(question)
+            run_result = self._retrievers[kind].run(question)
             papers = list(run_result.papers)
             # merge_passages pairs each snippet with its section label. Checked
             # here so a retriever without them fails this question, not the
