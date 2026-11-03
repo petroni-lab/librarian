@@ -41,6 +41,15 @@ _EXCLUDED_SEC_TYPES = {
     "references",
     "supplementary-material",
 }
+# Whole-title match on the normalised <sec> title, for publishers that mark
+# boilerplate only by its heading. Full match, so "Funding of public health
+# programmes" stays.
+_EXCLUDED_SEC_TITLE = re.compile(
+    r"acknowledge?ments?|funding|conflicts? of interests?|competing interests?"
+    r"|authors?(?:'s?)? contributions?|ethics approval.*|ethics statement"
+    r"|consent for publication|data availability(?: statement)?"
+    r"|availability of data and materials|abbreviations|declarations?"
+)
 
 
 def local_name(tag: str) -> str:
@@ -50,6 +59,18 @@ def local_name(tag: str) -> str:
 
 def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
+
+
+def _sec_title(sec: ET.Element) -> str:
+    for child in sec:
+        if local_name(child.tag) == "title":
+            return _norm("".join(child.itertext()))
+    return ""
+
+
+def _is_boilerplate_title(title: str) -> bool:
+    folded = title.lower().replace("\u2019", "'").replace("\u2018", "'")
+    return bool(_EXCLUDED_SEC_TITLE.fullmatch(folded.rstrip(" .:;")))
 
 
 def _is_excluded(element: ET.Element, parent: Dict[ET.Element, ET.Element]) -> bool:
@@ -69,6 +90,8 @@ def _is_excluded(element: ET.Element, parent: Dict[ET.Element, ET.Element]) -> b
             sec_type = str(current.attrib.get("sec-type", "")).strip().lower()
             if sec_type in _EXCLUDED_SEC_TYPES or "reference" in sec_type:
                 return True
+            if _is_boilerplate_title(_sec_title(current)):
+                return True
         current = parent.get(current)
     return False
 
@@ -79,12 +102,7 @@ def _nearest_section(
     current = parent.get(element)
     while current is not None:
         if local_name(current.tag) == "sec":
-            title = ""
-            for child in list(current):
-                if local_name(child.tag) == "title":
-                    title = _norm("".join(child.itertext()))
-                    break
-            return title, str(current.attrib.get("sec-type", "")).strip()
+            return _sec_title(current), str(current.attrib.get("sec-type", "")).strip()
         current = parent.get(current)
     return "", ""
 
@@ -139,8 +157,9 @@ def _render_table(table_wrap: ET.Element) -> str:
 def extract_body_paragraphs(xml_text: str) -> List[Dict[str, str]]:
     """Body paragraph/table records: ``{text, section_title, section_type}``.
 
-    Skips front/back matter, references, and excluded sec-types
-    (acknowledgements, funding, supplementary, …); carries section metadata so
+    Skips front/back matter, references, and boilerplate sections
+    (acknowledgements, funding, supplementary, …) whether marked by sec-type or
+    only by title; carries section metadata so
     the BM25 doc can include section title/type. Tables are kept but rendered
     readably (label + caption + rows with ``|`` between cells, ``;`` between
     rows) instead of mashed into one blob; a table embedded inside a ``<p>`` is
