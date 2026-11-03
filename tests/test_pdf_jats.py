@@ -108,6 +108,16 @@ def test_a_stray_heading_in_a_scan_keeps_the_text_above_it():
     assert _PROSE.strip() in texts
 
 
+def test_a_late_opening_heading_keeps_the_text_above_it():
+    late_summary = [f"RESULTS\n{_PROSE * 3}", "SUMMARY\nCells grew."]
+    background_subsection = [f"METHODS\n{_PROSE * 3}", "Background\nCells grew."]
+    for pages in (late_summary, background_subsection):
+        texts = " ".join(
+            r["text"] for r in extract_body_paragraphs(page_texts_to_jats(pages))
+        )
+        assert _PROSE.strip() in texts and "Cells grew." in texts
+
+
 def test_hyphens_inside_a_line_are_kept():
     page = f"{_PROSE}\nPatients were seen at 3- and 6-month visits."
     texts = " ".join(
