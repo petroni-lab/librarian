@@ -4,6 +4,9 @@ uv run pytest tests/test_research_loop.py
 """
 
 import json
+import os
+import signal
+import time
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -14,6 +17,7 @@ from librarian.config import load_research_loop_config, load_runtime_config
 from librarian.llm_client import LLMClient
 from librarian.research_loop import (
     DEFAULT_LOOP_PROMPT_PATH,
+    LoopResult,
     ResearchLoop,
     merge_passages,
 )
@@ -47,6 +51,24 @@ class FakeRetriever:
         return RunResult(papers=papers, debug={"search_queries": [query]})
 
 
+class InterruptingRetriever(FakeRetriever):
+    """Records each question; on *interrupt_on* sends Ctrl-C, then answers it."""
+
+    def __init__(self, papers_by_question: dict, interrupt_on: str):
+        super().__init__(papers_by_question)
+        self.interrupt_on = interrupt_on
+        self.asked: list = []
+
+    def run(self, query: str) -> RunResult:
+        """Record *query*; interrupt the main thread on the chosen question."""
+        self.asked.append(query)
+        if query == self.interrupt_on:
+            os.kill(os.getpid(), signal.SIGINT)
+            # Still in flight while the main thread cancels the queued questions.
+            time.sleep(0.2)
+        return super().run(query)
+
+
 class ScriptedPlanner:
     """Replies in order and keeps every prompt it was sent."""
 
@@ -58,6 +80,13 @@ class ScriptedPlanner:
         """Record the prompt, return the next scripted reply."""
         self.prompts.append(messages[0]["content"])
         return self.replies.pop(0)
+
+
+def _run(loop: ResearchLoop) -> LoopResult:
+    """Run *loop* on the question ``seed`` and return its filled result."""
+    result = LoopResult(question="seed")
+    loop.run(result)
+    return result
 
 
 def _reply(context=(), specific=(), pmids=()) -> str:
@@ -113,7 +142,7 @@ def test_ledger_rounds_and_final_selection():
         _reply(pmids=["2"]),
     ]
     loop, planner = _loop(papers, replies)
-    result = loop.run("seed")
+    result = _run(loop)
 
     # The specific result keeps its first three papers in the judge's ranking.
     specific = result.specific_searches[0]
@@ -138,7 +167,7 @@ def test_ledger_rounds_and_final_selection():
 def test_round_without_questions_ends_the_loop():
     # Two rounds allowed, but the first asks nothing: no second round, no final review.
     loop, planner = _loop({"seed": ["1"]}, [_reply(pmids=["1"])])
-    result = loop.run("seed")
+    result = _run(loop)
     assert len(planner.prompts) == 1
     assert result.final_selection is None
     assert [p["pmid"] for p in result.passages] == ["1"]
@@ -148,7 +177,7 @@ def test_loop_traces_its_run_rounds_and_planner_calls():
     tracer = RecordingTracer()
     replies = [_reply(context=["C1"], pmids=["1"]), _reply(pmids=["2"])]
     loop, _ = _loop({"seed": ["1"], "C1": ["2"]}, replies, tracer=tracer)
-    loop.run("seed")
+    _run(loop)
     round_spans = ["research_loop.round", "research_loop.plan"]
     assert tracer.spans == ["research_loop.run", *round_spans, *round_spans]
     # The one round with questions hands its span to the retrieval threads.
@@ -160,19 +189,38 @@ def test_invalid_replies_are_retried_twice_then_raise():
     loop, _ = _loop(
         {"seed": ["1"]}, ["not json", '{"context_queries": []}', valid, _reply()]
     )
-    result = loop.run("seed")
+    result = _run(loop)
     trace = result.planning[0]
     assert trace["attempt"] == 3 and len(trace["previous_attempts"]) == 2
     # The seed question, however spelled, is never asked again.
     assert trace["context_queries"] == []
 
-    loop, _ = _loop({"seed": ["1"]}, ["not json"] * 3)
-    with pytest.raises(ValueError, match="JSON object") as raised:
-        loop.run("seed")
-    # The partial result survives, with the seed and every failed attempt.
-    partial = raised.value.loop_result
-    assert partial.context_searches[0].question == "seed"
+    # Round 2's planner gives up: the caller's result keeps the searches, every
+    # failed attempt and the evidence selected so far (C1 was never reviewed).
+    replies = [_reply(context=["C1"], pmids=["1"])] + ["not json"] * 3
+    loop, _ = _loop({"seed": ["1", "2"], "C1": ["3"]}, replies)
+    partial = LoopResult(question="seed")
+    with pytest.raises(ValueError, match="JSON object"):
+        loop.run(partial)
+    assert [s.question for s in partial.context_searches] == ["seed", "C1"]
     assert len(partial.planner_failure["failed_attempts"]) == 3
+    assert [p["pmid"] for p in partial.passages] == ["1"]
+
+
+def test_interrupt_keeps_finished_retrievals_and_cancels_queued_ones():
+    retriever = InterruptingRetriever(
+        {"seed": ["1"], "A": ["2"], "B": ["3"], "C": ["4"], "S": ["5"]}, "B"
+    )
+    retrievers = {"seed": retriever, "context": retriever, "specific": retriever}
+    planner = ScriptedPlanner([_reply(context=["A", "B", "C"], specific=["S"])])
+    config = replace(load_research_loop_config(), max_concurrent_retrievals=1)
+    loop = ResearchLoop(retrievers, planner, TEMPLATE, config)
+    result = LoopResult(question="seed")
+    with pytest.raises(KeyboardInterrupt):
+        loop.run(result)
+    # B was in flight and finishes; C and S were queued and never start.
+    assert retriever.asked == ["seed", "A", "B"]
+    assert [s.question for s in result.context_searches] == ["seed", "A", "B"]
 
 
 def test_questions_over_a_ceiling_are_dropped_not_failed():
@@ -185,7 +233,7 @@ def test_questions_over_a_ceiling_are_dropped_not_failed():
     loop, _ = _loop(
         papers, replies, max_rounds=1, max_context_queries=1, max_specific_queries=1
     )
-    result = loop.run("seed")
+    result = _run(loop)
     trace = result.planning[0]
     assert trace["context_queries"] == ["A"] and trace["specific_queries"] == ["S1"]
     assert trace["dropped_context_queries"] == ["B"]
@@ -214,7 +262,7 @@ def test_planner_client_ignores_reasoning_content(monkeypatch):
 def test_failed_retrieval_is_shown_and_can_be_asked_again():
     replies = [_reply(context=["missing"]), _reply(context=["missing"]), _reply()]
     loop, planner = _loop({"seed": ["1"]}, replies)
-    result = loop.run("seed")
+    result = _run(loop)
     assert result.context_searches[1].error.startswith("KeyError")
     # The planner sees the failure, not an empty result, and may ask again.
     latest = planner.prompts[1].split("LAST")[1]
@@ -223,7 +271,7 @@ def test_failed_retrieval_is_shown_and_can_be_asked_again():
 
     loop, _ = _loop({}, [])
     with pytest.raises(RuntimeError, match="seed retrieval failed"):
-        loop.run("seed")
+        _run(loop)
 
 
 def test_retriever_without_aligned_sections_fails_the_question():
@@ -234,7 +282,7 @@ def test_retriever_without_aligned_sections_fails_the_question():
     loop = ResearchLoop(retrievers, ScriptedPlanner([]), TEMPLATE, config)
     # The seed fails at once, before any planner call is paid for.
     with pytest.raises(RuntimeError, match="seed retrieval failed: ValueError"):
-        loop.run("seed")
+        _run(loop)
 
 
 def test_merge_keeps_each_snippet_with_its_section():

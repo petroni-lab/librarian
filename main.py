@@ -275,17 +275,19 @@ def _run_loop(
     template = prompt_path.read_text(encoding="utf-8")
     retrievers = build_retrievers(config, loop_config, verbose=not interactive)
     planner = LLMClient(model_name=config.default_model_name, content_only=True)
+    spinner = Spinner()
+    loop = ResearchLoop(
+        retrievers, planner, template, loop_config, on_progress=spinner.update
+    )
+    # Created here so it holds the partial loop whatever the run raises.
+    result = LoopResult(question=query)
     try:
-        with Spinner() as spinner:
-            loop = ResearchLoop(
-                retrievers, planner, template, loop_config, on_progress=spinner.update
-            )
-            result = loop.run(query)
-    except BaseException as exc:
-        # Save the partial loop (planner failure included) before failing.
-        partial = getattr(exc, "loop_result", None)
-        if args.save_json and partial is not None:
-            _save_loop(Path(args.save_json), partial, partial=True)
+        with spinner:
+            loop.run(result)
+    except BaseException:
+        # Save the partial loop (planner failure, Ctrl-C) before failing.
+        if args.save_json:
+            _save_loop(Path(args.save_json), result, partial=True)
         raise
     if args.save_json:
         _save_loop(Path(args.save_json), result, partial=False)

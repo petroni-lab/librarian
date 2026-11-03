@@ -36,7 +36,7 @@ import json
 import logging
 import re
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Protocol
@@ -122,7 +122,8 @@ class LoopResult:
     :param planner_failure: The round and every invalid reply when the planner
         gave up, which ends the run; None otherwise.
     :param passages: Selected context evidence and every specific result,
-        merged per paper; filled when the loop ends.
+        merged per paper; filled when the run ends, a failed run included
+        (context searches never reviewed contribute nothing).
     """
 
     question: str
@@ -282,6 +283,15 @@ def _selected_copy(search: SearchRecord) -> SearchRecord:
     selected = set(search.selected_pmids)
     passages = [paper for paper in search.passages if passage_key(paper) in selected]
     return replace(search, passages=passages)
+
+
+def _merged_evidence(result: LoopResult) -> List[Dict[str, Any]]:
+    # Selections of the reviewed context searches plus every specific result.
+    reviewed = result.context_searches[: result.reviewed_context_count]
+    selected_context = [_selected_copy(search) for search in reviewed]
+    passage_groups = [s.passages for s in selected_context if s.passages]
+    passage_groups.extend(s.passages for s in result.specific_searches)
+    return merge_passages(passage_groups)
 
 
 def _numeric_pmids(searches: List[SearchRecord]) -> set[str]:
@@ -450,38 +460,41 @@ class ResearchLoop:
         # Bounds librarian runs in flight across both query types of a round.
         self._gate = threading.BoundedSemaphore(config.max_concurrent_retrievals)
 
-    def run(self, first_query: str) -> LoopResult:
-        """Run the seed, every round and the final review.
+    def run(self, result: LoopResult) -> None:
+        """Run the seed, every round and the final review, filling *result*.
 
-        :param first_query: The seed question, also ``{research_question}``.
-        :type first_query: str
-        :return: Searches, ledger, planning traces and the selected evidence.
-        :rtype: LoopResult
+        The caller creates *result*, so it holds the partial state whatever is
+        raised (Ctrl-C included) and the rounds already paid for can be saved.
+
+        :param result: A fresh ``LoopResult(question=...)``; its question is the
+            seed, also ``{research_question}``. Filled in place with searches,
+            ledger, planning traces and the selected evidence.
+        :type result: LoopResult
+        :raises ValueError: if *result* is not fresh, or if the planner's reply
+            stays invalid after ``planner_max_retries`` more attempts.
         :raises RuntimeError: if the seed retrieval failed, since an empty
             history would then read as empty literature.
-        :raises ValueError: if the planner's reply stays invalid after
-            ``planner_max_retries`` more attempts.
-
-        Whatever is raised (Ctrl-C included) carries the partial result as
-        ``exc.loop_result``, so a caller can still save the rounds it paid for.
         """
-        result = LoopResult(question=first_query)
+        if result != LoopResult(question=result.question):
+            raise ValueError("run needs a fresh LoopResult(question=...)")
         with self._tracer.start_span(
             "research_loop.run",
             attributes={
                 "openinference.span.kind": "CHAIN",
-                "input.value": json.dumps({"query": first_query}),
+                "input.value": json.dumps({"query": result.question}),
                 "input.mime_type": "application/json",
             },
         ) as run_span:
             try:
                 self._run(result)
             except BaseException as exc:
-                exc.loop_result = result
                 # The port records exceptions only; Ctrl-C is not a span error.
                 if isinstance(exc, Exception):
                     self._tracer.mark_span_error(run_span, exc)
                 raise
+            finally:
+                # Also on failure, so a partial result carries its evidence.
+                result.passages = _merged_evidence(result)
             output = {
                 "rounds": len(result.planning),
                 "selected_pmid_count": len(result.selected_pmids),
@@ -494,7 +507,6 @@ class ResearchLoop:
                     "output.mime_type": "application/json",
                 },
             )
-        return result
 
     def _run(self, result: LoopResult) -> None:
         # The loop itself; fills *result* in place so a failure leaves it partial.
@@ -523,10 +535,6 @@ class ResearchLoop:
             self._progress("Final selection")
             final_round = self._config.max_rounds + 1
             result.final_selection = self._select_and_plan(result, final_round, 0, 0)
-        selected_context = [_selected_copy(s) for s in result.context_searches]
-        passage_groups = [s.passages for s in selected_context if s.passages]
-        passage_groups.extend(s.passages for s in result.specific_searches)
-        result.passages = merge_passages(passage_groups)
 
     def _run_round(self, result: LoopResult, round_index: int, span: Any) -> bool:
         # One planner call, then its questions; False when it asked nothing.
@@ -554,18 +562,12 @@ class ResearchLoop:
             f"Round {round_index}: retrieving {len(context_questions)} context, "
             f"{len(specific_questions)} specific question(s)"
         )
-        context_results, specific_results = self._retrieve_round(
-            context_questions, specific_questions, round_index
-        )
-        result.context_searches.extend(context_results)
-        for search in specific_results:
-            capped = limit_search_papers(search, self._config.specific_max_papers)
-            result.specific_searches.append(capped)
+        self._retrieve_round(result, context_questions, specific_questions, round_index)
         logger.info(
             "Round %d: %d context, %d specific; %d selected context PMIDs",
             round_index,
-            len(context_results),
-            len(specific_results),
+            len(context_questions),
+            len(specific_questions),
             len(result.selected_pmids),
         )
         return True
@@ -721,25 +723,50 @@ class ResearchLoop:
         return raw_response
 
     def _retrieve_round(
-        self, context: List[str], specific: List[str], round_index: int
-    ) -> tuple[List[SearchRecord], List[SearchRecord]]:
+        self,
+        result: LoopResult,
+        context: List[str],
+        specific: List[str],
+        round_index: int,
+    ) -> None:
         # Both kinds run in one pool; the gate caps the runs actually in flight.
+        # Records land in *result* in ask order, specific ones capped.
         jobs: List[tuple[QueryKind, str]] = [("context", q) for q in context]
         jobs.extend(("specific", q) for q in specific)
-        if not jobs:
-            return [], []
         workers = min(self._config.max_concurrent_retrievals, len(jobs))
         # Pool threads keep the round's span, so each run nests under it.
         bound_retrieve = self._tracer.bind_current_trace_context(self._retrieve_one)
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [
-                pool.submit(bound_retrieve, kind, question, round_index)
-                for kind, question in jobs
-            ]
-            records = [future.result() for future in futures]
-        context_records = [r for r in records if r.kind == "context"]
-        specific_records = [r for r in records if r.kind == "specific"]
-        return context_records, specific_records
+        pool = ThreadPoolExecutor(max_workers=workers)
+        futures: List[Future[SearchRecord]] = [
+            pool.submit(bound_retrieve, kind, question, round_index)
+            for kind, question in jobs
+        ]
+        try:
+            for future in futures:
+                future.result()
+        except BaseException:
+            # In practice Ctrl-C: queued questions never start, runs in flight
+            # still finish (threads cannot be killed) and keep their records.
+            pool.shutdown(cancel_futures=True)
+            self._store_finished(result, futures)
+            raise
+        pool.shutdown()
+        self._store_finished(result, futures)
+
+    def _store_finished(
+        self, result: LoopResult, futures: List[Future[SearchRecord]]
+    ) -> None:
+        # Append the records of the futures that completed, in ask order.
+        for future in futures:
+            finished = future.done() and not future.cancelled()
+            if not finished or future.exception() is not None:
+                continue
+            record: SearchRecord = future.result()
+            if record.kind == "context":
+                result.context_searches.append(record)
+                continue
+            capped = limit_search_papers(record, self._config.specific_max_papers)
+            result.specific_searches.append(capped)
 
     def _retrieve_one(
         self, kind: QueryKind, question: str, round_index: int
