@@ -9,8 +9,10 @@ from librarian import LibrarianAgent, load_runtime_config
 from librarian.literature_search import Fulltext
 
 _JATS = (
-    "<article><body><sec><title>Results</title><p>Body text.</p></sec></body></article>"
+    "<article><body><sec><title>Results</title>"
+    "<p>One.</p><p>Two.</p><p>Three.</p></sec></body></article>"
 )
+_FRAGMENT_JATS = "<article><body><sec><p>Lone caption.</p></sec></body></article>"
 _EMPTY_JATS = "<article><body></body></article>"
 
 _OA = {"inEPMC": True, "isOpenAccess": True, "pmcid": "PMC1"}
@@ -21,7 +23,10 @@ _OA = {"inEPMC": True, "isOpenAccess": True, "pmcid": "PMC1"}
     [
         (_OA, {"PMC1": Fulltext("PMC1", xml=_JATS)}, "extracted"),
         (_OA, {"PMC1": Fulltext("PMC1", xml=_EMPTY_JATS)}, "no_body"),
-        (_OA, {"PMC1": Fulltext("PMC1", error="HTTP 500", status=500)}, "fetch_failed"),
+        (_OA, {"PMC1": Fulltext("PMC1", xml=_FRAGMENT_JATS)}, "no_body"),
+        (_OA, {"PMC1": Fulltext("PMC1", error="HTTP 500", status=500)}, "no_body"),
+        (_OA, {"PMC1": Fulltext("PMC1", error="timeout")}, "fetch_failed"),
+        (_OA, {"PMC1": Fulltext("PMC1", error="HTTP 503", status=503)}, "fetch_failed"),
         (_OA, {}, "fetch_failed"),
         ({"inEPMC": True, "isOpenAccess": True}, {}, "no_body"),
         (

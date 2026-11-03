@@ -94,6 +94,12 @@ _FULLTEXT_NOTES = {
     "fetch_failed": "Abstract only: full text could not be fetched",
     "enrichment_disabled": "Abstract only: full-text reading is off",
 }
+# Fewer body paragraphs than this is a fragment (e.g. a scan's lone caption), not
+# a read full text: the paper keeps them but is reported as ``no_body``.
+_MIN_BODY_PARAGRAPHS = 3
+# What Europe PMC answers for an open-access record whose XML it does not serve.
+# Not an outage, so it is reported as ``no_body`` rather than ``fetch_failed``.
+_NO_XML_HTTP_STATUS = 500
 
 
 def _dedupe_preserving_order(ids: Iterable[str]) -> List[str]:
@@ -1401,10 +1407,12 @@ class LibrarianAgent:
         if fulltext is None or not fulltext.ok:
             error = "not returned by the source" if fulltext is None else fulltext.error
             self._log(f"full-text unavailable for {pmcid}: {error}")
-            paper["fulltext_status"] = "fetch_failed"
+            no_xml = fulltext is not None and fulltext.status == _NO_XML_HTTP_STATUS
+            paper["fulltext_status"] = "no_body" if no_xml else "fetch_failed"
             return []
         records = extract_body_paragraphs(fulltext.xml)
-        paper["fulltext_status"] = "extracted" if records else "no_body"
+        read_body = len(records) >= _MIN_BODY_PARAGRAPHS
+        paper["fulltext_status"] = "extracted" if read_body else "no_body"
         if self._supplementary_enrichment:
             supplementary = (supplementaries or {}).get(pmcid)
             records.extend(
