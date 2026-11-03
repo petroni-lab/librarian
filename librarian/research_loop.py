@@ -40,6 +40,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Protocol
 from librarian.agent import LibrarianAgent, RunResult
 from librarian.config import LibrarianRuntimeConfig, ResearchLoopConfig
 from librarian.llm_client import parse_json_response
+from librarian.tracing_port import NullTracer, TracingPort
 
 logger = logging.getLogger(__name__)
 
@@ -399,6 +400,7 @@ class ResearchLoop:
         prompt_template: str,
         config: ResearchLoopConfig,
         on_progress: Optional[Callable[[str], None]] = None,
+        tracer: Optional[TracingPort] = None,
     ) -> None:
         """Build a loop around its retrievers and planner.
 
@@ -418,6 +420,11 @@ class ResearchLoop:
         :type config: ResearchLoopConfig
         :param on_progress: Called with a short status line per step.
         :type on_progress: callable or None
+        :param tracer: Span-tracing adapter for the run, its rounds and planner
+            calls; defaults to ``NullTracer``. Pass the same tracer to the
+            retrievers (``build_retrievers(..., tracer=...)``) so their runs
+            nest under the loop's trace.
+        :type tracer: TracingPort or None
         :raises ValueError: if a required placeholder or retriever is missing.
         """
         missing = [key for key in REQUIRED_PLACEHOLDERS if key not in prompt_template]
@@ -431,6 +438,7 @@ class ResearchLoop:
         self._template = prompt_template
         self._config = config
         self._on_progress = on_progress
+        self._tracer: TracingPort = tracer if tracer is not None else NullTracer()
         # Bounds librarian runs in flight across both query types of a round.
         self._gate = threading.BoundedSemaphore(config.max_concurrent_retrievals)
 
@@ -450,11 +458,34 @@ class ResearchLoop:
         ``exc.loop_result``, so a caller can still save the rounds it paid for.
         """
         result = LoopResult(question=first_query)
-        try:
-            self._run(result)
-        except BaseException as exc:
-            exc.loop_result = result
-            raise
+        with self._tracer.start_span(
+            "research_loop.run",
+            attributes={
+                "openinference.span.kind": "CHAIN",
+                "input.value": json.dumps({"query": first_query}),
+                "input.mime_type": "application/json",
+            },
+        ) as run_span:
+            try:
+                self._run(result)
+            except BaseException as exc:
+                exc.loop_result = result
+                # The port records exceptions only; Ctrl-C is not a span error.
+                if isinstance(exc, Exception):
+                    self._tracer.mark_span_error(run_span, exc)
+                raise
+            output = {
+                "rounds": len(result.planning),
+                "selected_pmid_count": len(result.selected_pmids),
+                "evidence_count": len(result.passages),
+            }
+            self._tracer.set_span_attributes(
+                run_span,
+                {
+                    "output.value": json.dumps(output),
+                    "output.mime_type": "application/json",
+                },
+            )
         return result
 
     def _run(self, result: LoopResult) -> None:
@@ -466,10 +497,18 @@ class ResearchLoop:
             raise RuntimeError(f"seed retrieval failed: {seed.error}")
         result.context_searches.append(seed)
         for round_index in range(1, self._config.max_rounds + 1):
+            round_attributes = {
+                "openinference.span.kind": "CHAIN",
+                "research_loop.round": round_index,
+            }
+            with self._tracer.start_span(
+                "research_loop.round", attributes=round_attributes
+            ) as round_span:
+                asked_anything = self._run_round(result, round_index, round_span)
             # Every gap is closed and nothing new came in: the next planner call
             # would re-read the same evidence. The batch is already reviewed, so
             # the final review is skipped too.
-            if not self._run_round(result, round_index):
+            if not asked_anything:
                 break
         # Review the last context batch without asking anything further.
         if result.reviewed_context_count < len(result.context_searches):
@@ -481,7 +520,7 @@ class ResearchLoop:
         passage_groups.extend(s.passages for s in result.specific_searches)
         result.passages = merge_passages(passage_groups)
 
-    def _run_round(self, result: LoopResult, round_index: int) -> bool:
+    def _run_round(self, result: LoopResult, round_index: int, span: Any) -> bool:
         # One planner call, then its questions; False when it asked nothing.
         self._progress(f"Round {round_index}: planning")
         trace = self._select_and_plan(
@@ -493,6 +532,14 @@ class ResearchLoop:
         result.planning.append(trace)
         context_questions = trace["context_queries"]
         specific_questions = trace["specific_queries"]
+        self._tracer.set_span_attributes(
+            span,
+            {
+                "research_loop.context_query_count": len(context_questions),
+                "research_loop.specific_query_count": len(specific_questions),
+                "research_loop.selected_pmid_count": len(result.selected_pmids),
+            },
+        )
         if not context_questions and not specific_questions:
             return False
         self._progress(
@@ -579,12 +626,7 @@ class ResearchLoop:
         attempts: List[Dict[str, Any]] = []
         max_attempts = self._config.planner_max_retries + 1
         for attempt in range(1, max_attempts + 1):
-            raw_response = self._planner.chat_completion(
-                messages,
-                temperature=self._config.planner_temperature,
-                max_tokens=self._config.planner_max_tokens,
-                timeout=self._config.planner_timeout_seconds,
-            )
+            raw_response = self._call_planner(messages, round_index, attempt)
             trace: Dict[str, Any] = {
                 "round": round_index,
                 "attempt": attempt,
@@ -624,6 +666,35 @@ class ResearchLoop:
             return trace
         raise AssertionError("planner attempts exhausted without returning or raising")
 
+    def _call_planner(
+        self, messages: List[dict], round_index: int, attempt: int
+    ) -> str:
+        # One planner LLM call in its own span: the largest calls of a run.
+        call = {"round": round_index, "attempt": attempt}
+        with self._tracer.start_span(
+            "research_loop.plan",
+            attributes={
+                "openinference.span.kind": "LLM",
+                "input.value": json.dumps(call),
+                "input.mime_type": "application/json",
+            },
+        ) as span:
+            try:
+                raw_response = self._planner.chat_completion(
+                    messages,
+                    temperature=self._config.planner_temperature,
+                    max_tokens=self._config.planner_max_tokens,
+                    timeout=self._config.planner_timeout_seconds,
+                )
+            except Exception as exc:
+                self._tracer.mark_span_error(span, exc)
+                raise
+            self._tracer.set_span_attributes(
+                span,
+                {"output.value": raw_response[:2000], "output.mime_type": "text/plain"},
+            )
+        return raw_response
+
     def _retrieve_round(
         self, context: List[str], specific: List[str], round_index: int
     ) -> tuple[List[SearchRecord], List[SearchRecord]]:
@@ -633,9 +704,11 @@ class ResearchLoop:
         if not jobs:
             return [], []
         workers = min(self._config.max_concurrent_retrievals, len(jobs))
+        # Pool threads keep the round's span, so each run nests under it.
+        bound_retrieve = self._tracer.bind_current_trace_context(self._retrieve_one)
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = [
-                pool.submit(self._retrieve_one, kind, question, round_index)
+                pool.submit(bound_retrieve, kind, question, round_index)
                 for kind, question in jobs
             ]
             records = [future.result() for future in futures]

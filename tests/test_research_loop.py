@@ -17,6 +17,7 @@ from librarian.research_loop import (
     ResearchLoop,
     merge_passages,
 )
+from librarian.tracing_port import NullTracer
 
 # The shipped prompt's placeholders, with a marker between the two evidence blocks.
 TEMPLATE = (
@@ -69,7 +70,25 @@ def _reply(context=(), specific=(), pmids=()) -> str:
     return json.dumps(payload)
 
 
-def _loop(papers_by_question: dict, replies: list, **overrides) -> tuple:
+class RecordingTracer(NullTracer):
+    """Keeps span names in start order and counts the functions bound to a thread."""
+
+    def __init__(self):
+        self.spans: list = []
+        self.bound = 0
+
+    def start_span(self, name, *, attributes=None):
+        """Record *name*, then open a no-op span."""
+        self.spans.append(name)
+        return super().start_span(name, attributes=attributes)
+
+    def bind_current_trace_context(self, fn):
+        """Count the binding; the function runs unchanged."""
+        self.bound += 1
+        return fn
+
+
+def _loop(papers_by_question: dict, replies: list, tracer=None, **overrides) -> tuple:
     """A loop over fake retrievers with two rounds and three papers per specific."""
     config = replace(
         load_research_loop_config(),
@@ -81,7 +100,8 @@ def _loop(papers_by_question: dict, replies: list, **overrides) -> tuple:
     retriever = FakeRetriever(papers_by_question)
     retrievers = {"seed": retriever, "context": retriever, "specific": retriever}
     planner = ScriptedPlanner(replies)
-    return ResearchLoop(retrievers, planner, TEMPLATE, config), planner
+    loop = ResearchLoop(retrievers, planner, TEMPLATE, config, tracer=tracer)
+    return loop, planner
 
 
 def test_ledger_rounds_and_final_selection():
@@ -127,6 +147,17 @@ def test_round_without_questions_ends_the_loop():
     assert len(planner.prompts) == 1
     assert result.final_selection is None
     assert [p["pmid"] for p in result.passages] == ["1"]
+
+
+def test_loop_traces_its_run_rounds_and_planner_calls():
+    tracer = RecordingTracer()
+    replies = [_reply(context=["C1"], pmids=["1"]), _reply(pmids=["2"])]
+    loop, _ = _loop({"seed": ["1"], "C1": ["2"]}, replies, tracer=tracer)
+    loop.run("seed")
+    round_spans = ["research_loop.round", "research_loop.plan"]
+    assert tracer.spans == ["research_loop.run", *round_spans, *round_spans]
+    # The one round with questions hands its span to the retrieval threads.
+    assert tracer.bound == 1
 
 
 def test_invalid_replies_are_retried_twice_then_raise():
