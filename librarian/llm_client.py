@@ -62,7 +62,17 @@ class LLMClient:
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         model_name: Optional[str] = None,
+        content_only: bool = False,
     ):
+        """Point the client at an endpoint; unset arguments come from the env.
+
+        ``content_only`` returns the message ``content`` alone, for callers that
+        parse the reply as a decision (the research-loop planner): a reasoning
+        model cut off by the token cap returns empty content, and the fallback
+        to ``reasoning_content`` would hand back its trace, where a draft JSON
+        could pass for the answer. With the flag that reply stays empty.
+        """
+        self.content_only = content_only
         self.base_url = (
             base_url or os.getenv("LLM_BASE_URL", "http://localhost:8000/v1")
         ).rstrip("/")
@@ -168,6 +178,8 @@ class LLMClient:
                     continue
                 response.raise_for_status()
                 choice = (response.json().get("choices") or [{}])[0]
+                if self.content_only:
+                    return self._message_content(choice)
                 return self._extract_content(choice)
 
             except requests.exceptions.RequestException as exc:
@@ -225,19 +237,6 @@ class LLMClient:
                 pass
         wait = min(2**attempt, 120)
         return max(1.0, wait + wait * 0.25 * (2 * random.random() - 1))
-
-
-class ContentOnlyLLMClient(LLMClient):
-    """An ``LLMClient`` that returns the message ``content`` alone.
-
-    For callers that parse the reply as a decision (the research-loop planner):
-    a reasoning model cut off by the token cap returns empty content, and the
-    base client's fallback to ``reasoning_content`` would hand back its trace,
-    where a draft JSON could pass for the answer. Here that reply stays empty
-    and fails parsing.
-    """
-
-    _extract_content = staticmethod(LLMClient._message_content)
 
 
 def create_llm_client(

@@ -5,12 +5,13 @@ uv run pytest tests/test_research_loop.py
 
 import json
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
 from librarian.agent import RunResult
 from librarian.config import load_research_loop_config, load_runtime_config
-from librarian.llm_client import ContentOnlyLLMClient, LLMClient
+from librarian.llm_client import LLMClient
 from librarian.research_loop import (
     DEFAULT_LOOP_PROMPT_PATH,
     ResearchLoop,
@@ -149,11 +150,20 @@ def test_invalid_replies_are_retried_twice_then_raise():
     assert len(partial.planner_failure["failed_attempts"]) == 3
 
 
-def test_planner_client_ignores_reasoning_content():
+def test_planner_client_ignores_reasoning_content(monkeypatch):
     choice = {"message": {"content": "", "reasoning_content": '{"draft": 1}'}}
-    # Called on instances, as chat_completion does.
-    assert LLMClient(model_name="m")._extract_content(choice) == '{"draft": 1}'
-    assert ContentOnlyLLMClient(model_name="m")._extract_content(choice) == ""
+    response = SimpleNamespace(
+        status_code=200,
+        raise_for_status=lambda: None,
+        json=lambda: {"choices": [choice]},
+    )
+    monkeypatch.setattr(
+        "librarian.llm_client.requests.post", lambda *args, **kwargs: response
+    )
+    messages = [{"role": "user", "content": "q"}]
+    assert LLMClient(model_name="m").chat_completion(messages) == '{"draft": 1}'
+    planner = LLMClient(model_name="m", content_only=True)
+    assert planner.chat_completion(messages) == ""
 
 
 def test_failed_retrieval_is_shown_and_can_be_asked_again():
