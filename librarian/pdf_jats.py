@@ -213,8 +213,8 @@ def _sections(page_texts: list[str]) -> list[tuple[str, list[str]]]:
     # heading opens an article ("Abstract", "Introduction", …). A late "SUMMARY"
     # or a "Background" subsection never discards the body above it; without an
     # opening heading first (many scans) everything is kept.
-    # ponytail: an all-caps paper title counts as the first heading, so its title
-    # block is kept as body; tighten if that shows up in answers.
+    # An all-caps paper title counts as the first heading, so its title block is
+    # kept as body; tighten if that shows up in answers.
     first_heading_opens = (
         len(sections) > 1 and _heading_key(sections[1][0]) in _OPENING_HEADINGS
     )
