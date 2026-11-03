@@ -120,11 +120,11 @@ def test_ledger_rounds_and_final_selection():
     assert result.final_selection["round"] == 3
 
 
-def test_round_without_questions_counts_and_skips_final_review():
-    replies = [_reply(pmids=["1"]), _reply()]
-    loop, planner = _loop({"seed": ["1"]}, replies)
+def test_round_without_questions_ends_the_loop():
+    # Two rounds allowed, but the first asks nothing: no second round, no final review.
+    loop, planner = _loop({"seed": ["1"]}, [_reply(pmids=["1"])])
     result = loop.run("seed")
-    assert len(planner.prompts) == 2
+    assert len(planner.prompts) == 1
     assert result.final_selection is None
     assert [p["pmid"] for p in result.passages] == ["1"]
 

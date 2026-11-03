@@ -135,7 +135,7 @@ class ResearchLoopConfig:
     No field has a default, like ``LibrarianRuntimeConfig``.
     """
 
-    # Planning rounds after the seed; a round that asks nothing still counts.
+    # Most planning rounds after the seed; a round that asks nothing ends the loop.
     max_rounds: int
     # Independent ceilings on the context and specific questions of one round.
     max_context_queries: int

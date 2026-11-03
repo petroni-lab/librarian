@@ -10,7 +10,8 @@ For questions one retrieval cannot cover:
    questions (one precise point each) under independent ceilings. Both run in
    the same round, one librarian run per question, each type with its own
    retrieval shape. A specific result keeps only its first papers in the
-   judge's ranking. A round that asks nothing still counts.
+   judge's ranking. A round that asks nothing ends the loop: no gap is left
+   and no new evidence would come in.
 3. **Final review.** If the last context batch was never reviewed, one more
    planner call selects from it and may ask nothing.
 
@@ -465,34 +466,11 @@ class ResearchLoop:
             raise RuntimeError(f"seed retrieval failed: {seed.error}")
         result.context_searches.append(seed)
         for round_index in range(1, self._config.max_rounds + 1):
-            self._progress(f"Round {round_index}: planning")
-            trace = self._select_and_plan(
-                result,
-                round_index,
-                self._config.max_context_queries,
-                self._config.max_specific_queries,
-            )
-            result.planning.append(trace)
-            context_questions = trace["context_queries"]
-            specific_questions = trace["specific_queries"]
-            self._progress(
-                f"Round {round_index}: retrieving {len(context_questions)} context, "
-                f"{len(specific_questions)} specific question(s)"
-            )
-            context_results, specific_results = self._retrieve_round(
-                context_questions, specific_questions, round_index
-            )
-            result.context_searches.extend(context_results)
-            for search in specific_results:
-                capped = limit_search_papers(search, self._config.specific_max_papers)
-                result.specific_searches.append(capped)
-            logger.info(
-                "Round %d: %d context, %d specific; %d selected context PMIDs",
-                round_index,
-                len(context_results),
-                len(specific_results),
-                len(result.selected_pmids),
-            )
+            # Every gap is closed and nothing new came in: the next planner call
+            # would re-read the same evidence. The batch is already reviewed, so
+            # the final review is skipped too.
+            if not self._run_round(result, round_index):
+                break
         # Review the last context batch without asking anything further.
         if result.reviewed_context_count < len(result.context_searches):
             self._progress("Final selection")
@@ -502,6 +480,40 @@ class ResearchLoop:
         passage_groups = [s.passages for s in selected_context if s.passages]
         passage_groups.extend(s.passages for s in result.specific_searches)
         result.passages = merge_passages(passage_groups)
+
+    def _run_round(self, result: LoopResult, round_index: int) -> bool:
+        # One planner call, then its questions; False when it asked nothing.
+        self._progress(f"Round {round_index}: planning")
+        trace = self._select_and_plan(
+            result,
+            round_index,
+            self._config.max_context_queries,
+            self._config.max_specific_queries,
+        )
+        result.planning.append(trace)
+        context_questions = trace["context_queries"]
+        specific_questions = trace["specific_queries"]
+        if not context_questions and not specific_questions:
+            return False
+        self._progress(
+            f"Round {round_index}: retrieving {len(context_questions)} context, "
+            f"{len(specific_questions)} specific question(s)"
+        )
+        context_results, specific_results = self._retrieve_round(
+            context_questions, specific_questions, round_index
+        )
+        result.context_searches.extend(context_results)
+        for search in specific_results:
+            capped = limit_search_papers(search, self._config.specific_max_papers)
+            result.specific_searches.append(capped)
+        logger.info(
+            "Round %d: %d context, %d specific; %d selected context PMIDs",
+            round_index,
+            len(context_results),
+            len(specific_results),
+            len(result.selected_pmids),
+        )
+        return True
 
     def render_prompt(
         self, result: LoopResult, max_context: int, max_specific: int
