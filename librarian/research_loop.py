@@ -652,6 +652,19 @@ class ResearchLoop:
         try:
             with self._gate:
                 run_result = self._retrievers[kind].run(question)
+            papers = list(run_result.papers)
+            # merge_passages pairs each snippet with its section label. Checked
+            # here so a retriever without them fails this question, not the
+            # merge after every retrieval has been paid for.
+            unaligned = [
+                passage_key(paper)
+                for paper in papers
+                if len(paper["evidence_sections"]) != len(paper["evidence_snippets"])
+            ]
+            if unaligned:
+                raise ValueError(
+                    f"evidence_sections not aligned with evidence_snippets: {unaligned}"
+                )
         except Exception as exc:  # any pipeline failure ends only this question
             logger.warning("Retrieval failed for %r: %s", question[:60], exc)
             error = f"{type(exc).__name__}: {exc}"
@@ -660,6 +673,6 @@ class ResearchLoop:
             round_index,
             record_kind,
             question,
-            passages=list(run_result.papers),
+            passages=papers,
             debug=run_result.debug,
         )

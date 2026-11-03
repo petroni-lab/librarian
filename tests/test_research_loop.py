@@ -181,6 +181,17 @@ def test_failed_retrieval_is_shown_and_can_be_asked_again():
         loop.run("seed")
 
 
+def test_retriever_without_aligned_sections_fails_the_question():
+    paper = {"pmid": "1", "evidence_snippets": ["a"], "evidence_sections": []}
+    unaligned = SimpleNamespace(run=lambda query: RunResult(papers=[paper], debug={}))
+    retrievers = {"seed": unaligned, "context": unaligned, "specific": unaligned}
+    config = load_research_loop_config()
+    loop = ResearchLoop(retrievers, ScriptedPlanner([]), TEMPLATE, config)
+    # The seed fails at once, before any planner call is paid for.
+    with pytest.raises(RuntimeError, match="seed retrieval failed: ValueError"):
+        loop.run("seed")
+
+
 def test_merge_keeps_each_snippet_with_its_section():
     first = {"pmid": "1", "evidence_snippets": ["a"], "evidence_sections": ["Abstract"]}
     second = {
