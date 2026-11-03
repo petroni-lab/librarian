@@ -52,6 +52,14 @@ def parse_json_response(text: str) -> Any:
         return None
 
 
+class LLMRequestError(Exception):
+    """The endpoint gave no reply: a request error that is not retried, or
+    every retry used up.
+
+    A plain ``Exception`` subclass, so callers catching ``Exception`` still do.
+    """
+
+
 class LLMClient:
     """A client for a single OpenAI-compatible chat-completions endpoint."""
 
@@ -196,9 +204,9 @@ class LLMClient:
                 if attempt < self.MAX_RETRIES - 1 and transient:
                     time.sleep(self._backoff(attempt))
                     continue
-                raise Exception(f"LLM API request failed: {exc}") from exc
+                raise LLMRequestError(f"LLM API request failed: {exc}") from exc
 
-        raise Exception(
+        raise LLMRequestError(
             f"LLM API request failed after {self.MAX_RETRIES} retries: {last_exception}"
         )
 

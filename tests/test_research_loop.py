@@ -14,7 +14,8 @@ import pytest
 
 from librarian.agent import RunResult
 from librarian.config import load_research_loop_config, load_runtime_config
-from librarian.llm_client import LLMClient
+from librarian.literature_search import LiteratureSearchError
+from librarian.llm_client import LLMClient, LLMRequestError
 from librarian.research_loop import (
     DEFAULT_LOOP_PROMPT_PATH,
     LoopResult,
@@ -42,13 +43,15 @@ def _paper(pmid: str) -> dict:
 
 
 class FakeRetriever:
-    """Answers each question from a fixed table; a missing question raises."""
+    """Answers each question from a fixed table; a missing question fails retrieval."""
 
     def __init__(self, papers_by_question: dict):
         self.papers_by_question = papers_by_question
 
     def run(self, query: str) -> RunResult:
         """Return the table's papers for *query*."""
+        if query not in self.papers_by_question:
+            raise LiteratureSearchError(f"no papers for {query!r}")
         papers = [_paper(pmid) for pmid in self.papers_by_question[query]]
         return RunResult(papers=papers, debug={"search_queries": [query]})
 
@@ -181,7 +184,7 @@ def test_final_review_is_skipped_when_the_batch_has_nothing_to_select():
     result = _run(loop)
     assert len(planner.prompts) == 1
     assert result.final_selection is None
-    assert result.context_searches[1].error.startswith("KeyError")
+    assert result.context_searches[1].error.startswith("LiteratureSearchError")
 
 
 def test_loop_traces_its_run_rounds_and_planner_calls():
@@ -274,7 +277,7 @@ def test_failed_retrieval_is_shown_and_can_be_asked_again():
     replies = [_reply(context=["missing"]), _reply(context=["missing"]), _reply()]
     loop, planner = _loop({"seed": ["1"]}, replies)
     result = _run(loop)
-    assert result.context_searches[1].error.startswith("KeyError")
+    assert result.context_searches[1].error.startswith("LiteratureSearchError")
     # The planner sees the failure, not an empty result, and may ask again.
     latest = planner.prompts[1].split("LAST")[1]
     assert "<query>\nmissing\n</query>\n<evidences>\nretrieval failed" in latest
@@ -285,15 +288,40 @@ def test_failed_retrieval_is_shown_and_can_be_asked_again():
         _run(loop)
 
 
-def test_retriever_without_aligned_sections_fails_the_question():
+def test_retriever_without_aligned_sections_stops_the_run():
     paper = {"pmid": "1", "evidence_snippets": ["a"], "evidence_sections": []}
     unaligned = SimpleNamespace(run=lambda query: RunResult(papers=[paper], debug={}))
     retrievers = {"seed": unaligned, "context": unaligned, "specific": unaligned}
     config = load_research_loop_config()
-    loop = ResearchLoop(retrievers, ScriptedPlanner([]), TEMPLATE, config)
-    # The seed fails at once, before any planner call is paid for.
-    with pytest.raises(RuntimeError, match="seed retrieval failed: ValueError"):
+    planner = ScriptedPlanner([])
+    loop = ResearchLoop(retrievers, planner, TEMPLATE, config)
+    # A wiring bug: the seed raises at once, before any planner call is paid for.
+    with pytest.raises(ValueError, match="evidence_sections not aligned"):
         _run(loop)
+    assert planner.prompts == []
+
+
+def test_only_retrieval_errors_fail_a_question():
+    def retrieve(query: str) -> RunResult:
+        """Fail the LLM request on ``llm``, hit a bug on ``bug``, else answer."""
+        if query == "llm":
+            raise LLMRequestError("LLM API request failed: 503")
+        if query == "bug":
+            raise TypeError("bad argument")
+        return RunResult(papers=[_paper("1")], debug={})
+
+    retriever = SimpleNamespace(run=retrieve)
+    retrievers = {"seed": retriever, "context": retriever, "specific": retriever}
+    replies = [_reply(context=["llm"], pmids=["1"]), _reply(specific=["bug"])]
+    config = replace(load_research_loop_config(), max_rounds=2)
+    loop = ResearchLoop(retrievers, ScriptedPlanner(replies), TEMPLATE, config)
+    result = LoopResult(question="seed")
+    # The failed request is the question's error; the bug stops the run.
+    with pytest.raises(TypeError, match="bad argument"):
+        loop.run(result)
+    llm_search = result.context_searches[1]
+    assert llm_search.error == "LLMRequestError: LLM API request failed: 503"
+    assert result.specific_searches == []
 
 
 def test_merge_keeps_each_snippet_with_its_section():

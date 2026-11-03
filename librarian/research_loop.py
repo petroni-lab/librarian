@@ -43,7 +43,8 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Protocol
 
 from librarian.agent import LibrarianAgent, RunResult
 from librarian.config import LibrarianRuntimeConfig, ResearchLoopConfig
-from librarian.llm_client import parse_json_response
+from librarian.literature_search import LiteratureSearchError
+from librarian.llm_client import LLMRequestError, parse_json_response
 from librarian.tracing_port import NullTracer, TracingPort
 
 logger = logging.getLogger(__name__)
@@ -92,7 +93,8 @@ class SearchRecord:
     :param passages: The papers it returned, in the judge's ranking; a specific
         search keeps only its first ``specific_max_papers``.
     :param debug: ``RunResult.debug``, plus ``paper_selection`` on specific searches.
-    :param error: Why the run failed, or None.
+    :param error: Why the retrieval failed (an LLM or Europe PMC request), or
+        None.
     :param selected_pmids: Ledger PMIDs selected from this context search when
         its batch was reviewed; None until then, and always None for specific ones.
     """
@@ -471,10 +473,15 @@ class ResearchLoop:
             seed, also ``{research_question}``. Filled in place with searches,
             ledger, planning traces and the selected evidence.
         :type result: LoopResult
-        :raises ValueError: if *result* is not fresh, or if the planner's reply
-            stays invalid after ``planner_max_retries`` more attempts.
+        :raises ValueError: if *result* is not fresh, if a retriever returns
+            ``evidence_sections`` not aligned with ``evidence_snippets``, or if
+            the planner's reply stays invalid after ``planner_max_retries`` more
+            attempts.
         :raises RuntimeError: if the seed retrieval failed, since an empty
             history would then read as empty literature.
+
+        A retrieval error (``LLMRequestError``, ``LiteratureSearchError``)
+        fails only its question; any other retriever error propagates.
         """
         if result != LoopResult(question=result.question):
             raise ValueError("run needs a fresh LoopResult(question=...)")
@@ -773,28 +780,30 @@ class ResearchLoop:
     def _retrieve_one(
         self, kind: QueryKind, question: str, round_index: int
     ) -> SearchRecord:
-        # One librarian run. A failure becomes the record's error: a question
-        # that was never answered must stay distinct from one that found nothing.
+        # One librarian run. A retrieval failure (LLM or Europe PMC request)
+        # becomes the record's error: a question that was never answered must
+        # stay distinct from one that found nothing. Any other error is a bug
+        # and stops the run.
         record_kind: SearchKind = "specific" if kind == "specific" else "context"
         try:
             run_result = self._retrievers[kind].run(question)
-            papers = list(run_result.papers)
-            # merge_passages pairs each snippet with its section label. Checked
-            # here so a retriever without them fails this question, not the
-            # merge after every retrieval has been paid for.
-            unaligned = [
-                passage_key(paper)
-                for paper in papers
-                if len(paper["evidence_sections"]) != len(paper["evidence_snippets"])
-            ]
-            if unaligned:
-                raise ValueError(
-                    f"evidence_sections not aligned with evidence_snippets: {unaligned}"
-                )
-        except Exception as exc:  # any pipeline failure ends only this question
+        except (LLMRequestError, LiteratureSearchError) as exc:
             logger.warning("Retrieval failed for %r: %s", question[:60], exc)
             error = f"{type(exc).__name__}: {exc}"
             return SearchRecord(round_index, record_kind, question, error=error)
+        papers = list(run_result.papers)
+        # merge_passages pairs each snippet with its section label. A retriever
+        # without them is miswired: the run stops at its first question, the
+        # seed, before any planner call is paid for.
+        unaligned = [
+            passage_key(paper)
+            for paper in papers
+            if len(paper["evidence_sections"]) != len(paper["evidence_snippets"])
+        ]
+        if unaligned:
+            raise ValueError(
+                f"evidence_sections not aligned with evidence_snippets: {unaligned}"
+            )
         return SearchRecord(
             round_index,
             record_kind,
