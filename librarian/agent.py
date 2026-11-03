@@ -83,6 +83,18 @@ _JUDGE_WORKERS = 8
 # Quoted tokens in a judge reply; used to salvage ids when the JSON is unparseable.
 _QUOTED_TOKEN_RE = re.compile(r'"([A-Za-z0-9_\-]+)"')
 
+# Why each paper's evidence does or does not include its full-text body, keyed by
+# the ``fulltext_status`` Stage 2 records on the paper. The note is what a
+# consumer shows next to the reference; "" when the body was read.
+_FULLTEXT_NOTES = {
+    "extracted": "",
+    "not_open_access": "Abstract only: full text not open access",
+    "not_in_epmc": "Abstract only: full text not hosted by Europe PMC",
+    "no_body": "Abstract only: no readable full text",
+    "fetch_failed": "Abstract only: full text could not be fetched",
+    "enrichment_disabled": "Abstract only: full-text reading is off",
+}
+
 
 def _dedupe_preserving_order(ids: Iterable[str]) -> List[str]:
     """Drop repeats but keep first-seen order, which is the judge's ranking."""
@@ -1124,6 +1136,8 @@ class LibrarianAgent:
             for record in self._body_paragraphs(paper, fulltexts, supplementaries):
                 record["bm25_metadata"] = body_metadata
                 records.append(record)
+        else:
+            paper["fulltext_status"] = "enrichment_disabled"
 
         # Stable coordinates, assigned before re-cutting: the abstract and body
         # by their order (the same for every sub-query), supplementary records
@@ -1317,6 +1331,8 @@ class LibrarianAgent:
         if not cited and abstract:
             cited = [(abstract, "Abstract")]
         paper_id = _candidate_id(paper)
+        # Set on every paper Stage 2 decomposed; a missing key is a wiring bug.
+        status = paper["fulltext_status"]
         return {
             "evidence_snippets": [span for span, _ in cited],
             # Parallel to evidence_snippets: the section each span was cited
@@ -1340,7 +1356,13 @@ class LibrarianAgent:
             "epmcSource": str(paper.get("epmcSource") or paper.get("sourceCode") or ""),
             "url": str(paper.get("url") or ""),
             "affiliation": _first_affiliation(paper),
-            "has_fulltext": bool(paper.get("inEPMC") or paper.get("hasFreeFullText")),
+            # True only when the body was actually read into the evidence pool;
+            # whether the judge cited it shows in evidence_sections.
+            "has_fulltext": status == "extracted",
+            # Why the body was or was not read (a _FULLTEXT_NOTES key), and the
+            # matching user-facing note ("" when it was read).
+            "fulltext_status": status,
+            "fulltext_note": _FULLTEXT_NOTES[status],
         }
 
     # ── Body extraction from the prefetched full text ────────────────────────
@@ -1353,10 +1375,12 @@ class LibrarianAgent:
     ) -> List[Dict[str, str]]:
         """Body paragraph records for one paper from the prefetched batch (or []).
 
-        Three ways to legitimately get nothing back, all of which leave the
-        paper abstract-only: it is not open access, its full text could not be
-        fetched, or the JATS had no usable body. Only the fetch failure is
-        worth logging — the other two are ordinary.
+        Several ways to legitimately get nothing back, all of which leave the
+        paper abstract-only: it is not hosted by Europe PMC, it is not open
+        access, its full text could not be fetched, or the JATS had no usable
+        body. Only the fetch failure is worth logging — the others are
+        ordinary. Which one applied is recorded on the paper as
+        ``fulltext_status`` (a ``_FULLTEXT_NOTES`` key) for the evidence record.
 
         With ``supplementary_enrichment`` on, the text of the paper's
         supplementary PDF / Word files follows the body records, each tagged
@@ -1364,14 +1388,23 @@ class LibrarianAgent:
         """
         pmcid = _fulltext_pmcid(paper)
         if not pmcid:
+            if not paper.get("inEPMC"):
+                paper["fulltext_status"] = "not_in_epmc"
+            elif not paper.get("isOpenAccess"):
+                paper["fulltext_status"] = "not_open_access"
+            else:
+                # Open access and hosted, but no PMC id to fetch JATS by
+                # (e.g. a preprint whose full text is PDF only).
+                paper["fulltext_status"] = "no_body"
             return []
         fulltext = fulltexts.get(pmcid)
-        if fulltext is None:
-            return []
-        if not fulltext.ok:
-            self._log(f"full-text unavailable for {pmcid}: {fulltext.error}")
+        if fulltext is None or not fulltext.ok:
+            error = "not returned by the source" if fulltext is None else fulltext.error
+            self._log(f"full-text unavailable for {pmcid}: {error}")
+            paper["fulltext_status"] = "fetch_failed"
             return []
         records = extract_body_paragraphs(fulltext.xml)
+        paper["fulltext_status"] = "extracted" if records else "no_body"
         if self._supplementary_enrichment:
             supplementary = (supplementaries or {}).get(pmcid)
             records.extend(
