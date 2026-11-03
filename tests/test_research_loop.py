@@ -11,7 +11,11 @@ import pytest
 from librarian.agent import RunResult
 from librarian.config import load_research_loop_config, load_runtime_config
 from librarian.llm_client import ContentOnlyLLMClient, LLMClient
-from librarian.research_loop import DEFAULT_LOOP_PROMPT_PATH, ResearchLoop
+from librarian.research_loop import (
+    DEFAULT_LOOP_PROMPT_PATH,
+    ResearchLoop,
+    merge_passages,
+)
 
 # The shipped prompt's placeholders, with a marker between the two evidence blocks.
 TEMPLATE = (
@@ -22,7 +26,11 @@ TEMPLATE = (
 
 def _paper(pmid: str) -> dict:
     """One librarian paper with a single snippet naming its PMID."""
-    return {"pmid": pmid, "evidence_snippets": [f"evidence {pmid}"]}
+    return {
+        "pmid": pmid,
+        "evidence_snippets": [f"evidence {pmid}"],
+        "evidence_sections": ["Abstract"],
+    }
 
 
 class FakeRetriever:
@@ -157,6 +165,20 @@ def test_failed_retrieval_is_recorded_and_failed_seed_raises():
     loop, _ = _loop({}, [])
     with pytest.raises(RuntimeError, match="seed retrieval failed"):
         loop.run("seed")
+
+
+def test_merge_keeps_each_snippet_with_its_section():
+    first = {"pmid": "1", "evidence_snippets": ["a"], "evidence_sections": ["Abstract"]}
+    second = {
+        "pmid": "1",
+        "evidence_snippets": ["a", "b"],
+        "evidence_sections": ["Abstract", "Supplementary: S1.pdf"],
+    }
+    (merged,) = merge_passages([[first], [second]])
+    assert merged["evidence_snippets"] == ["a", "b"]
+    assert merged["evidence_sections"] == ["Abstract", "Supplementary: S1.pdf"]
+    # The per-question record is untouched.
+    assert first["evidence_sections"] == ["Abstract"]
 
 
 def test_prompt_contract_and_config():

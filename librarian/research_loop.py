@@ -182,7 +182,8 @@ def merge_passages(passage_groups: List[List[Dict[str, Any]]]) -> List[Dict[str,
 
     :param passage_groups: Passage lists in the order their questions were asked.
     :type passage_groups: list[list[dict[str, Any]]]
-    :return: Merged copies; a paper's ``evidence_snippets`` are unioned.
+    :return: Merged copies; a paper's ``evidence_snippets`` are unioned, each
+        new snippet with its ``evidence_sections`` label.
     :rtype: list[dict[str, Any]]
     """
     merged: Dict[str, Dict[str, Any]] = {}
@@ -192,14 +193,21 @@ def merge_passages(passage_groups: List[List[Dict[str, Any]]]) -> List[Dict[str,
             if not key:
                 continue
             existing = merged.get(key)
+            snippets = passage["evidence_snippets"]
+            # Parallel to the snippets: section labels (supplementary file, page, ...).
+            sections = passage["evidence_sections"]
             if existing is None:
                 # Copied so merging never mutates the per-question record.
-                snippets = list(passage.get("evidence_snippets") or [])
-                merged[key] = {**passage, "evidence_snippets": snippets}
+                merged[key] = {
+                    **passage,
+                    "evidence_snippets": list(snippets),
+                    "evidence_sections": list(sections),
+                }
                 continue
-            for snippet in passage.get("evidence_snippets") or []:
+            for snippet, section in zip(snippets, sections, strict=True):
                 if snippet not in existing["evidence_snippets"]:
                     existing["evidence_snippets"].append(snippet)
+                    existing["evidence_sections"].append(section)
     return list(merged.values())
 
 
