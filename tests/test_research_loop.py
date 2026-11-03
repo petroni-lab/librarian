@@ -156,11 +156,15 @@ def test_planner_client_ignores_reasoning_content():
     assert ContentOnlyLLMClient(model_name="m")._extract_content(choice) == ""
 
 
-def test_failed_retrieval_is_recorded_and_failed_seed_raises():
-    replies = [_reply(context=["missing"]), _reply(), _reply()]
-    loop, _ = _loop({"seed": ["1"]}, replies)
+def test_failed_retrieval_is_shown_and_can_be_asked_again():
+    replies = [_reply(context=["missing"]), _reply(context=["missing"]), _reply()]
+    loop, planner = _loop({"seed": ["1"]}, replies)
     result = loop.run("seed")
     assert result.context_searches[1].error.startswith("KeyError")
+    # The planner sees the failure, not an empty result, and may ask again.
+    latest = planner.prompts[1].split("LAST")[1]
+    assert "<query>\nmissing\n</query>\n<evidences>\nretrieval failed" in latest
+    assert result.planning[1]["context_queries"] == ["missing"]
 
     loop, _ = _loop({}, [])
     with pytest.raises(RuntimeError, match="seed retrieval failed"):

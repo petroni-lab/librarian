@@ -10,6 +10,7 @@ Select useful papers from the latest context searches and plan the next context 
 - `research_question`: the question the evidence must answer. It was also the first context query.
 - `previous_searches`: earlier queries and their retained evidence. Context queries show only papers selected when their batch was reviewed. Specific queries retain all their returned papers after the per-query cap. `null` in the first round.
 - `last_searches`: the latest queries and their evidence. Context queries include every returned paper; specific queries include their first retained papers. The first batch is the initial context query with all its evidence.
+- A search whose evidence reads `retrieval failed` was never answered: it is not a search that found nothing. Ask it again if its evidence is still needed.
 - `eligible_context_pmids`: the numeric PMIDs available for selection from the latest context queries in `last_searches`.
 - `max_context_queries` and `max_specific_queries`: independent ceilings for the two query arrays. Both zero means review the last context evidence only; return both arrays empty.
 

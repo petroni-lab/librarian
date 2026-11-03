@@ -231,7 +231,8 @@ def render_searches(searches: List[SearchRecord]) -> str:
 
     Spans are joined with `` || `` so two distant spans never read as one claim.
     A paper without a numeric PMID is shown with ``PMID: null``: visible for
-    planning, never selectable.
+    planning, never selectable. A failed retrieval shows ``retrieval failed``
+    instead of evidence, so it never reads as a search that found nothing.
 
     :param searches: History or latest batch, in prompt order.
     :type searches: list[SearchRecord]
@@ -250,7 +251,9 @@ def render_searches(searches: List[SearchRecord]) -> str:
             else:
                 tag = "article_" + re.sub(r"[^A-Za-z0-9_.-]+", "_", key)
                 evidence_blocks.append(f"<{tag}>\nPMID: null\n{text}\n</{tag}>")
-        evidence = "\n".join(evidence_blocks)
+        evidence = "\n".join(evidence_blocks) or "null"
+        if search.error:
+            evidence = "retrieval failed"
         lines = [
             "<search>",
             f"<query_type>{search.kind}</query_type>",
@@ -258,7 +261,7 @@ def render_searches(searches: List[SearchRecord]) -> str:
             search.question,
             "</query>",
             "<evidences>",
-            evidence or "null",
+            evidence,
             "</evidences>",
             "</search>",
         ]
@@ -557,8 +560,9 @@ class ResearchLoop:
         prompt = self.render_prompt(result, max_context, max_specific)
         boundary = result.reviewed_context_count
         latest_context = result.context_searches[boundary:]
-        asked = [s.question for s in result.context_searches]
-        asked.extend(s.question for s in result.specific_searches)
+        # A failed question was never answered, so the planner may ask it again.
+        searches = result.context_searches + result.specific_searches
+        asked = [s.question for s in searches if not s.error]
         messages = [{"role": "user", "content": prompt}]
         attempts: List[Dict[str, Any]] = []
         max_attempts = self._config.planner_max_retries + 1
