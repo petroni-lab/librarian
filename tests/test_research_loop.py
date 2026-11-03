@@ -173,6 +173,15 @@ def test_round_without_questions_ends_the_loop():
     assert [p["pmid"] for p in result.passages] == ["1"]
 
 
+def test_final_review_is_skipped_when_the_batch_has_nothing_to_select():
+    # The last round's only context question fails retrieval: no paper to select.
+    loop, planner = _loop({"seed": ["1"]}, [_reply(context=["missing"])], max_rounds=1)
+    result = _run(loop)
+    assert len(planner.prompts) == 1
+    assert result.final_selection is None
+    assert result.context_searches[1].error.startswith("KeyError")
+
+
 def test_loop_traces_its_run_rounds_and_planner_calls():
     tracer = RecordingTracer()
     replies = [_reply(context=["C1"], pmids=["1"]), _reply(pmids=["2"])]

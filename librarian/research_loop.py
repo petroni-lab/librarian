@@ -12,8 +12,9 @@ For questions one retrieval cannot cover:
    retrieval shape. A specific result keeps only its first papers in the
    judge's ranking. A round that asks nothing ends the loop: no gap is left
    and no new evidence would come in.
-3. **Final review.** If the last context batch was never reviewed, one more
-   planner call selects from it; any question it asks is dropped.
+3. **Final review.** If the last context batch was never reviewed and has a
+   paper to select, one more planner call selects from it; any question it asks
+   is dropped.
 
 Questions over a ceiling never fail a round: each type keeps its first ones and
 the planning trace records the rest as ``dropped_context_queries`` and
@@ -118,7 +119,8 @@ class LoopResult:
         are the unreviewed latest batch.
     :param planning: One planner trace per round.
     :param final_selection: The selection-only review's trace, or None when the
-        last round asked no context question.
+        last batch had no numeric PMID to select (no context question asked, or
+        every one failed).
     :param planner_failure: The round and every invalid reply when the planner
         gave up, which ends the run; None otherwise.
     :param passages: Selected context evidence and every specific result,
@@ -530,8 +532,10 @@ class ResearchLoop:
             # the final review is skipped too.
             if not asked_anything:
                 break
-        # Review the last context batch without asking anything further.
-        if result.reviewed_context_count < len(result.context_searches):
+        # Review the last context batch without asking anything further. A batch
+        # with nothing to select (every retrieval failed) is not worth the call.
+        latest_context = result.context_searches[result.reviewed_context_count :]
+        if _numeric_pmids(latest_context):
             self._progress("Final selection")
             final_round = self._config.max_rounds + 1
             result.final_selection = self._select_and_plan(result, final_round, 0, 0)
