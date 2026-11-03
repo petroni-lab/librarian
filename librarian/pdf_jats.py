@@ -159,6 +159,11 @@ def _sections(page_texts: list[str]) -> list[tuple[str, list[str]]]:
         if line.endswith((".", "?", "!", ":")) and len(line) < 0.8 * full_width:
             flush()
     flush()
+    # Once headings exist, the untitled text before the first one is the title
+    # block (title, authors, affiliations), not body. Without any heading (many
+    # scans) that untitled text is the whole article and is kept.
+    if len(sections) > 1:
+        sections = sections[1:]
     return [
         (title, paragraphs)
         for title, paragraphs in sections
