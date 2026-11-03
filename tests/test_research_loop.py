@@ -89,14 +89,9 @@ class RecordingTracer(NullTracer):
 
 
 def _loop(papers_by_question: dict, replies: list, tracer=None, **overrides) -> tuple:
-    """A loop over fake retrievers with two rounds and three papers per specific."""
-    config = replace(
-        load_research_loop_config(),
-        max_rounds=2,
-        specific_max_papers=3,
-        planner_max_retries=2,
-        **overrides,
-    )
+    """A loop over fake retrievers: two rounds, three papers per specific by default."""
+    defaults = {"max_rounds": 2, "specific_max_papers": 3, "planner_max_retries": 2}
+    config = replace(load_research_loop_config(), **{**defaults, **overrides})
     retriever = FakeRetriever(papers_by_question)
     retrievers = {"seed": retriever, "context": retriever, "specific": retriever}
     planner = ScriptedPlanner(replies)
@@ -171,14 +166,33 @@ def test_invalid_replies_are_retried_twice_then_raise():
     # The seed question, however spelled, is never asked again.
     assert trace["context_queries"] == []
 
-    over_budget = _reply(context=["A", "B"])
-    loop, _ = _loop({"seed": ["1"]}, [over_budget] * 3, max_context_queries=1)
-    with pytest.raises(ValueError, match="budget") as raised:
+    loop, _ = _loop({"seed": ["1"]}, ["not json"] * 3)
+    with pytest.raises(ValueError, match="JSON object") as raised:
         loop.run("seed")
     # The partial result survives, with the seed and every failed attempt.
     partial = raised.value.loop_result
     assert partial.context_searches[0].question == "seed"
     assert len(partial.planner_failure["failed_attempts"]) == 3
+
+
+def test_questions_over_a_ceiling_are_dropped_not_failed():
+    papers = {"seed": ["1"], "A": ["2"], "S1": ["3"]}
+    replies = [
+        _reply(context=["A", "B"], specific=["S1", "S2"], pmids=["1"]),
+        # The final review asks again: the questions are dropped, the run ends.
+        _reply(context=["C"], specific=["S3"], pmids=["2"]),
+    ]
+    loop, _ = _loop(
+        papers, replies, max_rounds=1, max_context_queries=1, max_specific_queries=1
+    )
+    result = loop.run("seed")
+    trace = result.planning[0]
+    assert trace["context_queries"] == ["A"] and trace["specific_queries"] == ["S1"]
+    assert trace["dropped_context_queries"] == ["B"]
+    assert trace["dropped_specific_queries"] == ["S2"]
+    assert result.final_selection["dropped_context_queries"] == ["C"]
+    assert result.final_selection["dropped_specific_queries"] == ["S3"]
+    assert result.selected_pmids == ["1", "2"]
 
 
 def test_planner_client_ignores_reasoning_content(monkeypatch):

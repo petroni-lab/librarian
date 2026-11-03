@@ -13,7 +13,11 @@ For questions one retrieval cannot cover:
    judge's ranking. A round that asks nothing ends the loop: no gap is left
    and no new evidence would come in.
 3. **Final review.** If the last context batch was never reviewed, one more
-   planner call selects from it and may ask nothing.
+   planner call selects from it; any question it asks is dropped.
+
+Questions over a ceiling never fail a round: each type keeps its first ones and
+the planning trace records the rest as ``dropped_context_queries`` and
+``dropped_specific_queries``.
 
 History shows a context search only through the papers selected when its batch
 was reviewed, so a later selection never revives a discarded paper; specific
@@ -306,7 +310,7 @@ def parse_planner_reply(
     max_specific_queries: int,
     already_asked: List[str],
     latest_context: List[SearchRecord],
-) -> tuple[List[str], List[str], List[str]]:
+) -> tuple[List[str], List[str], List[str], List[str], List[str]]:
     """Validate one planner reply.
 
     :param raw_response: JSON object with ``context_queries``,
@@ -321,12 +325,14 @@ def parse_planner_reply(
     :param latest_context: The unreviewed context searches, the only ones
         whose papers may be selected.
     :type latest_context: list[SearchRecord]
-    :return: New context questions, new specific questions, selected PMIDs.
+    :return: New context questions, new specific questions, selected PMIDs,
+        then the context and specific questions dropped over their ceiling.
         A selected ID that is not a numeric PMID of the latest context batch
         (history-only, specific-only, invented) is ignored rather than failing
-        the round; repeated questions are dropped.
-    :rtype: tuple[list[str], list[str], list[str]]
-    :raises ValueError: Invalid schema, or more new questions than a ceiling.
+        the round; repeated questions are dropped; each type keeps its first
+        questions up to its ceiling.
+    :rtype: tuple[list[str], list[str], list[str], list[str], list[str]]
+    :raises ValueError: Invalid schema.
     """
     payload = parse_json_response(raw_response)
     if payload is None:
@@ -357,11 +363,13 @@ def parse_planner_reply(
     seen = {" ".join(question.split()).casefold() for question in already_asked}
     context_questions = _normalized_new(context, seen)
     specific_questions = _normalized_new(specific, seen)
-    over_context = len(context_questions) > max_context_queries
-    over_specific = len(specific_questions) > max_specific_queries
-    if over_context or over_specific:
-        raise ValueError("planner questions exceed a per-type question budget")
-    return context_questions, specific_questions, selected
+    # Over a ceiling the first questions are kept: a long reply still plans the
+    # round instead of failing a run whose retrievals are already paid for.
+    kept_context = context_questions[:max_context_queries]
+    dropped_context = context_questions[max_context_queries:]
+    kept_specific = specific_questions[:max_specific_queries]
+    dropped_specific = specific_questions[max_specific_queries:]
+    return kept_context, kept_specific, selected, dropped_context, dropped_specific
 
 
 def limit_search_papers(search: SearchRecord, max_papers: int) -> SearchRecord:
@@ -636,7 +644,7 @@ class ResearchLoop:
                 "reviewed_search_end": len(result.context_searches),
             }
             try:
-                context_questions, specific_questions, pmids = parse_planner_reply(
+                parsed = parse_planner_reply(
                     raw_response, max_context, max_specific, asked, latest_context
                 )
             except ValueError as exc:
@@ -650,9 +658,26 @@ class ResearchLoop:
                     raise
                 logger.warning("Invalid planner reply (%s); retrying", exc)
                 continue
+            (
+                context_questions,
+                specific_questions,
+                pmids,
+                dropped_context,
+                dropped_specific,
+            ) = parsed
+            if dropped_context or dropped_specific:
+                logger.warning(
+                    "Round %d: dropped %d context, %d specific question(s) over "
+                    "the ceilings",
+                    round_index,
+                    len(dropped_context),
+                    len(dropped_specific),
+                )
             trace["parse_error"] = None
             trace["context_queries"] = context_questions
             trace["specific_queries"] = specific_questions
+            trace["dropped_context_queries"] = dropped_context
+            trace["dropped_specific_queries"] = dropped_specific
             trace["selected_pmids"] = pmids
             trace["previous_attempts"] = attempts
             for pmid in pmids:
