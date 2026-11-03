@@ -43,10 +43,44 @@ _KNOWN_HEADINGS = {
     "case report",
     "case presentation",
 }
+# Headings that open an article's text: what comes before the first of them is the
+# title block (title, authors, affiliations). Only these, so a stray heading late
+# in a scan never discards the body above it.
+_OPENING_HEADINGS = {"abstract", "summary", "introduction", "background"}
+# Sections that are front or back matter: their text is left out, the rest goes on.
+_SKIPPED_HEADINGS = {
+    "keywords",
+    "key words",
+    "acknowledgement",
+    "acknowledgements",
+    "acknowledgment",
+    "acknowledgments",
+    "funding",
+    "conflict of interest",
+    "conflicts of interest",
+    "competing interests",
+    "author contributions",
+    "correspondence",
+    "citation",
+    "copyright",
+    "data availability",
+    "edited and reviewed by",
+    "abbreviations",
+}
 # Everything from one of these headings on is back matter, not body.
 _END_HEADINGS = {"references", "bibliography", "literature cited", "reference"}
-# "2. Methods", "3.1 Cell culture", "II. RESULTS".
-_NUMBERED_HEADING_RE = re.compile(r"^(\d+(\.\d+)*|[IVX]+)\.?\s+[A-Z][^.]{1,78}$")
+# "2. Methods", "3.1 Cell culture", "II. RESULTS": a 1-2 digit number followed by
+# a full stop or a sub-number (or a Roman numeral), then a title with no digits,
+# commas or full stops. That rules out table rows ("12 Controls 45 23", "12 GP
+# surgeries expressed"), lines opening with a year ("2019 Guidelines recommend")
+# and numbered affiliations ("1 Institute of Examples, Heidelberg").
+_NUMBERED_HEADING_RE = re.compile(
+    r"^(\d{1,2}\.(\d{1,2}\.?)*|\d{1,2}(\.\d{1,2})+|[IVX]{1,4}\.)\s+[A-Z][^.,\d]{1,78}$"
+)
+# Longer numbered lines are list items ("1. That the hereditary ... of cancer").
+_MAX_HEADING_WORDS = 8
+# Figure and table captions are upper-case but not headings.
+_CAPTION_RE = re.compile(r"^(fig(ure)?|table|plate|chart)\b", re.IGNORECASE)
 _PAGE_NUMBER_RE = re.compile(r"^\W*\d{1,4}\W*$")
 # XML 1.0 forbids these; pypdf output can contain them.
 _INVALID_XML_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -60,16 +94,19 @@ _MAX_MEAN_WORD_LEN = 12.0
 _MIN_CHARS_PER_PAGE = 200
 
 
-def pdf_page_texts(data: bytes) -> list[str]:
+def pdf_page_texts(data: bytes, skip: int = 0) -> list[str]:
     """The text layer of each page of a PDF, in page order ("" for image-only pages).
 
+    Line breaks are kept: paragraph and heading detection need them.
+
     :param data: The PDF bytes.
-    :return: One string per page.
+    :param skip: Number of leading pages to leave out.
+    :return: One string per page after the first *skip*.
     """
     from pypdf import PdfReader  # optional extra: only PDF conversion needs it
 
     reader = PdfReader(io.BytesIO(data))
-    return [page.extract_text() or "" for page in reader.pages]
+    return [page.extract_text() or "" for page in reader.pages[skip:]]
 
 
 def text_layer_is_readable(page_texts: list[str]) -> bool:
@@ -96,16 +133,18 @@ def _repeated_edge_lines(pages: list[list[str]]) -> set:
         return set()
     counts: Counter = Counter()
     for lines in pages:
-        edges = set(lines[:_EDGE_LINES] + lines[-_EDGE_LINES:])
+        # Blank lines are paragraph breaks, never headers: skip them here.
+        text_lines = [line for line in lines if line]
+        edges = set(text_lines[:_EDGE_LINES] + text_lines[-_EDGE_LINES:])
         counts.update(edges)
     threshold = _REPEATED_LINE_SHARE * len(pages)
     return {line for line, count in counts.items() if count >= threshold}
 
 
 def _heading_key(line: str) -> str:
-    # Lower-case, no trailing punctuation, no leading numbering.
+    # Lower-case, no leading numbering or markers, no trailing punctuation.
     stripped = re.sub(r"^(\d+(\.\d+)*|[IVX]+)\.?\s+", "", line.strip())
-    return stripped.rstrip(" .:").lower()
+    return stripped.strip(" *").rstrip(" .:").lower()
 
 
 def _is_heading(line: str) -> bool:
@@ -114,10 +153,17 @@ def _is_heading(line: str) -> bool:
     if not text or len(text) > _MAX_HEADING_LEN:
         return False
     key = _heading_key(text)
-    if key in _KNOWN_HEADINGS or key in _END_HEADINGS:
+    if key in _KNOWN_HEADINGS or key in _END_HEADINGS or key in _SKIPPED_HEADINGS:
         return True
     if _NUMBERED_HEADING_RE.match(text):
-        return True
+        return len(text.split()) <= _MAX_HEADING_WORDS
+    # An upper-case line, but not a caption, not gene names or identifiers
+    # ("BRCA1 AND TP53", "REACTOME_INNATE_IMMUNE_SYSTEM") and not an author line
+    # ending in a comma ("B. P. WATSON, M.D., F.R.C.S.,").
+    if _CAPTION_RE.match(text) or any(c.isdigit() or c == "_" for c in text):
+        return False
+    if text.endswith(","):
+        return False
     letters = [c for c in text if c.isalpha()]
     return len(letters) >= 4 and text.isupper() and not text.endswith(".")
 
@@ -138,10 +184,9 @@ def _sections(page_texts: list[str]) -> list[tuple[str, list[str]]]:
     current: list[str] = []
 
     def flush() -> None:
-        # Close the paragraph being built, joining hyphenated line breaks.
+        # Close the paragraph being built.
         if current:
-            text = " ".join(current)
-            sections[-1][1].append(re.sub(r"(\w)- (\w)", r"\1\2", text))
+            sections[-1][1].append(" ".join(current))
             current.clear()
 
     for line in lines:
@@ -154,20 +199,31 @@ def _sections(page_texts: list[str]) -> list[tuple[str, list[str]]]:
                 break
             sections.append((line.rstrip(" :"), []))
             continue
-        current.append(line)
+        # A word hyphenated across a line break ("micro-" / "scope") is rejoined;
+        # hyphens inside a line ("3- and 6-month") are left alone.
+        if current and current[-1].endswith("-") and line[:1].islower():
+            current[-1] = current[-1][:-1] + line
+        else:
+            current.append(line)
         # A short line ending a sentence ends its paragraph.
         if line.endswith((".", "?", "!", ":")) and len(line) < 0.8 * full_width:
             flush()
     flush()
-    # Once headings exist, the untitled text before the first one is the title
-    # block (title, authors, affiliations), not body. Without any heading (many
-    # scans) that untitled text is the whole article and is kept.
-    if len(sections) > 1:
-        sections = sections[1:]
+    # Before the first opening heading ("Abstract", "Introduction", …) is the
+    # title block. Without one (many scans) everything is kept.
+    opening = [
+        index
+        for index, (title, _) in enumerate(sections)
+        if _heading_key(title) in _OPENING_HEADINGS
+    ]
+    if opening:
+        sections = sections[opening[0] :]
     return [
         (title, paragraphs)
         for title, paragraphs in sections
-        if paragraphs and _heading_key(title) != "abstract"
+        if paragraphs
+        and _heading_key(title) != "abstract"
+        and _heading_key(title) not in _SKIPPED_HEADINGS
     ]
 
 

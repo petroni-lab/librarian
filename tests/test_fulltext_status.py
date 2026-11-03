@@ -23,7 +23,7 @@ _OA = {"inEPMC": True, "isOpenAccess": True, "pmcid": "PMC1"}
     [
         (_OA, {"PMC1": Fulltext("PMC1", xml=_JATS)}, "extracted"),
         (_OA, {"PMC1": Fulltext("PMC1", xml=_EMPTY_JATS)}, "no_body"),
-        (_OA, {"PMC1": Fulltext("PMC1", xml=_FRAGMENT_JATS)}, "no_body"),
+        (_OA, {"PMC1": Fulltext("PMC1", xml=_FRAGMENT_JATS)}, "short_body"),
         (_OA, {"PMC1": Fulltext("PMC1", error="HTTP 500", status=500)}, "no_body"),
         (_OA, {"PMC1": Fulltext("PMC1", error="timeout")}, "fetch_failed"),
         (_OA, {"PMC1": Fulltext("PMC1", error="HTTP 503", status=503)}, "fetch_failed"),
@@ -43,7 +43,7 @@ def test_status_and_has_fulltext_follow_what_stage_2_read(paper, fulltexts, stat
     agent._paragraph_records_for_paper(paper, fulltexts)
     record = agent._passage_from_paper(paper)
     assert record["fulltext_status"] == status
-    assert record["has_fulltext"] is (status == "extracted")
+    assert record["has_fulltext"] is (status in {"extracted", "short_body"})
     assert bool(record["fulltext_note"]) is (status != "extracted")
 
 

@@ -91,12 +91,16 @@ _FULLTEXT_NOTES = {
     "not_open_access": "Abstract only: full text not open access",
     "not_in_epmc": "Abstract only: full text not hosted by Europe PMC",
     "no_body": "Abstract only: no readable full text",
+    "short_body": "Short full text: fewer than 3 body paragraphs read",
     "fetch_failed": "Abstract only: full text could not be fetched",
     "enrichment_disabled": "Abstract only: full-text reading is off",
 }
-# Fewer body paragraphs than this is a fragment (e.g. a scan's lone caption), not
-# a read full text: the paper keeps them but is reported as ``no_body``.
+# Fewer body paragraphs than this is reported as ``short_body``: a scan's lone
+# caption or a genuinely short paper (letter, erratum). The paragraphs stay in the
+# pool and can be cited, so the note says the body was read, only briefly.
 _MIN_BODY_PARAGRAPHS = 3
+# Statuses whose body paragraphs are in the pool, so ``has_fulltext`` is true.
+_BODY_READ_STATUSES = {"extracted", "short_body"}
 # What Europe PMC answers for an open-access record whose XML it does not serve.
 # Not an outage, so it is reported as ``no_body`` rather than ``fetch_failed``.
 _NO_XML_HTTP_STATUS = 500
@@ -438,9 +442,7 @@ def _top_supplementary(
     records = supplementary.records
     keep: Iterable[int] = range(len(records))
     if len(records) > k:
-        ranked = _fused_rank(
-            subquery, ranking_terms, [_bm25_doc(r) for r in records]
-        )
+        ranked = _fused_rank(subquery, ranking_terms, [_bm25_doc(r) for r in records])
         keep = sorted(index for index, _ in ranked[:k])
     return replace(
         supplementary,
@@ -1364,7 +1366,7 @@ class LibrarianAgent:
             "affiliation": _first_affiliation(paper),
             # True only when the body was actually read into the evidence pool;
             # whether the judge cited it shows in evidence_sections.
-            "has_fulltext": status == "extracted",
+            "has_fulltext": status in _BODY_READ_STATUSES,
             # Why the body was or was not read (a _FULLTEXT_NOTES key), and the
             # matching user-facing note ("" when it was read).
             "fulltext_status": status,
@@ -1405,14 +1407,25 @@ class LibrarianAgent:
             return []
         fulltext = fulltexts.get(pmcid)
         if fulltext is None or not fulltext.ok:
-            error = "not returned by the source" if fulltext is None else fulltext.error
-            self._log(f"full-text unavailable for {pmcid}: {error}")
             no_xml = fulltext is not None and fulltext.status == _NO_XML_HTTP_STATUS
+            if no_xml:
+                # Usually "XML not served"; a real outage also answers 500, so
+                # this stays its own line in the log.
+                self._log(f"full-text XML not served for {pmcid} (HTTP 500)")
+            else:
+                error = (
+                    "not returned by the source" if fulltext is None else fulltext.error
+                )
+                self._log(f"full-text unavailable for {pmcid}: {error}")
             paper["fulltext_status"] = "no_body" if no_xml else "fetch_failed"
             return []
         records = extract_body_paragraphs(fulltext.xml)
-        read_body = len(records) >= _MIN_BODY_PARAGRAPHS
-        paper["fulltext_status"] = "extracted" if read_body else "no_body"
+        if not records:
+            paper["fulltext_status"] = "no_body"
+        elif len(records) < _MIN_BODY_PARAGRAPHS:
+            paper["fulltext_status"] = "short_body"
+        else:
+            paper["fulltext_status"] = "extracted"
         if self._supplementary_enrichment:
             supplementary = (supplementaries or {}).get(pmcid)
             records.extend(
