@@ -70,6 +70,35 @@ def test_back_matter_sections_are_left_out():
     )
 
 
+def test_body_after_a_keyword_line_or_a_sidebar_box_is_kept():
+    # Frontiers editorial layout (PMC11922827): the body follows the keyword line
+    # with no break, and page 1 ends with a sidebar box that page 2's body follows.
+    pages = [
+        (
+            f"KEYWORDS\ncells, imaging\nThe editorial opens here. {_PROSE * 2}\n"
+            "COPYRIGHT\n© 2025 Author. This is an open-access article"
+        ),
+        f"continued on the next page. {_PROSE * 2}",
+    ]
+    texts = " ".join(
+        r["text"] for r in extract_body_paragraphs(page_texts_to_jats(pages))
+    )
+    assert "The editorial opens here." in texts
+    assert "continued on the next page." in texts
+    assert "cells, imaging" not in texts and "open-access article" not in texts
+
+
+def test_back_matter_running_onto_the_next_page_stays_out():
+    pages = [
+        f"Introduction\n{_PROSE * 2}\nFunding\nThis work was funded by the",
+        "Example Foundation under grant 42",
+    ]
+    texts = " ".join(
+        r["text"] for r in extract_body_paragraphs(page_texts_to_jats(pages))
+    )
+    assert "imaging." in texts and "Example Foundation" not in texts
+
+
 def test_no_body_gives_none():
     assert page_texts_to_jats(["", "  "]) is None
 

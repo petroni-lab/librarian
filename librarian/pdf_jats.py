@@ -68,6 +68,21 @@ _SKIPPED_HEADINGS = {
     "edited and reviewed by",
     "abbreviations",
 }
+# A keyword list is a single line, and the body can follow it with no heading or
+# paragraph break (Frontiers editorials), so these sections end after one line.
+_ONE_LINE_HEADINGS = {"keywords", "key words"}
+# Front-matter boxes printed beside the first page's text (Frontiers' sidebar).
+# The text layer puts them after that page's body, so the next page's body follows
+# with no heading: these sections end at a page break. Back-matter sections
+# (acknowledgements, funding, ...) do run across pages and keep running.
+_SIDEBAR_HEADINGS = {
+    "keywords",
+    "key words",
+    "edited and reviewed by",
+    "correspondence",
+    "citation",
+    "copyright",
+}
 # Everything from one of these headings on is back matter, not body.
 _END_HEADINGS = {"references", "bibliography", "literature cited", "reference"}
 # "2. Methods", "3.1 Cell culture", "II. RESULTS": a 1-2 digit number followed by
@@ -176,12 +191,12 @@ def _sections(page_texts: list[str]) -> list[tuple[str, list[str]]]:
     pages = [[line.strip() for line in t.splitlines()] for t in page_texts]
     repeated = _repeated_edge_lines(pages)
     lines = [
-        line
-        for page in pages
+        (page_index, line)
+        for page_index, page in enumerate(pages)
         for line in page
         if line not in repeated and not _PAGE_NUMBER_RE.match(line)
     ]
-    widths = [len(line) for line in lines if line]
+    widths = [len(line) for _, line in lines if line]
     full_width = statistics.median(widths) if widths else 0
     sections: list[tuple[str, list[str]]] = [("", [])]
     current: list[str] = []
@@ -192,7 +207,17 @@ def _sections(page_texts: list[str]) -> list[tuple[str, list[str]]]:
             sections[-1][1].append(" ".join(current))
             current.clear()
 
-    for line in lines:
+    def end_skipped_section() -> None:
+        # Close the skipped section: the text after it is body again, untitled.
+        flush()
+        sections.append(("", []))
+
+    previous_page = 0
+    for page_index, line in lines:
+        title_key = _heading_key(sections[-1][0])
+        if page_index != previous_page and title_key in _SIDEBAR_HEADINGS:
+            end_skipped_section()
+        previous_page = page_index
         if not line:
             flush()
             continue
@@ -211,6 +236,8 @@ def _sections(page_texts: list[str]) -> list[tuple[str, list[str]]]:
         # A short line ending a sentence ends its paragraph.
         if line.endswith((".", "?", "!", ":")) and len(line) < 0.8 * full_width:
             flush()
+        if _heading_key(sections[-1][0]) in _ONE_LINE_HEADINGS:
+            end_skipped_section()
     flush()
     # Text before the first heading is the title block, dropped only when that
     # heading opens an article ("Abstract", "Introduction", …). A late "SUMMARY"
