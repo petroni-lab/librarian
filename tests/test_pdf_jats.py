@@ -4,7 +4,12 @@ uv run --extra supplementary pytest tests
 """
 
 from librarian.jats import extract_body_paragraphs
-from librarian.pdf_jats import _is_heading, page_texts_to_jats, text_layer_is_readable
+from librarian.pdf_jats import (
+    _is_heading,
+    page_texts_to_jats,
+    pdf_page_texts,
+    text_layer_is_readable,
+)
 
 _HEADER = "Journal of Examples 12 (2023)"
 _PROSE = "Cells were cultured for three days in standard medium before imaging. "
@@ -118,9 +123,46 @@ def test_a_late_opening_heading_keeps_the_text_above_it():
         assert _PROSE.strip() in texts and "Cells grew." in texts
 
 
+def test_a_structured_abstract_is_left_out_whole():
+    pages = [
+        "Abstract\nBACKGROUND\nWhy.\nMETHODS\nHow.\nRESULTS\nWhat.",
+        f"Introduction\n{_PROSE * 3}\nMethods\n{_PROSE}",
+    ]
+    records = extract_body_paragraphs(page_texts_to_jats(pages))
+    titles = [r["section_title"] for r in records]
+    assert titles == ["Introduction", "Methods"]
+
+
+def test_without_an_introduction_only_the_abstract_goes():
+    pages = [f"Abstract\nShort summary.\nMETHODS\n{_PROSE * 3}"]
+    records = extract_body_paragraphs(page_texts_to_jats(pages))
+    assert [r["section_title"] for r in records] == ["METHODS"]
+
+
 def test_hyphens_inside_a_line_are_kept():
     page = f"{_PROSE}\nPatients were seen at 3- and 6-month visits."
     texts = " ".join(
         r["text"] for r in extract_body_paragraphs(page_texts_to_jats([page]))
     )
     assert "3- and 6-month" in texts
+
+
+def test_pages_are_read_lazily(monkeypatch):
+    import pypdf
+
+    class _Page:
+        def __init__(self, text):
+            self.text = text
+
+        def extract_text(self):
+            if self.text is None:
+                raise ValueError("broken page")
+            return self.text
+
+    class _Reader:
+        def __init__(self, stream):
+            self.pages = [_Page("Readable page."), _Page(None)]
+
+    monkeypatch.setattr(pypdf, "PdfReader", _Reader)
+    pages = pdf_page_texts(b"%PDF")
+    assert next(pages) == "Readable page."  # page 2 not read yet

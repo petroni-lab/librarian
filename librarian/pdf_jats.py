@@ -20,6 +20,7 @@ import re
 import statistics
 import xml.etree.ElementTree as ET
 from collections import Counter
+from collections.abc import Iterator
 
 # Headings recognised without numbering, compared lower-case without trailing
 # punctuation. "abstract" is recognised so its section can be dropped: the
@@ -94,10 +95,11 @@ _MAX_MEAN_WORD_LEN = 12.0
 _MIN_CHARS_PER_PAGE = 200
 
 
-def pdf_page_texts(data: bytes, skip: int = 0) -> list[str]:
+def pdf_page_texts(data: bytes, skip: int = 0) -> Iterator[str]:
     """The text layer of each page of a PDF, in page order ("" for image-only pages).
 
-    Line breaks are kept: paragraph and heading detection need them.
+    Pages are read lazily, so a caller that stops early never reads (or fails on)
+    later pages. Line breaks are kept: paragraph and heading detection need them.
 
     :param data: The PDF bytes.
     :param skip: Number of leading pages to leave out.
@@ -106,7 +108,8 @@ def pdf_page_texts(data: bytes, skip: int = 0) -> list[str]:
     from pypdf import PdfReader  # optional extra: only PDF conversion needs it
 
     reader = PdfReader(io.BytesIO(data))
-    return [page.extract_text() or "" for page in reader.pages[skip:]]
+    for page in reader.pages[skip:]:
+        yield page.extract_text() or ""
 
 
 def text_layer_is_readable(page_texts: list[str]) -> bool:
@@ -220,13 +223,33 @@ def _sections(page_texts: list[str]) -> list[tuple[str, list[str]]]:
     )
     if first_heading_opens:
         sections = sections[1:]
+    sections = _without_abstract(sections)
     return [
         (title, paragraphs)
         for title, paragraphs in sections
-        if paragraphs
-        and _heading_key(title) != "abstract"
-        and _heading_key(title) not in _SKIPPED_HEADINGS
+        if paragraphs and _heading_key(title) not in _SKIPPED_HEADINGS
     ]
+
+
+def _without_abstract(
+    sections: list[tuple[str, list[str]]],
+) -> list[tuple[str, list[str]]]:
+    # Drop the abstract (the search record carries it). A structured abstract's
+    # subsections (Background, Methods, Results, ...) go with it, up to the
+    # "Introduction" or first numbered heading; without one only the "Abstract"
+    # section itself goes, so a short paper's body is never dropped.
+    titles = [_heading_key(title) for title, _ in sections]
+    if "abstract" not in titles:
+        return sections
+    start = titles.index("abstract")
+    body_starts = [
+        index
+        for index in range(start + 1, len(sections))
+        if titles[index] == "introduction"
+        or _NUMBERED_HEADING_RE.match(sections[index][0])
+    ]
+    end = body_starts[0] if body_starts else start + 1
+    return sections[:start] + sections[end:]
 
 
 def page_texts_to_jats(page_texts: list[str]) -> str | None:
@@ -255,7 +278,7 @@ def pdf_to_jats(data: bytes) -> str | None:
     :return: JATS, or None when the text layer is unreadable (needs OCR) or
         yields no body.
     """
-    page_texts = pdf_page_texts(data)
+    page_texts = list(pdf_page_texts(data))
     if not text_layer_is_readable(page_texts):
         return None
     return page_texts_to_jats(page_texts)
