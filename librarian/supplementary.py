@@ -47,6 +47,8 @@ from typing import (
     Tuple,
 )
 
+from librarian.pdf_jats import pdf_page_texts
+
 logger = logging.getLogger(__name__)
 # pypdf warns on every slightly malformed PDF; those are routine here.
 logging.getLogger("pypdf").setLevel(logging.ERROR)
@@ -92,11 +94,8 @@ def _blocks(paragraphs: List[str]) -> Iterator[str]:
 def _pdf_texts(data: bytes, skip: int = 0) -> Iterator[Tuple[int, str]]:
     """``(page_number, text)`` for every PDF page after the first *skip* that has
     extractable text."""
-    from pypdf import PdfReader
-
-    reader = PdfReader(io.BytesIO(data))
-    for number, page in enumerate(reader.pages[skip:], skip + 1):
-        text = _norm(page.extract_text() or "")
+    for number, raw in enumerate(pdf_page_texts(data, skip), skip + 1):
+        text = _norm(raw)
         if text:
             yield number, text
 
