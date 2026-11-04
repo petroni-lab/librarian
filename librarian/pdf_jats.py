@@ -68,13 +68,18 @@ _SKIPPED_HEADINGS = {
     "edited and reviewed by",
     "abbreviations",
 }
-# A keyword list is a single line, and the body can follow it with no heading or
-# paragraph break (Frontiers editorials), so these sections end after one line.
-_ONE_LINE_HEADINGS = {"keywords", "key words"}
+# The body can follow a keyword list with no heading or paragraph break (Frontiers
+# editorials), so these sections end at the first line that does not end with a
+# separator: a list wrapped after "," or ";" goes on, the next line is body. A list
+# wrapped inside a keyword ("adoptive" / "immunotherapy") leaks that one fragment.
+_KEYWORD_HEADINGS = {"keywords", "key words"}
 # Front-matter boxes printed beside the first page's text (Frontiers' sidebar).
 # The text layer puts them after that page's body, so the next page's body follows
 # with no heading: these sections end at a page break. Back-matter sections
-# (acknowledgements, funding, ...) do run across pages and keep running.
+# (acknowledgements, funding, ...) do run across pages and keep running. A box
+# continued on the next page leaks its tail into the body: that tail cannot be told
+# from body text resuming mid-sentence (PMC11922827's page 2 opens that way), and
+# losing a page of body is the worse error. Not seen in the target PDFs.
 _SIDEBAR_HEADINGS = {
     "keywords",
     "key words",
@@ -236,7 +241,9 @@ def _sections(page_texts: list[str]) -> list[tuple[str, list[str]]]:
         # A short line ending a sentence ends its paragraph.
         if line.endswith((".", "?", "!", ":")) and len(line) < 0.8 * full_width:
             flush()
-        if _heading_key(sections[-1][0]) in _ONE_LINE_HEADINGS:
+        if _heading_key(sections[-1][0]) in _KEYWORD_HEADINGS and not line.endswith(
+            (",", ";")
+        ):
             end_skipped_section()
     flush()
     # Text before the first heading is the title block, dropped only when that

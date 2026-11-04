@@ -88,6 +88,17 @@ def test_body_after_a_keyword_line_or_a_sidebar_box_is_kept():
     assert "cells, imaging" not in texts and "open-access article" not in texts
 
 
+def test_a_keyword_list_wrapped_after_a_separator_stays_out():
+    pages = [
+        f"KEYWORDS\nmitosis, apoptosis,\nmicroscopy; staining\nThe body. {_PROSE * 2}"
+    ]
+    texts = " ".join(
+        r["text"] for r in extract_body_paragraphs(page_texts_to_jats(pages))
+    )
+    assert "The body." in texts
+    assert "apoptosis" not in texts and "staining" not in texts
+
+
 def test_back_matter_running_onto_the_next_page_stays_out():
     pages = [
         f"Introduction\n{_PROSE * 2}\nFunding\nThis work was funded by the",
