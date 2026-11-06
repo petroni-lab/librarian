@@ -246,6 +246,24 @@ the ranked passages and raw JSON instead). `.env` is loaded automatically.
 uv run main.py "does metformin extend lifespan in mammals?"
 ```
 
+**Research loop** — for questions one retrieval cannot cover, `--research-loop` runs
+[`research_loop.py`](librarian/research_loop.py) instead: the query seeds one
+retrieval, then each of three rounds lets an LLM planner select the useful papers of
+the latest *context* searches into a ledger and ask new questions of two kinds —
+*context* questions that explore the topic and *specific* questions about one
+precise point each — run as separate librarian retrievals with their own sizes. A
+final call reviews the last batch. It prints the selected context evidence plus
+every specific result (first 3 papers each), with no synthesis: what to extract
+from it is up to you. Budgets are the `[research_loop]` table in
+[`config.toml`](librarian/config.toml); the planner prompt is
+[`prompts/research_loop.md`](librarian/prompts/research_loop.md), or your own with
+`--loop-prompt` (it must contain `{previous_searches}` and `{last_searches}`).
+A loop runs dozens of retrievals, so expect tens of minutes.
+
+```bash
+uv run main.py "How does the gut microbiome affect response to cancer immunotherapy?" --research-loop --save-json loop.json
+```
+
 **Python:**
 
 ```python
@@ -516,6 +534,12 @@ loudly at load rather than silently defaulting:
 | `filter_temperature` | 0.1 | relevance-judge temperature |
 | `filter_max_tokens` | 8192 | output budget per Stage-3 LLM call |
 
+The `[research_loop]` table, last in the file, holds the research loop's budgets
+(round count, per-type question ceilings, planner call settings, concurrent
+retrievals) and the sizing knobs of its `seed`, `context` and `specific`
+retrievals; `load_research_loop_config()` reads it, `LibrarianRuntimeConfig`
+ignores it. Each key is commented in the file.
+
 `paragraphs_per_judge_batch` should be `>= paragraphs_per_subquery * num_subqueries`
 so the whole pool is judged in one call — the judge ranks globally, but results from
 several batches are only concatenated in batch order, so a smaller value silently
@@ -560,7 +584,7 @@ to retrieval tuning:
 
 ```
 pyproject.toml                 project metadata + dependencies (managed by uv)
-main.py                        CLI entrypoint (synthesis by default, --retrieval-only)
+main.py                        CLI entrypoint (synthesis by default, --retrieval-only, --research-loop)
 orchestrator.py                minimal FastAPI server (blocking + SSE endpoints)
 .agents/skills/librarian       symlink to skills/librarian (workspace discovery for Antigravity/opencode)
 .claude-plugin/                Claude plugin manifest + Claude marketplace
@@ -573,9 +597,10 @@ skills/librarian/
   scripts/step*.py             the four pipeline steps, reusing librarian/agent.py
 librarian/
   agent.py                     the retrieval pipeline (start here)
+  research_loop.py             ResearchLoop: iterative context/specific retrieval over a PMID ledger
   synthesis.py                 SynthesisAgent: cited answer over the evidence; with a librarian it also routes, searches and reads the conversation history
   citations.py                 author-year citation keys + the summarizer's paper blocks
-  config.py                    LibrarianRuntimeConfig + config.toml loader
+  config.py                    LibrarianRuntimeConfig, ResearchLoopConfig + config.toml loaders
   config.toml                  the tuning knobs themselves
   tracing_port.py              TracingPort protocol + no-op default (optional tracer=)
   scope_port.py                ScopePort protocol + ZeroShotScopeGuard (optional scope_guard= on SynthesisAgent)
@@ -584,7 +609,7 @@ librarian/
   fulltext_cache.py            opt-in full-text cache (CachedSource)
   jats.py                      JATS full-text XML -> body paragraphs
   progress.py                  stdlib terminal spinner for live progress
-  prompts/                     query planner, relevance-judge, router, scope, summarizer prompts
+  prompts/                     query planner, relevance-judge, router, scope, summarizer, research-loop prompts
   query_validation/            deterministic Europe PMC query validation
 tests/                         pytest suite; tests/fixtures/ holds recorded runs replayed offline
 evals/Literature/              evaluation harness: one locked environment per benchmark suite
