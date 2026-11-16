@@ -117,8 +117,92 @@ class LibrarianRuntimeConfig(DataClassTOMLMixin):
             )
 
 
+@dataclass(frozen=True)
+class RetrievalShape:
+    """The four sizing knobs of one ``LibrarianAgent`` run, applied with
+    ``dataclasses.replace()`` on the runtime config (see the fields above)."""
+
+    num_subqueries: int
+    papers_per_subquery: int
+    paragraphs_per_subquery: int
+    paragraphs_per_judge_batch: int
+
+
+@dataclass(frozen=True)
+class ResearchLoopConfig:
+    """Budgets of ``research_loop.ResearchLoop``: the ``[research_loop]`` table.
+
+    No field has a default, like ``LibrarianRuntimeConfig``.
+    """
+
+    # Most planning rounds after the seed; a round that asks nothing ends the loop.
+    max_rounds: int
+    # Independent ceilings on the context and specific questions of one round.
+    max_context_queries: int
+    max_specific_queries: int
+    # Papers a specific result keeps, in the judge's ranking; 0 keeps all.
+    specific_max_papers: int
+    # Planner LLM call: sampling, completion cap, read timeout, and the extra
+    # attempts after a reply that does not parse.
+    planner_temperature: float
+    planner_max_tokens: int
+    planner_timeout_seconds: int
+    planner_max_retries: int
+    # Librarian runs in flight at once, across both query types of a round.
+    max_concurrent_retrievals: int
+    # Retrieval shape of the seed question and of each query type.
+    seed: RetrievalShape
+    context: RetrievalShape
+    specific: RetrievalShape
+
+    def __post_init__(self) -> None:
+        """Reject budgets the loop cannot run with.
+
+        Runs on ``from_toml()`` and on ``dataclasses.replace()`` alike, like
+        ``LibrarianRuntimeConfig.__post_init__``.
+
+        :raises ValueError: naming the first field below its minimum.
+        """
+        minimums = {
+            "max_rounds": 1,
+            "max_context_queries": 0,
+            "max_specific_queries": 0,
+            "specific_max_papers": 0,
+            "planner_max_tokens": 1,
+            "planner_timeout_seconds": 1,
+            "planner_max_retries": 0,
+            "max_concurrent_retrievals": 1,
+        }
+        for name, minimum in minimums.items():
+            value = getattr(self, name)
+            if value < minimum:
+                raise ValueError(f"{name} must be >= {minimum}, got {value}.")
+
+
+@dataclass(frozen=True)
+class _ResearchLoopFile(DataClassTOMLMixin):
+    # config.toml seen through its [research_loop] table only.
+    research_loop: ResearchLoopConfig
+
+
 _CONFIG_DIR = Path(__file__).parent
 _CONFIG_NAME = "config.toml"
+
+
+def load_research_loop_config() -> ResearchLoopConfig:
+    """Return the ``[research_loop]`` table of ``config.toml``.
+
+    It lives in the same file as the runtime config but in its own table, which
+    ``LibrarianRuntimeConfig`` ignores, so configs built from other TOML files
+    (without the table) keep loading.
+
+    :return: The research loop config.
+    :rtype: ResearchLoopConfig
+    :raises mashumaro.exceptions.MissingField: if the table or a knob is missing.
+    """
+    toml_path = _CONFIG_DIR / _CONFIG_NAME
+    loaded = _ResearchLoopFile.from_toml(toml_path.read_text(encoding="utf-8"))
+    return loaded.research_loop
 
 
 def load_runtime_config() -> LibrarianRuntimeConfig:

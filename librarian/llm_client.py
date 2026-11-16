@@ -52,6 +52,14 @@ def parse_json_response(text: str) -> Any:
         return None
 
 
+class LLMRequestError(Exception):
+    """The endpoint gave no reply: a request error that is not retried, or
+    every retry used up.
+
+    A plain ``Exception`` subclass, so callers catching ``Exception`` still do.
+    """
+
+
 class LLMClient:
     """A client for a single OpenAI-compatible chat-completions endpoint."""
 
@@ -62,7 +70,17 @@ class LLMClient:
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         model_name: Optional[str] = None,
+        content_only: bool = False,
     ):
+        """Point the client at an endpoint; unset arguments come from the env.
+
+        ``content_only`` returns the message ``content`` alone, for callers that
+        parse the reply as a decision (the research-loop planner): a reasoning
+        model cut off by the token cap returns empty content, and the fallback
+        to ``reasoning_content`` would hand back its trace, where a draft JSON
+        could pass for the answer. With the flag that reply stays empty.
+        """
+        self.content_only = content_only
         self.base_url = (
             base_url or os.getenv("LLM_BASE_URL", "http://localhost:8000/v1")
         ).rstrip("/")
@@ -93,8 +111,8 @@ class LLMClient:
         }
 
     @staticmethod
-    def _extract_content(choice: dict) -> str:
-        """Pull the assistant text out of a choice, tolerating content-block formats."""
+    def _message_content(choice: dict) -> str:
+        """The message's ``content`` alone, tolerating content-block formats."""
         message = choice.get("message") or {}
         content = message.get("content", "")
         if isinstance(content, list):
@@ -107,6 +125,13 @@ class LLMClient:
             content = "\n".join(p for p in parts if p)
         elif content is None:
             content = ""
+        return str(content)
+
+    @staticmethod
+    def _extract_content(choice: dict) -> str:
+        """Pull the assistant text out of a choice, tolerating content-block formats."""
+        message = choice.get("message") or {}
+        content = LLMClient._message_content(choice)
         if not content:
             # Some reasoning backends put the answer in a different field.
             content = (
@@ -161,6 +186,8 @@ class LLMClient:
                     continue
                 response.raise_for_status()
                 choice = (response.json().get("choices") or [{}])[0]
+                if self.content_only:
+                    return self._message_content(choice)
                 return self._extract_content(choice)
 
             except requests.exceptions.RequestException as exc:
@@ -177,9 +204,9 @@ class LLMClient:
                 if attempt < self.MAX_RETRIES - 1 and transient:
                     time.sleep(self._backoff(attempt))
                     continue
-                raise Exception(f"LLM API request failed: {exc}") from exc
+                raise LLMRequestError(f"LLM API request failed: {exc}") from exc
 
-        raise Exception(
+        raise LLMRequestError(
             f"LLM API request failed after {self.MAX_RETRIES} retries: {last_exception}"
         )
 
@@ -224,11 +251,17 @@ def create_llm_client(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     model_name: Optional[str] = None,
+    content_only: bool = False,
 ) -> LLMClient:
     """Build the LLM client. Kept as a factory so the agent's call site stays
-    unchanged even if construction ever grows more logic."""
+    unchanged even if construction ever grows more logic.
+
+    :param content_only: Return the message ``content`` alone; see ``LLMClient``.
+    :type content_only: bool
+    """
     return LLMClient(
         base_url=base_url,
         api_key=api_key,
         model_name=model_name,
+        content_only=content_only,
     )
