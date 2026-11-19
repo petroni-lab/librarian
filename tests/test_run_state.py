@@ -172,6 +172,7 @@ def test_failed_synthesis_search_preserves_route_and_subqueries():
         "language": "English",
         "passages": [],
         "search_queries": ["rewritten"],
+        "failed_subqueries": [{"query": "rewritten", "error": "search unavailable"}],
     }
 
 

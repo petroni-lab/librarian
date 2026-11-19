@@ -1862,6 +1862,9 @@ class LibrarianAgent:
                 for subquery, (_, error) in zip(queries, outcomes)
                 if error is not None
             ]
+            self._tracer.set_span_attributes(
+                stage2_span, {"search.failed_query_count": len(failures)}
+            )
             if failures:
                 debug["failed_subqueries"] = [
                     {"query": subquery, "error": str(error)}
