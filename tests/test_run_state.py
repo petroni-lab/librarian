@@ -135,6 +135,25 @@ def test_failed_search_preserves_partial_debug():
     assert error.run_debug == expected
 
 
+def test_failed_subquery_search_keeps_the_other_subqueries():
+    agent = retrieval_agent()
+    paragraphs = agent._paragraphs_for_subquery
+    error = LiteratureSearchError("search unavailable")
+
+    def search(query, ranking_terms=()):
+        if query == "beta":
+            raise error
+        return paragraphs(query, ranking_terms)
+
+    agent._generate_queries = lambda query: SearchPlan(["alpha", "beta"])
+    agent._paragraphs_for_subquery = search
+    result = agent.run("question")
+    assert [paper["pmid"] for paper in result.papers] == ["alpha-0"]
+    assert result.debug["failed_subqueries"] == [
+        {"query": "beta", "error": "search unavailable"}
+    ]
+
+
 def test_failed_synthesis_search_preserves_route_and_subqueries():
     librarian = retrieval_agent()
     agent = SynthesisAgent(llm_client=object(), librarian=librarian)
