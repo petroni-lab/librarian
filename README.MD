@@ -402,6 +402,11 @@ prevents concurrent calls on one agent from overwriting each other's details.
 Injected clients, sources, scope guards, and tracers must also support concurrent
 calls; configure agents before sharing them.
 
+A Europe PMC search that fails for one sub-query skips only that sub-query: the
+run continues with the others and lists the failed ones in
+`debug["failed_subqueries"]` (`{"query", "error"}` each). The run raises
+`LiteratureSearchError` only when every sub-query's search failed.
+
 If the pipeline raises, no result is returned. Read partial debug details from
 the original exception's `run_debug` attribute instead:
 
@@ -411,8 +416,8 @@ from librarian.literature_search import LiteratureSearchError
 try:
     retrieval = agent.run(query)
 except LiteratureSearchError as exc:
-    attempted_queries = exc.run_debug.get("search_queries", [])
-    print("Search failed for sub-queries:", attempted_queries)
+    failed = exc.run_debug.get("failed_subqueries", [])
+    print("Search failed for every sub-query:", [f["query"] for f in failed])
     raise
 ```
 

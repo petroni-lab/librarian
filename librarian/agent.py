@@ -48,6 +48,7 @@ from librarian.fulltext_cache import default_literature_source
 from librarian.jats import extract_body_paragraphs, extract_supplementary_captions
 from librarian.literature_search import (
     Fulltext,
+    LiteratureSearchError,
     LiteratureSource,
     Supplementary,
     SupplementaryOptions,
@@ -1206,10 +1207,10 @@ class LibrarianAgent:
                     "input.value": subquery,
                 },
             ) as search_span:
-                # A search failure propagates out of the thread pool and fails
-                # the run, so the caller can tell "the search broke" apart from
-                # "no literature found" — silently returning [] here would
-                # surface a Europe PMC outage as an empty result set.
+                # A search failure propagates out of this sub-query: ``_run``
+                # records it and carries on with the other sub-queries, and
+                # fails the run only when every search failed — returning []
+                # here would surface a Europe PMC outage as an empty result set.
                 papers = self._source.search(
                     subquery, page_size=self._papers_per_subquery
                 )
@@ -1748,8 +1749,12 @@ class LibrarianAgent:
         ``search_queries`` once Stage 1 is done, plus ``query_count``,
         ``paragraph_count``, ``supplementary_paragraph_count``,
         ``relevant_count``, ``supplementary_evidence_count`` and
-        ``final_pmids`` when Stage 3 ran. Pipeline failures are re-raised with
-        partial debug details on the exception's ``run_debug`` attribute.
+        ``final_pmids`` when Stage 3 ran, and ``failed_subqueries`` (one
+        ``{"query", "error"}`` per sub-query whose search raised
+        ``LiteratureSearchError``) when any did. A failed sub-query search is
+        skipped; the run raises that error only when every sub-query's search
+        failed. Pipeline failures are re-raised with partial debug details on
+        the exception's ``run_debug`` attribute.
         """
         if max_loops != 1:
             raise NotImplementedError(
@@ -1832,16 +1837,46 @@ class LibrarianAgent:
             bound_stage2 = self._tracer.bind_current_trace_context(
                 self._paragraphs_for_subquery
             )
+
+            # A failed search fails only its sub-query, like a full text that
+            # cannot be fetched; any other error is a bug and stops the run.
+            def search_one(
+                subquery: str,
+            ) -> Tuple[List[Dict[str, Any]], Optional[LiteratureSearchError]]:
+                try:
+                    return bound_stage2(subquery, ranking_terms), None
+                except LiteratureSearchError as exc:
+                    logger.warning(
+                        "[Librarian] sub-query search failed %r: %s", subquery, exc
+                    )
+                    return [], exc
+
             # One CPU-bound thread per sub-query, capped at the CPUs
             # actually available so a large num_subqueries can't
             # oversubscribe a small container.
             stage2_workers = min(max(len(queries), 1), _available_cpus())
             with ThreadPoolExecutor(max_workers=stage2_workers) as pool:
-                per_subquery = pool.map(
-                    lambda subquery: bound_stage2(subquery, ranking_terms), queries
-                )
+                outcomes = list(pool.map(search_one, queries))
+            failures = [
+                (subquery, error)
+                for subquery, (_, error) in zip(queries, outcomes)
+                if error is not None
+            ]
+            self._tracer.set_span_attributes(
+                stage2_span, {"search.failed_query_count": len(failures)}
+            )
+            if failures:
+                debug["failed_subqueries"] = [
+                    {"query": subquery, "error": str(error)}
+                    for subquery, error in failures
+                ]
+            # Every search failed: raise the first error so an outage never
+            # reads as "no literature found".
+            if failures and len(failures) == len(queries):
+                first_error = failures[0][1]
+                raise first_error
             paragraphs = _merge_selected_paragraphs(
-                [para for subquery_paras in per_subquery for para in subquery_paras]
+                [para for subquery_paras, _ in outcomes for para in subquery_paras]
             )
             self._tracer.set_span_attributes(
                 stage2_span,

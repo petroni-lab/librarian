@@ -677,6 +677,9 @@ class SynthesisAgent:
         * ``passages`` — the evidence records the answer was written from.
         * ``search_queries`` — the sub-queries the librarian ran, ``[]`` when it
           did not run.
+        * ``failed_subqueries`` — only when a sub-query's search failed: the
+          librarian's ``{"query", "error"}`` records, so an answer written from
+          the other sub-queries is told apart from a complete one.
 
         :param query: The user's question.
         :type query: str
@@ -776,6 +779,8 @@ class SynthesisAgent:
                 retrieval_debug = getattr(exc, "run_debug", {})
                 if "search_queries" in retrieval_debug:
                     debug["search_queries"] = retrieval_debug["search_queries"]
+                if "failed_subqueries" in retrieval_debug:
+                    debug["failed_subqueries"] = retrieval_debug["failed_subqueries"]
                 exc.run_debug = debug
                 self._tracer.mark_span_error(run_span, exc)
                 raise
@@ -839,6 +844,9 @@ class SynthesisAgent:
             progress_callback(3)
         debug["passages"] = passages
         debug["search_queries"] = retrieval.debug.get("search_queries", [])
+        # Present only when a sub-query's search failed; see the run() docstring.
+        if "failed_subqueries" in retrieval.debug:
+            debug["failed_subqueries"] = retrieval.debug["failed_subqueries"]
         return self._summarize(
             search_query,
             passages,
