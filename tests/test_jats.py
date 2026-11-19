@@ -24,3 +24,15 @@ _XML = """<article><body>
 def test_title_only_boilerplate_sections_are_dropped() -> None:
     titles = [r["section_title"] for r in extract_body_paragraphs(_XML)]
     assert titles == ["Results", "Funding of public health programmes"]
+
+
+def test_supplementary_sec_type_is_dropped() -> None:
+    # "supplementary" is the section_type reserved for supplementary-file
+    # records; a body section carrying it crashed the run (#106).
+    xml = """<article><body>
+<sec><title>Results</title><p>Drug X reduced tumour volume.</p></sec>
+<sec sec-type="supplementary"><title>Supplementary Information</title>
+<p>Table S1 lists primers.</p></sec>
+</body></article>"""
+    titles = [r["section_title"] for r in extract_body_paragraphs(xml)]
+    assert titles == ["Results"]
