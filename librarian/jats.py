@@ -39,6 +39,10 @@ _EXCLUDED_SEC_TYPES = {
     "ethics",
     "funding",
     "references",
+    # "supplementary" is also the reserved section_type of supplementary-file
+    # records (agent.py keys them by supplementary_index), so a body section
+    # must never carry it (#106).
+    "supplementary",
     "supplementary-material",
 }
 # Whole-title match on the normalised <sec> title, for publishers that mark
