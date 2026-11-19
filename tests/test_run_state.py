@@ -125,9 +125,14 @@ def test_failed_search_preserves_partial_debug():
     ):
         agent.run("alpha")
     assert caught.value is error
-    assert error.run_debug == {"search_queries": ["alpha"], "ranking_terms": []}
+    expected = {
+        "search_queries": ["alpha"],
+        "ranking_terms": [],
+        "failed_subqueries": [{"query": "alpha", "error": "search unavailable"}],
+    }
+    assert error.run_debug == expected
     agent.run("beta")
-    assert error.run_debug == {"search_queries": ["alpha"], "ranking_terms": []}
+    assert error.run_debug == expected
 
 
 def test_failed_synthesis_search_preserves_route_and_subqueries():

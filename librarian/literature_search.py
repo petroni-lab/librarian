@@ -211,7 +211,7 @@ def search_scientific_literature_structured(
     max_attempts = 4
     for attempt in range(max_attempts):
         try:
-            response = requests.get(_SEARCH_URL, params=params, timeout=30)
+            response = requests.get(_SEARCH_URL, params=params, timeout=60)
             response.raise_for_status()
             break
         except requests.exceptions.RequestException as exc:
