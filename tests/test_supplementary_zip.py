@@ -8,6 +8,7 @@ import zipfile
 from unittest import mock
 
 import docx
+import pytest
 import requests
 
 from librarian import supplementary
@@ -213,3 +214,42 @@ def test_author_manuscript_supplements_come_from_biostudies():
     with mock.patch("requests.get", side_effect=get):
         files = fetch_supplementary("PMC1", max_bytes=1000)
     assert files == {"NIHMS1-supplement-1.xlsx": b"table"}
+
+
+def test_aws_folder_with_only_images_skips_zip_on_biostudies_404():
+    # AWS already listed every file; a BioStudies 404 must not fall through
+    # to the slow Europe PMC ZIP.
+    listing = _listing({"PMC1.1/PMC1.1.pdf": 10, "PMC1.1/fig1.jpg": 10})
+
+    def get(url, **kwargs):
+        if url.endswith("/"):
+            return listing
+        if "/api/v1/studies/S-EPMC1" in url:
+            return _not_found()
+        raise AssertionError(f"unexpected request to {url}")  # the ZIP among them
+
+    with mock.patch("requests.get", side_effect=get):
+        files = fetch_supplementary("PMC1", max_bytes=1000)
+    assert files == {}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"section": {"files": [{"path": "s1.pdf"}]}},
+    ],
+)
+def test_malformed_biostudies_reply_fails_only_the_supplement(payload):
+    listing = _listing({"PMC1.1/PMC1.1.pdf": 10})
+    bad_study = _response(b"{}")
+    bad_study.status_code = 200
+    bad_study.json.return_value = payload
+
+    with mock.patch("requests.get", side_effect=[listing, bad_study]):
+        result = fetch_supplementary_outcome(
+            "PMC1", SupplementaryOptions(max_bytes=1_000_000, max_records=40)
+        )
+    assert not result.ok
+    assert result.records == []
+    assert "unreadable BioStudies study" in result.error

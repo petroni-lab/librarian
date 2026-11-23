@@ -375,7 +375,8 @@ def fetch_supplementary(
     base filename, and only while their combined size stays within
     ``max_bytes``. Served from the PMC Open Access bucket on AWS; when the
     bucket has no supplementary document, from BioStudies; and from Europe
-    PMC's supplementary-files ZIP only when BioStudies has no study either.
+    PMC's supplementary-files ZIP only when neither the bucket (no folder) nor
+    BioStudies has a copy.
 
     :param pmcid: A PMC id in any form (see ``normalize_pmcid``).
     :param max_bytes: Size cap for the files kept (and for the fallback ZIP).
@@ -395,9 +396,13 @@ def fetch_supplementary(
     # one whose documents failed to download is, and is retried, not cached.
     if files or aws_failed:
         failed.extend(aws_failed)
-        return files or {}
+        return files
+    aws_had_folder = files is not None
     files = _fetch_supplementary_biostudies(pmcid, max_bytes, failed)
-    return files if files is not None else _fetch_supplementary_zip(pmcid, max_bytes)
+    if files is not None:
+        return files
+    # A folder with only figures or archives is already complete on AWS; skip the slow ZIP.
+    return {} if aws_had_folder else _fetch_supplementary_zip(pmcid, max_bytes)
 
 
 def _list_pmc_folder(pmcid: str) -> Dict[str, int]:
@@ -468,14 +473,18 @@ def _fetch_supplementary_biostudies(
     if response.status_code == 404:
         return None
     response.raise_for_status()
-    listed = [
-        (
-            entry["path"],
-            _BIOSTUDIES_FILE_URL.format(number=number, path=quote(entry["path"])),
-            entry["size"],
-        )
-        for entry in response.json()["section"].get("files") or []
-    ]
+    try:
+        entries = response.json()["section"].get("files") or []
+        listed = [
+            (
+                entry["path"],
+                _BIOSTUDIES_FILE_URL.format(number=number, path=quote(entry["path"])),
+                int(entry["size"]),
+            )
+            for entry in entries
+        ]
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise ValueError(f"unreadable BioStudies study: {exc}") from exc
     return _download_listed(listed, max_bytes, failed)
 
 
