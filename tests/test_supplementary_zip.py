@@ -66,6 +66,21 @@ def _not_found():
     return response
 
 
+def _study(sizes):
+    """A BioStudies study reply listing ``{path: size}``."""
+    response = _response(b"")
+    response.status_code = 200
+    response.json.return_value = {
+        "section": {
+            "files": [
+                {"path": path, "size": size, "type": "file"}
+                for path, size in sizes.items()
+            ]
+        }
+    }
+    return response
+
+
 class DictBackend:
     def __init__(self):
         self.store = {}
@@ -89,8 +104,10 @@ def test_extracted_size_is_capped_across_files():
 def test_corrupt_member_fails_only_the_supplement():
     body = bytearray(_zip({"s1.pdf": b"A" * 1000}, zipfile.ZIP_STORED))
     body[body.index(b"A" * 1000)] ^= 0xFF  # break the member's CRC
-    listing = _listing({})  # not in the PMC bucket: falls back to the ZIP
-    with mock.patch("requests.get", side_effect=[listing, _response(bytes(body))]):
+    listing = _listing({})  # not in the PMC bucket nor BioStudies: the ZIP
+    with mock.patch(
+        "requests.get", side_effect=[listing, _not_found(), _response(bytes(body))]
+    ):
         result = fetch_supplementary_outcome(
             "PMC1", SupplementaryOptions(max_bytes=1_000_000, max_records=40)
         )
@@ -177,3 +194,22 @@ def test_docx_unpacking_past_the_budget_is_not_parsed():
     ):
         records = supplementary.extract_supplementary_records(files, {}, 40)
     assert records == []
+
+
+def test_author_manuscript_supplements_come_from_biostudies():
+    # An NIH author manuscript: its bucket folder holds only the article.
+    listing = _listing({"PMC1.1/PMC1.1.pdf": 10, "PMC1.1/PMC1.1.xml": 10})
+    study = _study({"NIHMS1-supplement-1.xlsx": 5, "NIHMS1-supplement-2.jpg": 5})
+
+    def get(url, **kwargs):
+        if url.endswith("/"):
+            return listing
+        if "/api/v1/studies/S-EPMC1" in url:
+            return study
+        if url.endswith("/biostudies/files/S-EPMC1/NIHMS1-supplement-1.xlsx"):
+            return _response(b"table")
+        raise AssertionError(f"unexpected request to {url}")  # the ZIP among them
+
+    with mock.patch("requests.get", side_effect=get):
+        files = fetch_supplementary("PMC1", max_bytes=1000)
+    assert files == {"NIHMS1-supplement-1.xlsx": b"table"}

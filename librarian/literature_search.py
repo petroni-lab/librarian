@@ -33,7 +33,7 @@ import zlib
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Protocol
+from typing import Any, Dict, Iterable, List, Optional, Protocol, Tuple
 from urllib.parse import quote
 
 import requests
@@ -55,6 +55,12 @@ _SUPPLEMENTARY_URL = (
 # supplementary and figure file. https://pmc.ncbi.nlm.nih.gov/tools/pmcaws/
 _PMC_AWS_URL = "https://pmc-oa-opendata.s3.amazonaws.com/"
 _S3_NS = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+# BioStudies mirrors Europe PMC's supplementary files, one study per PMC id
+# (S-EPMC123), listed with their sizes and served one by one. It holds the
+# supplements of NIH author manuscripts, whose PMC-bucket folder has only the
+# article, and answers in well under a second where the ZIP takes a minute.
+_BIOSTUDIES_STUDY_URL = "https://www.ebi.ac.uk/biostudies/api/v1/studies/S-EPMC{number}"
+_BIOSTUDIES_FILE_URL = "https://www.ebi.ac.uk/biostudies/files/S-EPMC{number}/{path}"
 # Supplementary files kept: documents whose text can be extracted.
 SUPPLEMENTARY_EXTENSIONS = (
     ".pdf",
@@ -367,8 +373,9 @@ def fetch_supplementary(
 
     Only files ending in ``SUPPLEMENTARY_EXTENSIONS`` are kept, keyed by their
     base filename, and only while their combined size stays within
-    ``max_bytes``. Served from the PMC Open Access bucket on AWS, or from
-    Europe PMC's supplementary-files ZIP when the bucket has no copy.
+    ``max_bytes``. Served from the PMC Open Access bucket on AWS; when the
+    bucket has no supplementary document, from BioStudies; and from Europe
+    PMC's supplementary-files ZIP only when BioStudies has no study either.
 
     :param pmcid: A PMC id in any form (see ``normalize_pmcid``).
     :param max_bytes: Size cap for the files kept (and for the fallback ZIP).
@@ -381,9 +388,15 @@ def fetch_supplementary(
     :raises ValueError: when a listing or the fallback ZIP is unreadable.
     """
     pmcid = normalize_pmcid(pmcid)
-    files = _fetch_supplementary_aws(
-        pmcid, max_bytes, failed if failed is not None else []
-    )
+    failed = failed if failed is not None else []
+    aws_failed: List[str] = []
+    files = _fetch_supplementary_aws(pmcid, max_bytes, aws_failed)
+    # A bucket folder without documents (an author manuscript's) is not an answer;
+    # one whose documents failed to download is, and is retried, not cached.
+    if files or aws_failed:
+        failed.extend(aws_failed)
+        return files or {}
+    files = _fetch_supplementary_biostudies(pmcid, max_bytes, failed)
     return files if files is not None else _fetch_supplementary_zip(pmcid, max_bytes)
 
 
@@ -433,19 +446,57 @@ def _fetch_supplementary_aws(
     version = max(
         {key.split("/", 1)[0] for key in sizes}, key=lambda v: int(v.rsplit(".", 1)[1])
     )
-    files: Dict[str, bytes] = {}
-    kept = 0
+    listed = []
     for key, size in sorted(sizes.items()):
         folder, _, name = key.partition("/")
         if folder != version or name.startswith(f"{version}."):
             continue
+        listed.append((name, _PMC_AWS_URL + quote(key), size))
+    return _download_listed(listed, max_bytes, failed)
+
+
+def _fetch_supplementary_biostudies(
+    pmcid: str, max_bytes: int, failed: List[str]
+) -> "Dict[str, bytes] | None":
+    """Supplementary document files from BioStudies, or None if it has no study.
+
+    Like the bucket, the study lists every file's size, so the budget is applied
+    before downloading and a file whose own download fails goes to *failed*.
+    """
+    number = pmcid.removeprefix("PMC")
+    response = requests.get(_BIOSTUDIES_STUDY_URL.format(number=number), timeout=30)
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    listed = [
+        (
+            entry["path"],
+            _BIOSTUDIES_FILE_URL.format(number=number, path=quote(entry["path"])),
+            entry["size"],
+        )
+        for entry in response.json()["section"].get("files") or []
+    ]
+    return _download_listed(listed, max_bytes, failed)
+
+
+def _download_listed(
+    listed: List[Tuple[str, str, int]], max_bytes: int, failed: List[str]
+) -> Dict[str, bytes]:
+    """Download the listed ``(name, url, size)`` documents while within ``max_bytes``.
+
+    Files that are not documents (figures, videos) are never fetched; a file
+    whose download fails is added to *failed* and skipped.
+    """
+    files: Dict[str, bytes] = {}
+    kept = 0
+    for name, url, size in listed:
         if (
             not name.lower().endswith(SUPPLEMENTARY_EXTENSIONS)
             or kept + size > max_bytes
         ):
             continue
         try:
-            file_response = requests.get(_PMC_AWS_URL + quote(key), timeout=120)
+            file_response = requests.get(url, timeout=120)
             file_response.raise_for_status()
         except requests.exceptions.RequestException:
             failed.append(name)
