@@ -214,21 +214,18 @@ def test_a_crashing_worker_fails_only_its_file(caplog):
     assert "s.pdf exited with status -11" in caplog.text
 
 
-def test_a_crash_keeps_the_rest_of_the_paper_in_stage2():
-    from test_supplementary_tables import _stage2_pool
+def test_a_crash_keeps_the_papers_other_supplementary_files():
+    from test_supplementary_tables import _supplementary_pool
 
     with (
         _worker(CRASH),
         mock.patch.dict(sys.modules, {"docling": types.ModuleType("docling")}),
     ):
-        _, pool = _stage2_pool(
+        _, pool = _supplementary_pool(
             {"s.pdf": b"%PDF", "notes.txt": b"good finding"},
-            everything=True,
             supplementary_pdf_extractor="docling",
         )
-    texts = [r["text"] for r in pool]
-    assert "Unrelated body text." in texts
-    assert "good finding" in texts
+    assert [r["text"] for r in pool] == ["good finding"]
 
 
 def test_an_incomplete_outcome_is_not_cached():
@@ -296,8 +293,8 @@ def test_a_worker_without_output_is_a_failure():
 
 
 def test_a_long_cell_stays_in_its_column_in_every_chunk():
-    """A Docling table's long cell through the agent's Stage-2 pool, every chunk."""
-    from test_supplementary_tables import _stage2_pool
+    """A Docling table's long cell through the agent's Stage-3b path, every chunk."""
+    from test_supplementary_tables import _supplementary_pool
 
     description = " ".join(f"word{i}" for i in range(600))
     payload = {
@@ -312,7 +309,7 @@ def test_a_long_cell_stays_in_its_column_in_every_chunk():
             mock.patch.dict(sys.modules, {"docling": types.ModuleType("docling")}),
             mock.patch.object(supplementary, "_pdf_texts", return_value=iter(())),
         ):
-            max_words, chunks = _stage2_pool(
+            max_words, chunks = _supplementary_pool(
                 {"s.pdf": b"%PDF"}, supplementary_pdf_extractor="docling"
             )
     assert len(chunks) > 1

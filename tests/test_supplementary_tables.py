@@ -98,21 +98,19 @@ def test_rows_are_read_lazily_and_stop_at_the_cap():
     assert len(records) == 3
 
 
-def _stage2_pool(files, subquery="query", everything=False, **config_overrides):
-    """Every supplementary chunk the agent hands to BM25 for one sub-query.
+def _supplementary_pool(files, question="query", **config_overrides):
+    """Every supplementary chunk the Stage-3c judge is given for one selected paper.
 
-    Runs the agent's real Stage-2 path (download mocked, then extraction,
-    table re-cutting and chunking) and captures the pool before ranking.
+    Runs the agent's real Stage-3b path (download mocked, then extraction, the
+    per-paper cut, table re-cutting and chunking) and captures what reaches
+    the judge.
     """
     from dataclasses import replace
 
     from librarian import LibrarianAgent, load_runtime_config
-    from librarian.literature_search import EuropePmcSource, Fulltext
+    from librarian.agent import _RunState
+    from librarian.literature_search import EuropePmcSource
 
-    xml = (
-        "<article><body><p>Unrelated body text.</p></body><back>"
-        "<supplementary-material/></back></article>"
-    )
     paper = {
         "title": "T",
         "isOpenAccess": True,
@@ -120,15 +118,8 @@ def _stage2_pool(files, subquery="query", everything=False, **config_overrides):
         "fullTextIds": ["PMC1"],
         "pmid": "1",
         "year": "2024",
+        "supplementary_captions": {},
     }
-
-    class Source(EuropePmcSource):
-        def search(self, query, page_size):
-            return [dict(paper)]
-
-        def fetch_fulltext_many(self, pmcids):
-            return {"PMC1": Fulltext("PMC1", xml=xml, status=200)}
-
     listing = (
         '<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
         + "".join(
@@ -147,26 +138,20 @@ def _stage2_pool(files, subquery="query", everything=False, **config_overrides):
 
     pool = []
 
-    def capture(subquery, records, k, ranking_terms=()):
-        pool.extend(records)
+    def judge(query, paragraphs, state):
+        pool.extend(paragraphs)
         return []
 
-    config = replace(
-        load_runtime_config(), supplementary_enrichment=True, **config_overrides
+    config = replace(load_runtime_config(), supplementary_stage=True, **config_overrides)
+    agent = LibrarianAgent(
+        config, llm_client=object(), literature_source=EuropePmcSource()
     )
-    agent = LibrarianAgent(config, llm_client=object(), literature_source=Source())
     with (
         mock.patch("requests.get", side_effect=get),
-        mock.patch(
-            "librarian.agent._rank_paragraphs_for_subquery", side_effect=capture
-        ),
+        mock.patch.object(agent, "_relevance_filter", side_effect=judge),
     ):
-        agent._paragraphs_for_subquery(subquery)
-    if everything:
-        return config.max_paragraph_words, pool
-    return config.max_paragraph_words, [
-        r for r in pool if r["section_type"] == "supplementary"
-    ]
+        agent._supplementary_stage(question, [], [paper], _RunState())
+    return config.max_paragraph_words, pool
 
 
 def _assert_every_chunk(chunks, max_words, startswith):
@@ -176,10 +161,10 @@ def _assert_every_chunk(chunks, max_words, startswith):
         assert chunk["text"].startswith(startswith), chunk["text"][:80]
 
 
-# The header invariant on every chunk before BM25, not just BM25's picks.
+# The header invariant on every chunk the judge reads.
 def test_a_long_row_keeps_header_and_row_identity_in_every_chunk():
     description = " ".join(f"word{i}" for i in range(600))
-    max_words, chunks = _stage2_pool(
+    max_words, chunks = _supplementary_pool(
         {"s1.csv": f"gene,description\nSOX2,{description}\n".encode()}
     )
     _assert_every_chunk(chunks, max_words, "gene | description ; SOX2 | ")
@@ -188,7 +173,7 @@ def test_a_long_row_keeps_header_and_row_identity_in_every_chunk():
 
 def test_a_long_cell_continues_in_its_own_column():
     description = " ".join(f"word{i}" for i in range(600))
-    max_words, chunks = _stage2_pool(
+    max_words, chunks = _supplementary_pool(
         {"s.csv": f"gene,score,description\nSOX2,3,{description}\n".encode()}
     )
     assert len(chunks) > 1
@@ -209,7 +194,7 @@ def test_a_long_cell_continues_in_its_own_column():
 
 def test_a_long_middle_cell_keeps_the_next_column_in_place():
     description = " ".join(f"word{i}" for i in range(600))
-    max_words, chunks = _stage2_pool(
+    max_words, chunks = _supplementary_pool(
         {"s.csv": f"gene,description,padj\nSOX2,{description},0.01\n".encode()}
     )
     padj = []
@@ -230,7 +215,7 @@ def test_rows_packed_together_leave_room_for_every_separator():
     # packs whole rows and row parts, each " ; " costing a word.
     small = [f"G{i},{' '.join(['note'] * 20)}" for i in range(3)]
     big = "BIG," + " ".join(f"w{i}" for i in range(400))
-    max_words, chunks = _stage2_pool(
+    max_words, chunks = _supplementary_pool(
         {"s1.csv": ("gene,description\n" + "\n".join(small + [big])).encode()}
     )
     _assert_every_chunk(chunks, max_words, "gene | description ; ")
@@ -243,7 +228,7 @@ def test_rows_packed_together_leave_room_for_every_separator():
 def test_a_wide_table_is_split_into_column_groups_each_with_its_header():
     header = "gene," + ",".join(f"sample{i}" for i in range(130))
     rows = [f"G{r}," + ",".join(str(r * i) for i in range(130)) for r in range(3)]
-    max_words, chunks = _stage2_pool(
+    max_words, chunks = _supplementary_pool(
         {"s1.csv": (header + "\n" + "\n".join(rows)).encode()}
     )
     _assert_every_chunk(chunks, max_words, "gene | sample")

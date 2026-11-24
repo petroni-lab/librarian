@@ -2,7 +2,7 @@
 
 [LAB-Bench SuppQA](https://github.com/Future-House/LAB-Bench/tree/main/SuppQA):
 82 public multiple-choice questions, each answerable only from one paper's
-supplementary material. The bench measures what `supplementary_enrichment` adds
+supplementary material. The bench measures what `supplementary_stage` adds
 to accuracy, what it costs in retrieval time, and how supplementary paragraphs
 fare against main-text ones at each stage.
 
@@ -16,8 +16,8 @@ librarian's query. Scoring is the LabBench multiple-choice scoring, so no LLM ju
 |---|---|
 | `preflight` | No LLM. Fetches each question's own paper and checks whether its gold `key-passage` appears in the extracted supplement and/or the main text. This sets the ceiling. |
 | `baseline` | The answering model alone |
-| `main` | Librarian, abstracts + full text, `supplementary_enrichment` off |
-| `supp` | The same, plus supplementary PDF/Word files |
+| `main` | Librarian, abstracts + full text, `supplementary_stage` off |
+| `supp` | The same, plus the supplementary files of the papers the judge kept |
 
 For a clean comparison, run `supp` first, then `main` with `--queries-from` that
 run. Both arms then search the same sub-queries, and only the supplementary files

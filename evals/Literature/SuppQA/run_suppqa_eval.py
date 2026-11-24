@@ -8,9 +8,9 @@ run is one arm, chosen with ``--arm``:
              be found: the ceiling of what supplementary support can add.
   baseline   The answering model alone, from its own knowledge.
   main       The model grounded in the librarian, abstracts + full-text bodies
-             (``supplementary_enrichment`` off).
-  supp       The same, plus supplementary PDF/Word files
-             (``supplementary_enrichment`` on).
+             (``supplementary_stage`` off).
+  supp       The same, plus the supplementary files of the papers the judge
+             kept (``supplementary_stage`` on).
 
 Questions whose paper has no PMC id in Europe PMC are skipped by every arm. As
 upstream, the question is prefixed with the paper title and DOI, and the same
@@ -65,7 +65,7 @@ from evals.Literature.LabBench.labbench_compat import (  # noqa: E402
     randomize_choices,
     score_prediction,
 )
-from librarian.agent import LibrarianAgent, SearchPlan, _fulltext_pmcid  # noqa: E402
+from librarian.agent import LibrarianAgent, SearchPlan, fulltext_pmcid  # noqa: E402
 from librarian.config import load_runtime_config  # noqa: E402
 from librarian.jats import (  # noqa: E402
     extract_body_paragraphs,
@@ -249,13 +249,13 @@ class SpanTimer:
 
 def _paper_ids(paper: dict[str, Any]) -> dict[str, str]:
     """A returned paper's ids, with the full-text id the agent will fetch ("" when it won't)."""
-    fulltext_pmcid = _fulltext_pmcid(paper)
+    paper_pmcid = fulltext_pmcid(paper)
     return {
         "pmid": str(paper.get("pmid") or ""),
         "pmcid": str(paper.get("pmcid") or ""),
         "doi": str(paper.get("doi") or "").lower(),
-        "fulltext": "requested" if fulltext_pmcid else "not open access: abstract only",
-        "fulltext_pmcid": fulltext_pmcid,
+        "fulltext": "requested" if paper_pmcid else "not open access: abstract only",
+        "fulltext_pmcid": paper_pmcid,
     }
 
 
@@ -343,7 +343,9 @@ class InstrumentedAgent(LibrarianAgent):
 
     Pool (before BM25) and BM25-kept counts are summed over sub-queries, so a
     paper two sub-queries both find counts twice in each, and the two stay
-    comparable. Optionally replays fixed Stage-1 sub-queries.
+    comparable. Supplementary records are read once per kept paper, after the
+    judge: both their pool and BM25 counts are the records Stage 3b keeps.
+    Optionally replays fixed Stage-1 sub-queries.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -396,10 +398,8 @@ class InstrumentedAgent(LibrarianAgent):
         finally:
             self.stage1_seconds = time.perf_counter() - start
 
-    def _paragraph_records_for_paper(self, paper, fulltexts, supplementaries=None):
-        records = super()._paragraph_records_for_paper(
-            paper, fulltexts, supplementaries
-        )
+    def _paragraph_records_for_paper(self, paper, fulltexts):
+        records = super()._paragraph_records_for_paper(paper, fulltexts)
         self._note("pool", paper, records)
         return records
 
@@ -412,15 +412,15 @@ class InstrumentedAgent(LibrarianAgent):
             self._note("bm25", records[0]["paper"], records)
         return top
 
-    def _supplementary_paragraphs(self, pmcid, fulltext, supplementary):
-        if supplementary is not None:
-            with self._stats_lock:
-                self.counts["supp_fetches"] += 1
-                if not supplementary.ok:
-                    self.counts["supp_fetch_errors"] += 1
-                if supplementary.records:
-                    self.counts["supp_fetches_with_files"] += 1
-        return super()._supplementary_paragraphs(pmcid, fulltext, supplementary)
+    def read_supplementary(self, question, paper, ranking_terms, deadline):
+        records = super().read_supplementary(question, paper, ranking_terms, deadline)
+        with self._stats_lock:
+            self.counts["supp_fetches"] += 1
+            if records:
+                self.counts["supp_fetches_with_files"] += 1
+        self._note("pool", paper, records)
+        self._note("bm25", paper, records)
+        return records
 
 
 def retrieval_stats(agent: InstrumentedAgent, budget: int) -> dict[str, Any]:
@@ -450,8 +450,10 @@ def retrieval_stats(agent: InstrumentedAgent, budget: int) -> dict[str, Any]:
         key["key_cited"] = key_overlap(agent.question["key_passage"], joined)
         key["key_shown"] = key_overlap(agent.question["key_passage"], joined[:budget])
     debug = agent.debug
-    counts["judged_total"] = debug.get("paragraph_count", 0)
-    counts["judged_supp"] = debug.get("supplementary_paragraph_count", 0)
+    stage = debug.get("supplementary_stage", {})
+    counts["judged_total"] = debug.get("paragraph_count", 0) + stage.get("paragraphs", 0)
+    counts["judged_supp"] = stage.get("paragraphs", 0)
+    counts["supp_read_failures"] = stage.get("papers_failed", 0)
     seconds = dict(agent._tracer.seconds)
     return {
         "search_queries": debug.get("search_queries", []),
@@ -491,7 +493,7 @@ def librarian_config(args: argparse.Namespace):
     if args.arm not in ("main", "supp"):
         return config
     config = replace(
-        config, supplementary_enrichment=args.arm == "supp", filter_temperature=0.0
+        config, supplementary_stage=args.arm == "supp", filter_temperature=0.0
     )
     if args.pdf_extractor:
         config = replace(config, supplementary_pdf_extractor=args.pdf_extractor)

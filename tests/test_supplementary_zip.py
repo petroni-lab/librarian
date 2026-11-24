@@ -19,6 +19,7 @@ from librarian.literature_search import (
     _fetch_supplementary_zip,
     fetch_supplementary,
     fetch_supplementary_outcome,
+    list_supplementary,
 )
 
 
@@ -214,6 +215,41 @@ def test_author_manuscript_supplements_come_from_biostudies():
     with mock.patch("requests.get", side_effect=get):
         files = fetch_supplementary("PMC1", max_bytes=1000)
     assert files == {"NIHMS1-supplement-1.xlsx": b"table"}
+
+
+def test_listing_names_every_file_of_any_type_with_its_url_and_size():
+    listing = _listing(
+        {
+            "PMC1.1/PMC1.1.pdf": 10,
+            "PMC1.2/PMC1.2.xml": 10,
+            "PMC1.2/s1.xlsx": 7,
+            "PMC1.2/fig1.tif": 9,
+            "PMC1.2/atlas.h5ad": 11,
+        }
+    )
+    with mock.patch("requests.get", return_value=listing):
+        listed = list_supplementary("pmc1")
+    assert [(name, size) for name, _, size in listed] == [
+        ("atlas.h5ad", 11),
+        ("fig1.tif", 9),
+        ("s1.xlsx", 7),
+    ]
+    assert listed[2][1].endswith("/PMC1.2/s1.xlsx")
+
+
+def test_an_author_manuscript_is_listed_from_biostudies():
+    listing = _listing({"PMC1.1/PMC1.1.pdf": 10})
+    study = _study({"NIHMS1-supplement-1.xlsx": 5, "NIHMS1-supplement-2.jpg": 6})
+
+    def get(url, **kwargs):
+        return listing if url.endswith("/") else study
+
+    with mock.patch("requests.get", side_effect=get):
+        listed = list_supplementary("PMC1")
+    assert [(name, size) for name, _, size in listed] == [
+        ("NIHMS1-supplement-1.xlsx", 5),
+        ("NIHMS1-supplement-2.jpg", 6),
+    ]
 
 
 def test_aws_folder_with_only_images_skips_zip_on_biostudies_404():

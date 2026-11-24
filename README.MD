@@ -644,10 +644,13 @@ Worth knowing before you plug Librarian into a pipeline:
   in them is currently inaccessible. This is why our LAB-Bench evaluation excludes FigQA,
   TableQA, and SuppQA.
 - **Supplementary material is experimental and off by default.** `--supplementary` (or
-  `supplementary_enrichment` in `config.toml`) also reads each open-access paper's
-  supplementary PDF, Word (`.docx`, `.doc`) and plain-text (`.txt`, `.md`) files; it needs
-  the `supplementary` extra (`uv sync --extra supplementary`) and makes a query several
-  times slower. Legacy `.doc` files are converted with `antiword` (Linux:
+  `supplementary_stage` in `config.toml`) also reads, after the relevance judge, the
+  supplementary PDF, Word (`.docx`, `.doc`), plain-text (`.txt`, `.md`) and table
+  (`.csv`, `.tsv`, `.xlsx`, `.xls`) files of the papers it kept; the judge reads their
+  best records for the question and its citations are added to those papers' evidence.
+  It needs the `supplementary` extra (`uv sync --extra supplementary`) and adds up to
+  `supplementary_deadline_seconds` plus one judge round to a query. Subclasses can
+  override `LibrarianAgent.read_supplementary` to read the files another way. Legacy `.doc` files are converted with `antiword` (Linux:
   `apt install antiword`) or macOS's built-in `textutil`; with neither on the `PATH`
   they contribute no text, and the only sign is a debug log.
 

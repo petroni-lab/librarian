@@ -58,7 +58,7 @@ that is what the benchmarks under `evals/` are for.
    fetch, batched once per sub-query's result set rather than per paper.
 
 (`literature_source.fetch_supplementary_many` is a fourth, called only when
-`supplementary_enrichment` is on. It is not recorded yet: `recording.toml` pins
+`supplementary_stage` is on. It is not recorded yet: `recording.toml` pins
 it off, the recorder refuses a config with it on, and `ReplaySource` raises
 `MissingRecording` if it is ever called.)
 
@@ -234,7 +234,7 @@ uv run python tests/record_fixture.py \
 ```
 
 It validates the case name, refuses to overwrite an existing case unless
-`--overwrite` is given, refuses a config with `supplementary_enrichment` on,
+`--overwrite` is given, refuses a config with `supplementary_stage` on,
 builds a `LibrarianAgent` with full-text enrichment on around the recording
 collaborators, installs `StageCapture`, and calls `agent.run(query)` once for
 real. Nothing is written to disk until that run succeeds and returns

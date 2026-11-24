@@ -146,7 +146,7 @@ class ReplaySource:
         """Return this batch's recorded JATS XML, wrapped as the real call returns it.
 
         Mirrors ``EuropePmcSource.fetch_fulltext_many``'s contract: blank ids
-        (papers with no free full text, per ``_fulltext_pmcid``) are dropped, the
+        (papers with no free full text, per ``fulltext_pmcid``) are dropped, the
         rest are deduplicated and keyed by ``normalize_pmcid`` — so a caller
         relying on that keying behaves the same in replay as live.
         """
@@ -169,13 +169,13 @@ class ReplaySource:
     def fetch_supplementary_many(self, pmcids: Iterable[str], options: Any) -> Any:
         """Supplementary files are not recorded yet, so any call is a gap.
 
-        Recordings pin ``supplementary_enrichment = false``; reaching this means a
+        Recordings pin ``supplementary_stage = false``; reaching this means a
         case was recorded with it on, or the agent started calling it regardless.
         """
         raise fixture_replay.MissingRecording(
             f"fetch_supplementary_many called for {sorted(pmcids)}, but recordings "
             f"do not capture supplementary files. Record "
-            f"{self._case.directory.name} with supplementary_enrichment = false."
+            f"{self._case.directory.name} with supplementary_stage = false."
         )
 
 

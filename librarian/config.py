@@ -75,18 +75,24 @@ class LibrarianRuntimeConfig(DataClassTOMLMixin):
     # nothing and the batch is dropped without an error.
     filter_max_tokens: int
     # ── Supplementary material ───────────────────────────────────────────────
-    # Also fetch each open-access paper's supplementary files (PMC bucket on
-    # AWS, Europe PMC ZIP as fallback) and add the text of its PDF / Word
-    # documents to that paper's paragraph pool. Only applies when full text is
+    # Stage 3b/3c: after the judge has chosen the papers, read the supplementary
+    # files of those that declare any (PMC bucket on AWS, then BioStudies, then
+    # the Europe PMC ZIP); the judge reads the best records and its citations
+    # are appended to the paper's evidence. Only applies when full text is
     # fetched.
-    supplementary_enrichment: bool
+    supplementary_stage: bool
+    # How long Stage 3b waits for the selected papers' supplementary files.
+    # Papers are read in the judge's order, so the ones still unread when it
+    # runs out are the least relevant. It bounds run(), not the reads: one
+    # already running finishes in the background (warming the cache), and can
+    # keep a short-lived process from exiting until it does.
+    supplementary_deadline_seconds: float
     # Size cap, in bytes, on the supplementary documents kept per paper (and on
     # a fallback ZIP); files past it are skipped, not downloaded or parsed.
     max_supplementary_bytes: int
-    # Most supplementary paragraph records one paper contributes to a
-    # sub-query's pool (before chunking), so a long supplement can't crowd the
-    # body out of BM25. The records kept are the paper's best for that
-    # sub-query by BM25, out of up to a few hundred extracted and cached.
+    # Most supplementary records of one paper the Stage-3c judge reads (before
+    # chunking): the paper's best for the question by BM25, out of up to a few
+    # hundred extracted and cached.
     max_supplementary_records_per_paper: int
     # How supplementary PDFs are read: "pypdf" (text per page) or "docling"
     # (tables as rows with their header; slow, needs the `docling` extra).

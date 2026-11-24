@@ -19,8 +19,8 @@ Access bucket on AWS, which lists every file with its size, so figures, videos
 and data files are never downloaded. Papers missing from the bucket (outside
 PMC's open-access subset, preprints) fall back to Europe PMC's
 supplementary-files ZIP, which is much slower and often fails. The agent asks
-for it only when ``supplementary_enrichment`` is on, and only for papers whose
-JATS declares supplementary material (``declares_supplementary``).
+for it only when ``supplementary_stage`` is on, and only for the papers the
+judge kept whose JATS declares supplementary material (``declares_supplementary``).
 ``fulltext_cache.CachedSource`` caches these outcomes too.
 """
 
@@ -390,19 +390,42 @@ def fetch_supplementary(
     """
     pmcid = normalize_pmcid(pmcid)
     failed = failed if failed is not None else []
+    aws_listed = _list_supplementary_aws(pmcid)
     aws_failed: List[str] = []
-    files = _fetch_supplementary_aws(pmcid, max_bytes, aws_failed)
+    files = _download_listed(aws_listed or [], max_bytes, aws_failed)
     # A bucket folder without documents (an author manuscript's) is not an answer;
     # one whose documents failed to download is, and is retried, not cached.
     if files or aws_failed:
         failed.extend(aws_failed)
         return files
-    aws_had_folder = files is not None
-    files = _fetch_supplementary_biostudies(pmcid, max_bytes, failed)
-    if files is not None:
-        return files
+    biostudies_listed = _list_supplementary_biostudies(pmcid)
+    if biostudies_listed is not None:
+        return _download_listed(biostudies_listed, max_bytes, failed)
     # A folder with only figures or archives is already complete on AWS; skip the slow ZIP.
-    return {} if aws_had_folder else _fetch_supplementary_zip(pmcid, max_bytes)
+    return {} if aws_listed is not None else _fetch_supplementary_zip(pmcid, max_bytes)
+
+
+def list_supplementary(pmcid: str) -> List[Tuple[str, str, int]]:
+    """Every supplementary file of one paper, of any type, without downloading it.
+
+    The same sources as ``fetch_supplementary``, in the same order: the PMC
+    Open Access bucket on AWS (its latest article version, without PMC's own
+    renditions of the article), then BioStudies when the bucket has no
+    supplementary document. Figures, videos, archives and data files are
+    listed too, so a reader that handles them can download what it needs.
+
+    :param pmcid: A PMC id in any form (see ``normalize_pmcid``).
+    :return: ``(file name, download URL, size in bytes)`` per file; empty when
+        neither source lists any.
+    :rtype: List[Tuple[str, str, int]]
+    :raises requests.exceptions.RequestException: on a failed request.
+    :raises ValueError: when a listing is unreadable.
+    """
+    pmcid = normalize_pmcid(pmcid)
+    aws_listed = _list_supplementary_aws(pmcid) or []
+    if any(name.lower().endswith(SUPPLEMENTARY_EXTENSIONS) for name, _, _ in aws_listed):
+        return aws_listed
+    return _list_supplementary_biostudies(pmcid) or aws_listed
 
 
 def _list_pmc_folder(pmcid: str) -> Dict[str, int]:
@@ -433,16 +456,12 @@ def _list_pmc_folder(pmcid: str) -> Dict[str, int]:
         params = {**params, "continuation-token": token}
 
 
-def _fetch_supplementary_aws(
-    pmcid: str, max_bytes: int, failed: List[str]
-) -> "Dict[str, bytes] | None":
-    """Supplementary document files from the PMC bucket, or None if it has no copy.
+def _list_supplementary_aws(pmcid: str) -> "List[Tuple[str, str, int]] | None":
+    """The PMC bucket's ``(name, url, size)`` files for *pmcid*, or None if it has no copy.
 
-    The listing gives every file's size, so the ``max_bytes`` budget is applied
-    before downloading, and figures, videos and PMC's own renditions of the
-    article (``PMC123.1.pdf``, ``.xml``, ``.txt``) are never fetched. A listed
-    file whose own download fails (a 404 after the listing, a timeout) is added
-    to *failed* and skipped: it says nothing about the paper's other files.
+    Only the latest article version, and never PMC's own renditions of the
+    article (``PMC123.1.pdf``, ``.xml``, ``.txt``). The sizes let a caller
+    apply a byte budget before downloading anything.
     """
     sizes = _list_pmc_folder(pmcid)
     if not sizes:
@@ -457,17 +476,13 @@ def _fetch_supplementary_aws(
         if folder != version or name.startswith(f"{version}."):
             continue
         listed.append((name, _PMC_AWS_URL + quote(key), size))
-    return _download_listed(listed, max_bytes, failed)
+    return listed
 
 
-def _fetch_supplementary_biostudies(
-    pmcid: str, max_bytes: int, failed: List[str]
-) -> "Dict[str, bytes] | None":
-    """Supplementary document files from BioStudies, or None if it has no study.
-
-    Like the bucket, the study lists every file's size, so the budget is applied
-    before downloading and a file whose own download fails goes to *failed*.
-    """
+def _list_supplementary_biostudies(
+    pmcid: str,
+) -> "List[Tuple[str, str, int]] | None":
+    """BioStudies' ``(name, url, size)`` files for *pmcid*, or None if it has no study."""
     number = pmcid.removeprefix("PMC")
     response = requests.get(_BIOSTUDIES_STUDY_URL.format(number=number), timeout=30)
     if response.status_code == 404:
@@ -485,7 +500,7 @@ def _fetch_supplementary_biostudies(
         ]
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
         raise ValueError(f"unreadable BioStudies study: {exc}") from exc
-    return _download_listed(listed, max_bytes, failed)
+    return listed
 
 
 def _download_listed(
@@ -493,8 +508,9 @@ def _download_listed(
 ) -> Dict[str, bytes]:
     """Download the listed ``(name, url, size)`` documents while within ``max_bytes``.
 
-    Files that are not documents (figures, videos) are never fetched; a file
-    whose download fails is added to *failed* and skipped.
+    Files that are not documents (figures, videos) are never fetched; a listed
+    file whose own download fails (a 404 after the listing, a timeout) is added
+    to *failed* and skipped: it says nothing about the paper's other files.
     """
     files: Dict[str, bytes] = {}
     kept = 0
@@ -712,10 +728,10 @@ class LiteratureSource(Protocol):
     id, keyed by that id. The agent only reads each value's ``ok``, ``xml``
     and ``error``, so any object with those attributes will do.
 
-    Optionally, ``fetch_supplementary_many(pmcids, options)`` returns one
+    ``fetch_supplementary_many(pmcids, options)`` returns one
     ``Supplementary`` per id, the same way. The agent calls it only when
-    ``supplementary_enrichment`` is on; a source without it contributes no
-    supplementary text.
+    ``supplementary_stage`` is on (``LibrarianAgent.read_supplementary``), so
+    only a source used with the stage on needs it.
     """
 
     def search(self, query: str, page_size: int) -> List[Dict[str, Any]]:

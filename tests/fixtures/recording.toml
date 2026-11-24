@@ -32,9 +32,10 @@ filter_temperature = 0.0
 filter_max_tokens = 8192
 
 # Off, as shipped: supplementary files are not recorded, so replay cannot answer
-# for them (record_fixture.py refuses this config with it on). The other three
-# knobs are inert while it is off, and set to the shipped values.
-supplementary_enrichment = false
+# for them (record_fixture.py refuses this config with it on). The other knobs
+# are inert while it is off, and set to the shipped values.
+supplementary_stage = false
+supplementary_deadline_seconds = 120
 max_supplementary_bytes = 15_000_000
 max_supplementary_records_per_paper = 40
 supplementary_pdf_extractor = "pypdf"
