@@ -111,8 +111,8 @@ def timing_report(arms: dict[str, dict[str, dict]], ids: set[str]) -> str:
     """Retrieval seconds per question; Stage 1 is left out of the headline since
     a run with --queries-from skips the query-planning LLM call."""
     spans = ["librarian.stage2_paragraphs", "librarian.epmc_search",
-             "librarian.epmc_fulltext", "librarian.epmc_supplementary",
-             "librarian.bm25_rank", "librarian.filter_relevance"]
+             "librarian.epmc_fulltext", "librarian.bm25_rank",
+             "librarian.filter_relevance", "librarian.supplementary_stage"]
     rows = []
     for arm, by_id in arms.items():
         stats = [by_id[i]["retrieval"] for i in ids if by_id[i].get("retrieval")]
@@ -126,16 +126,17 @@ def timing_report(arms: dict[str, dict[str, dict]], ids: set[str]) -> str:
             [arm, f"{statistics.median(retrieval):.1f}", f"{_quantile(retrieval, 0.9):.1f}",
              f"{statistics.mean(retrieval):.1f}"]
             + [f"{statistics.mean(s['span_seconds'].get(n, 0.0) for s in stats):.1f}" for n in spans]
-            + [f"{counts['supp_fetch_errors']}/{counts['supp_fetches']}"]
+            + [f"{counts['supp_fetches_with_files']}/{counts['supp_fetches']}"]
         )
     return (
-        "## Retrieval time per question, seconds (Stage 2 + 3)\n\n"
+        "## Retrieval time per question, seconds (Stage 2 + 3 + 3b/3c)\n\n"
         "Sub-query spans (search, fulltext, bm25) are summed over the parallel "
-        "sub-query threads, so they are thread-seconds, not wall-clock. supp "
-        "download includes extracting the files' text (none on a cache hit).\n\n"
+        "sub-query threads, so they are thread-seconds, not wall-clock. The "
+        "supplementary stage includes downloading and extracting the kept "
+        "papers' files (none on a cache hit) and their judge round.\n\n"
         + _table(
             ["arm", "median", "p90", "mean", "stage 2 wall", "search Σ", "fulltext Σ",
-             "supp download+parse Σ", "bm25 Σ", "judge", "supp fetch errors"],
+             "bm25 Σ", "judge", "supplementary stage", "papers with supp records"],
             rows,
         )
     )

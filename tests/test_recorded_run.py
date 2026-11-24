@@ -169,13 +169,13 @@ class ReplaySource:
     def fetch_supplementary_many(self, pmcids: Iterable[str], options: Any) -> Any:
         """Supplementary files are not recorded yet, so any call is a gap.
 
-        Recordings pin ``supplementary_enrichment = false``; reaching this means a
+        Recordings pin ``supplementary_stage = false``; reaching this means a
         case was recorded with it on, or the agent started calling it regardless.
         """
         raise fixture_replay.MissingRecording(
             f"fetch_supplementary_many called for {sorted(pmcids)}, but recordings "
             f"do not capture supplementary files. Record "
-            f"{self._case.directory.name} with supplementary_enrichment = false."
+            f"{self._case.directory.name} with supplementary_stage = false."
         )
 
 

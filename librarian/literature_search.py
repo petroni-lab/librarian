@@ -19,8 +19,8 @@ Access bucket on AWS, which lists every file with its size, so figures, videos
 and data files are never downloaded. Papers missing from the bucket (outside
 PMC's open-access subset, preprints) fall back to Europe PMC's
 supplementary-files ZIP, which is much slower and often fails. The agent asks
-for it only when ``supplementary_enrichment`` is on, and only for papers whose
-JATS declares supplementary material (``declares_supplementary``).
+for it only when ``supplementary_stage`` is on, and only for the papers the
+judge kept whose JATS declares supplementary material (``declares_supplementary``).
 ``fulltext_cache.CachedSource`` caches these outcomes too.
 """
 
@@ -712,10 +712,10 @@ class LiteratureSource(Protocol):
     id, keyed by that id. The agent only reads each value's ``ok``, ``xml``
     and ``error``, so any object with those attributes will do.
 
-    Optionally, ``fetch_supplementary_many(pmcids, options)`` returns one
+    ``fetch_supplementary_many(pmcids, options)`` returns one
     ``Supplementary`` per id, the same way. The agent calls it only when
-    ``supplementary_enrichment`` is on; a source without it contributes no
-    supplementary text.
+    ``supplementary_stage`` is on (``LibrarianAgent.read_supplementary``), so
+    only a source used with the stage on needs it.
     """
 
     def search(self, query: str, page_size: int) -> List[Dict[str, Any]]:

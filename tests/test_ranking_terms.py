@@ -1,11 +1,9 @@
-"""Stage-1 ranking terms reach both Stage-2 cuts (#91).
+"""Stage-1 ranking terms reach the Stage-2 cut and the supplementary cut (#91).
 
 uv run --extra supplementary pytest tests
 """
 
 import json
-
-import pytest
 
 from librarian import LibrarianAgent, SearchPlan, agent, load_runtime_config
 
@@ -68,10 +66,10 @@ def test_a_document_matching_neither_channel_scores_zero():
 #
 # SuppQA q23 asks how many never smokers PMC10960411's datasets hold (179). The
 # answer is a Docling record of Table S1 whose only smoking word is "Smoke":
-# Snowball stems the sub-query's "smokers" to "smoker" and "Smoke" to "smoke",
-# so BM25 against the sub-query scores it 0. The four records below are the
+# Snowball stems the question's "smokers" to "smoker" and "Smoke" to "smoke",
+# so BM25 against the question scores it 0. The four records below are the
 # paper's real Docling records (indices 57, 59, 61 and 68 of 103), verbatim;
-# the rest of the paper is replaced by tables that do match the sub-query, as
+# the rest of the paper is replaced by tables that do match the question, as
 # its real lncRNA tables do.
 
 _ROW = (
@@ -101,7 +99,7 @@ _OTHER_SMOKE_RECORDS = {
     "GSE72094 | Smoke (Yes vs. No) | 1.038127287 | 0.427795763 | 2.519212102 | 0.934069567",
 }
 _ROW_INDEX = 68
-_SUBQUERY = 'TITLE:"lncRNA signature" AND TITLE:"lung adenocarcinoma"'
+_QUESTION = "How many never smokers were there in total across the lncRNA lung adenocarcinoma datasets?"
 # What the live planner (glm-5.3-flash) returned for q23 with this prompt, whose
 # example is not q23's. "smoking" stems to "smoke", the row's only smoking word.
 _TERMS = ["never smokers", "never smoker", "smoking status", "non-smoker", "smoker"]
@@ -133,133 +131,27 @@ def _paper_records():
     return records
 
 
-# Competing papers a broad lncRNA/LUAD sub-query returns: every one matches the
-# sub-query, and some discuss smoking in their body text, as PMC9169227 does.
-def _competing_paper(n):
-    smoking = (
-        " Smoking status was recorded for each patient: never smokers, former "
-        "smokers and current smokers were compared, and the risk score did not "
-        "differ by smoking history or tobacco exposure."
-        if n % 10 == 0
-        else ""
-    )
-    abstract = (
-        f"We built a {n}-lncRNA signature for lung adenocarcinoma from TCGA and "
-        "validated its prognostic value; high-risk patients had shorter survival."
-    )
-    body = [
-        f"The lncRNA signature stratified lung adenocarcinoma patients in cohort {n} "
-        "into high- and low-risk groups with distinct immune infiltration." + smoking,
-        "Functional enrichment linked the signature lncRNAs to cell cycle and "
-        f"immune pathways in lung adenocarcinoma samples (set {n}).",
-    ]
-    return abstract, body
+def _supplementary_cut(ranking_terms):
+    """Indices of the q23 paper's records Stage 3b keeps for the judge."""
+    from librarian.literature_search import EuropePmcSource, Supplementary
 
-
-def _stage2(ranking_terms, competing_paper=_competing_paper):
-    """The real Stage 2 for one sub-query: (cut-1 indices kept, cut-2 texts kept)."""
-    from dataclasses import replace
-
-    from librarian.literature_search import EuropePmcSource, Fulltext, Supplementary
-
-    papers, fulltexts = [], {}
-    target = {
-        "pmid": "38515127",
-        "pmcid": "PMC10960411",
-        "isOpenAccess": True,
-        "fullTextIds": ["PMC10960411"],
-        "title": "Single-cell RNA sequencing integrated with bulk RNA sequencing "
-        "analysis identifies a tumor immune microenvironment-related lncRNA "
-        "signature in lung adenocarcinoma",
-        "abstract": "We identified a TME-related lncRNA signature (TRLS) in lung "
-        "adenocarcinoma from single-cell and bulk RNA sequencing.",
-        "year": "2024",
-    }
-    papers.append(target)
-    fulltexts["PMC10960411"] = Fulltext(
-        "PMC10960411",
-        xml="<article><body><p>The TRLS lncRNA signature predicted survival in lung "
-        "adenocarcinoma cohorts.</p></body><back><supplementary-material/></back>"
-        "</article>",
-        status=200,
-    )
-    for n in range(30):
-        pmcid = f"PMC9{n:06d}"
-        abstract, body = competing_paper(n)
-        papers.append(
-            {
-                "pmid": str(n),
-                "pmcid": pmcid,
-                "isOpenAccess": True,
-                "fullTextIds": [pmcid],
-                "title": f"A lncRNA signature in lung adenocarcinoma {n}",
-                "abstract": abstract,
-                "year": "2023",
-            }
-        )
-        fulltexts[pmcid] = Fulltext(
-            pmcid,
-            xml="<article><body>"
-            + "".join(f"<p>{p}</p>" for p in body)
-            + "</body></article>",
-            status=200,
-        )
     outcome = Supplementary("PMC10960411", records=_paper_records(), status=200)
 
     class Source(EuropePmcSource):
-        def search(self, query, page_size):
-            return [dict(p) for p in papers]
-
-        def fetch_fulltext_many(self, pmcids):
-            return {p: fulltexts[p] for p in pmcids}
-
         def fetch_supplementary_many(self, pmcids, options):
-            return {p: outcome for p in pmcids if p == "PMC10960411"}
+            return {p: outcome for p in pmcids}
 
-    config = replace(load_runtime_config(), supplementary_enrichment=True)
+    config = load_runtime_config()
     librarian = LibrarianAgent(config, llm_client=object(), literature_source=Source())
-    cut1 = []
-    original = agent._top_supplementary
-
-    def capture(subquery, supplementary, k, terms=()):
-        kept = original(subquery, supplementary, k, terms)
-        cut1.extend(r["supplementary_index"] for r in kept.records)
-        return kept
-
-    from unittest import mock
-
-    with mock.patch("librarian.agent._top_supplementary", side_effect=capture):
-        top = librarian._paragraphs_for_subquery(_SUBQUERY, ranking_terms)
+    paper = {"pmcid": "PMC10960411", "supplementary_captions": {}}
+    kept = librarian.read_supplementary(_QUESTION, paper, ranking_terms)
     assert config.max_supplementary_records_per_paper == 40
-    assert config.paragraphs_per_subquery == 16
-    return cut1, [r["text"] for r in top]
+    return [r["supplementary_index"] for r in kept]
 
 
-def test_q23_row_is_lost_at_both_cuts_without_ranking_terms():
-    cut1, cut2 = _stage2([])
-    assert _ROW_INDEX not in cut1
-    assert not any("123 (50.0%)" in text for text in cut2)
+def test_q23_row_is_lost_at_the_supplementary_cut_without_ranking_terms():
+    assert _ROW_INDEX not in _supplementary_cut([])
 
 
-def test_q23_row_survives_both_cuts_with_ranking_terms_unchanged():
-    cut1, cut2 = _stage2(_TERMS)
-    assert _ROW_INDEX in cut1
-    kept = [text for text in cut2 if "123 (50.0%)" in text]
-    assert kept, "the Table S1 row must reach Stage 3"
-    # The judge is shown the record as extracted: the terms only rank it.
-    assert all(cell in kept[0] for cell in ("23 (18.1%)", "33 (7.5%)", "Smoke ; No"))
-
-
-# Known limit, reproduced in the #97 review and seen live in q23 run 3 (broad
-# sub-query, rank 28 of 5072): when every competing paper's body discusses
-# smoking, those passages match both channels and outvote the row, which matches
-# the terms only. It survives the per-paper cut but not the top 16. Strict, so
-# the test fails once a ranking change fixes this, and must then become a plain
-# assertion.
-@pytest.mark.xfail(
-    strict=True, reason="#91: the row loses the top-16 cut to passages matching both channels"
-)
-def test_q23_row_survives_the_second_cut_when_every_competitor_discusses_smoking():
-    cut1, cut2 = _stage2(_TERMS, lambda n: _competing_paper(n * 10))
-    assert _ROW_INDEX in cut1
-    assert any("123 (50.0%)" in text for text in cut2)
+def test_q23_row_survives_the_supplementary_cut_with_ranking_terms():
+    assert _ROW_INDEX in _supplementary_cut(_TERMS)

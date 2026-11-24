@@ -11,10 +11,9 @@ Single-pass pipeline (max_loops=1, the only supported mode):
       one thread per sub-query):
         - search the sub-query against Europe PMC (papers_per_subquery papers),
         - fetch the open-access full texts of those papers in one batch,
-        - decompose every paper into paragraphs (abstract + full-text body chunks
-          + supplementary-document chunks when supplementary_enrichment is on,
-          no distinction), BM25-rank the pool against the sub-query (fused with
-          the ranking terms, see ``_fused_rank``), keep the top k
+        - decompose every paper into paragraphs (abstract + full-text body
+          chunks, no distinction), BM25-rank the pool against the sub-query
+          (fused with the ranking terms, see ``_fused_rank``), keep the top k
           (paragraphs_per_subquery).
       ``run`` concatenates every sub-query's paragraphs into one flat pool and
       merges duplicate or overlapping selections by source coordinates.
@@ -24,6 +23,12 @@ Single-pass pipeline (max_loops=1, the only supported mode):
       supporting sentences, then regroup the cited sentences by paper and return
       the cited papers ranked most→least relevant, each with its judge-cited
       evidence snippet.
+  Stage 3b/3c — Supplementary material (_supplementary_stage, when
+      supplementary_stage is on): for the papers Stage 3 kept, and only those,
+      read their supplementary files (``read_supplementary``: the paper's best
+      max_supplementary_records_per_paper records for the question, by BM25);
+      the same judge reads those records alone, and the spans it cites are
+      appended to the paper's Stage-3 evidence. It never adds or drops a paper.
 """
 
 from __future__ import annotations
@@ -35,7 +40,7 @@ import os
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -81,6 +86,13 @@ _FILTER_PROMPT_PATH = _PROMPTS_DIR / "stage_3_paragraph_relevance_judge.md"
 # (search + BM25) and instead size to the CPUs actually available (see
 # _available_cpus), so they match the container's cores without oversubscribing.
 _JUDGE_WORKERS = 8
+# Stage 3b: papers whose supplementary files are read at once. They start in the
+# judge's order, so when supplementary_deadline_seconds runs out the papers still
+# queued are the least relevant ones.
+_SUPPLEMENTARY_READERS = 8
+# Supplementary records are numbered from here, past any body paragraph's
+# position, so their paragraph coordinates never collide with the body's.
+_SUPPLEMENTARY_RECORD_BASE = 10**8
 # Quoted tokens in a judge reply; used to salvage ids when the JSON is unparseable.
 _QUOTED_TOKEN_RE = re.compile(r'"([A-Za-z0-9_\-]+)"')
 
@@ -410,8 +422,8 @@ def _bm25_metadata(paper: Dict[str, Any], fields: Tuple[str, ...]) -> str:
 
 
 # Most supplementary records extracted (and cached) per paper. Only a safety
-# limit: Stage 2 keeps each paper's top max_supplementary_records_per_paper of
-# them by BM25 for the sub-query, so which records survive depends on the
+# limit: Stage 3b keeps each paper's top max_supplementary_records_per_paper of
+# them by BM25 for the question, so which records survive depends on the
 # question, not on their position in the files.
 _SUPPLEMENTARY_RECORD_SAFETY_LIMIT = 300
 
@@ -423,27 +435,26 @@ _PIECES_PER_RECORD = 10_000
 
 
 def _top_supplementary(
-    subquery: str,
+    question: str,
     supplementary: Supplementary,
     k: int,
     ranking_terms: Iterable[str] = (),
 ) -> Supplementary:
-    """*supplementary* with only its *k* best records for *subquery*, by BM25.
+    """*supplementary* with only its *k* best records for *question*, by BM25.
 
     Ranked with ``_fused_rank``, so a record matching only the Stage-1
     *ranking_terms* can still be kept.
 
     The kept records stay in document order, so adjacent cited pages remain
     adjacent. Each is a copy tagged with ``supplementary_index``, its position
-    among all the paper's records, so its paragraph coordinates are the same
-    whichever sub-query selected it; the outcome itself (shared, possibly
-    cached) is not modified. When no record matches the sub-query, the first
+    among all the paper's records; the outcome itself (shared, possibly
+    cached) is not modified. When no record matches the question, the first
     *k* are kept (``_bm25_rank`` orders ties by position).
     """
     records = supplementary.records
     keep: Iterable[int] = range(len(records))
     if len(records) > k:
-        ranked = _fused_rank(subquery, ranking_terms, [_bm25_doc(r) for r in records])
+        ranked = _fused_rank(question, ranking_terms, [_bm25_doc(r) for r in records])
         keep = sorted(index for index, _ in ranked[:k])
     return replace(
         supplementary,
@@ -933,7 +944,10 @@ class LibrarianAgent:
         self._paragraph_overlap_words = runtime_config.paragraph_overlap_words
         self._filter_temperature = runtime_config.filter_temperature
         self._filter_max_tokens = runtime_config.filter_max_tokens
-        self._supplementary_enrichment = runtime_config.supplementary_enrichment
+        self._supplementary_stage_enabled = runtime_config.supplementary_stage
+        self._supplementary_deadline_seconds = (
+            runtime_config.supplementary_deadline_seconds
+        )
         self._max_supplementary_records = (
             runtime_config.max_supplementary_records_per_paper
         )
@@ -956,14 +970,8 @@ class LibrarianAgent:
             if literature_source is not None
             else default_literature_source()
         )
-        if self._supplementary_enrichment:
+        if self._supplementary_stage_enabled:
             require_extraction_dependencies(self._supplementary_options.pdf_extractor)
-            if getattr(self._source, "fetch_supplementary_many", None) is None:
-                logger.warning(
-                    "supplementary_enrichment is on but %s has no "
-                    "fetch_supplementary_many; no supplementary text will be retrieved",
-                    type(self._source).__name__,
-                )
         self._query_prompt = _QUERY_PROMPT_PATH.read_text(encoding="utf-8")
         self._filter_prompt = _FILTER_PROMPT_PATH.read_text(encoding="utf-8")
 
@@ -1115,16 +1123,13 @@ class LibrarianAgent:
         self,
         paper: Dict[str, Any],
         fulltexts: Dict[str, Fulltext],
-        supplementaries: Optional[Dict[str, Supplementary]] = None,
     ) -> List[Dict[str, Any]]:
-        """One paper → its paragraph records: abstract + full-text body chunks
-        (+ supplementary-document chunks, see ``_body_paragraphs``).
+        """One paper → its paragraph records: abstract + full-text body chunks.
 
         Abstract and body paragraphs share one pool with no distinction. Each
         record carries a ``paper`` reference so its metadata is reachable later.
 
-        ``fulltexts`` (and ``supplementaries``, when supplementary enrichment
-        is on) are the batches this sub-query already fetched, keyed by
+        ``fulltexts`` is the batch this sub-query already fetched, keyed by
         normalised PMC id; this method only looks its paper up, never fetches.
         """
         records: List[Dict[str, Any]] = []
@@ -1142,27 +1147,17 @@ class LibrarianAgent:
 
         if self.full_text_enrichment:
             body_metadata = _bm25_metadata(paper, _BODY_BM25_FIELDS)
-            for record in self._body_paragraphs(paper, fulltexts, supplementaries):
+            for record in self._body_paragraphs(paper, fulltexts):
                 record["bm25_metadata"] = body_metadata
                 records.append(record)
         else:
             paper["fulltext_status"] = "enrichment_disabled"
 
         # Stable coordinates, assigned before re-cutting: the abstract and body
-        # by their order (the same for every sub-query), supplementary records
-        # after them by their position among all the paper's records, whichever
-        # subset this sub-query kept. Equal passages from different sub-queries
-        # then merge, and distinct ones never share a coordinate.
-        main = [
-            r for r in records if r.get("section_type") != SUPPLEMENTARY_SECTION_TYPE
-        ]
-        position = 0
-        for record in records:
-            if record.get("section_type") == SUPPLEMENTARY_SECTION_TYPE:
-                stable = len(main) + int(record["supplementary_index"])
-            else:
-                stable, position = position, position + 1
-            record["source_paragraph_index"] = stable * _PIECES_PER_RECORD
+        # by their order, the same for every sub-query, so equal passages from
+        # different sub-queries merge and distinct ones never share a coordinate.
+        for position, record in enumerate(records):
+            record["source_paragraph_index"] = position * _PIECES_PER_RECORD
         records = _split_table_records(records, self._max_paragraph_words)
         chunked = _chunk_paragraphs(
             records,
@@ -1184,8 +1179,7 @@ class LibrarianAgent:
         pool against the sub-query, and keep the top
         ``paragraphs_per_subquery``. Runs entirely in the calling thread so
         ``run`` can fan these out, one thread per sub-query, with no shared
-        state. *ranking_terms*, from Stage 1, are fused into both the
-        per-paper supplementary cut and the top-k cut.
+        state. *ranking_terms*, from Stage 1, are fused into the top-k cut.
         """
         # One parent span per sub-query so a trace groups this thread's network
         # and CPU children together instead of interleaving them under stage2.
@@ -1238,46 +1232,6 @@ class LibrarianAgent:
                         {"fulltext.count": sum(1 for f in fulltexts.values() if f.ok)},
                     )
 
-            # Supplementary files, only when enrichment is on, only for papers
-            # whose JATS declares any, and only if the source can fetch them.
-            supplementaries: Dict[str, Supplementary] = {}
-            fetch_supplementary = getattr(
-                self._source, "fetch_supplementary_many", None
-            )
-            if self._supplementary_enrichment and fetch_supplementary is not None:
-                wanted = [
-                    pmcid
-                    for pmcid, f in fulltexts.items()
-                    if f.ok and declares_supplementary(f.xml)
-                ]
-                if wanted:
-                    with self._tracer.start_span(
-                        "librarian.epmc_supplementary",
-                        attributes={
-                            "openinference.span.kind": "RETRIEVER",
-                            "paper.count": len(wanted),
-                        },
-                    ) as supplementary_span:
-                        supplementaries = {
-                            pmcid: _top_supplementary(
-                                subquery,
-                                outcome,
-                                self._max_supplementary_records,
-                                ranking_terms,
-                            )
-                            for pmcid, outcome in fetch_supplementary(
-                                wanted, self._supplementary_options
-                            ).items()
-                        }
-                        self._tracer.set_span_attributes(
-                            supplementary_span,
-                            {
-                                "supplementary.count": sum(
-                                    1 for r in supplementaries.values() if r.records
-                                )
-                            },
-                        )
-
             # Paragraph decomposition is counted here with BM25: both are local
             # CPU on already-fetched bytes.
             with self._tracer.start_span(
@@ -1290,11 +1244,7 @@ class LibrarianAgent:
             ) as rank_span:
                 pool: List[Dict[str, Any]] = []
                 for paper in papers:
-                    pool.extend(
-                        self._paragraph_records_for_paper(
-                            paper, fulltexts, supplementaries
-                        )
-                    )
+                    pool.extend(self._paragraph_records_for_paper(paper, fulltexts))
 
                 top = _rank_paragraphs_for_subquery(
                     subquery, pool, self._paragraphs_per_subquery, ranking_terms
@@ -1380,7 +1330,6 @@ class LibrarianAgent:
         self,
         paper: Dict[str, Any],
         fulltexts: Dict[str, Fulltext],
-        supplementaries: Optional[Dict[str, Supplementary]] = None,
     ) -> List[Dict[str, str]]:
         """Body paragraph records for one paper from the prefetched batch (or []).
 
@@ -1391,9 +1340,9 @@ class LibrarianAgent:
         ordinary. Which one applied is recorded on the paper as
         ``fulltext_status`` (a ``_FULLTEXT_NOTES`` key) for the evidence record.
 
-        With ``supplementary_enrichment`` on, the text of the paper's
-        supplementary PDF / Word files follows the body records, each tagged
-        ``section_type="supplementary"``.
+        With ``supplementary_stage`` on, a paper whose JATS declares
+        supplementary material gets ``supplementary_captions`` (file name →
+        caption), which marks it for Stage 3b and labels its records there.
         """
         pmcid = _fulltext_pmcid(paper)
         if not pmcid:
@@ -1427,48 +1376,10 @@ class LibrarianAgent:
             paper["fulltext_status"] = "short_body"
         else:
             paper["fulltext_status"] = "extracted"
-        if self._supplementary_enrichment:
-            supplementary = (supplementaries or {}).get(pmcid)
-            records.extend(
-                self._supplementary_paragraphs(pmcid, fulltext, supplementary)
+        if self._supplementary_stage_enabled and declares_supplementary(fulltext.xml):
+            paper["supplementary_captions"] = extract_supplementary_captions(
+                fulltext.xml
             )
-        return records
-
-    def _supplementary_paragraphs(
-        self,
-        pmcid: str,
-        fulltext: Fulltext,
-        supplementary: Optional[Supplementary],
-    ) -> List[Dict[str, str]]:
-        """Paragraph records from one paper's prefetched supplementary outcome (or []).
-
-        The records come extracted (and possibly cached) from the source; only
-        the captions from this paper's JATS are applied here.
-        """
-        if supplementary is None:
-            return []
-        if not supplementary.ok:
-            self._log(f"supplementary unavailable for {pmcid}: {supplementary.error}")
-            return []
-        if supplementary.failed:
-            self._log(f"{pmcid}: could not read supplementary {supplementary.failed}")
-        if not supplementary.records:
-            return []
-        # Copies: the caller annotates them, and the records may be shared by
-        # other sub-queries or held in the cache.
-        records = [
-            {"supplementary_index": index, **record}
-            for index, record in enumerate(
-                apply_captions(
-                    supplementary.records, extract_supplementary_captions(fulltext.xml)
-                )
-            )
-        ]
-        files = sorted({r["supplementary_file"] for r in records})
-        self._log(
-            f"{pmcid}: {len(records)} supplementary paragraphs from "
-            f"{len(files)} file(s) {files}"
-        )
         return records
 
     # ── Step 5: single-pass LLM relevance filter ─────────────────────────────
@@ -1721,6 +1632,152 @@ class LibrarianAgent:
         self._log(f"Stage 3: {len(relevant)} relevant papers")
         return relevant
 
+    # ── Stage 3b/3c: supplementary material of the selected papers ───────────
+
+    def read_supplementary(
+        self,
+        question: str,
+        paper: Dict[str, Any],
+        ranking_terms: Iterable[str] = (),
+    ) -> List[Dict[str, Any]]:
+        """Stage 3b for one paper: the supplementary records bearing on *question*.
+
+        Downloads and extracts the paper's supplementary files through the
+        literature source (cached like full texts), then keeps its best
+        ``max_supplementary_records_per_paper`` records by BM25 against the
+        question fused with the Stage-1 *ranking_terms*. Override it to read
+        supplementary files another way; the stage only needs the records.
+
+        :param question: The user's question, as Stage 3 judged it.
+        :param paper: A paper Stage 3 kept; it carries ``supplementary_captions``.
+        :param ranking_terms: Stage 1's ranking terms.
+        :return: Records with ``text`` and ``section_title``
+            (``Supplementary: <caption> [<file>] ...``), and ``table_header``
+            and ``table_rows`` for a table; ``[]`` when nothing could be read.
+        :rtype: List[Dict[str, Any]]
+        """
+        pmcid = _fulltext_pmcid(paper)
+        outcomes = self._source.fetch_supplementary_many(
+            [pmcid], self._supplementary_options
+        )
+        outcome = outcomes[pmcid]
+        if not outcome.ok:
+            self._log(f"supplementary unavailable for {pmcid}: {outcome.error}")
+            return []
+        if outcome.failed:
+            self._log(f"{pmcid}: could not read supplementary {outcome.failed}")
+        top = _top_supplementary(
+            question, outcome, self._max_supplementary_records, ranking_terms
+        )
+        return apply_captions(top.records, paper["supplementary_captions"])
+
+    def _read_selected(
+        self, question: str, papers: List[Dict[str, Any]], ranking_terms: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """``read_supplementary`` on every paper, in the judge's order, within the deadline.
+
+        A paper whose read fails, or is still running or queued when
+        ``supplementary_deadline_seconds`` runs out, loses only its own
+        supplementary records. A read still running is not waited for.
+        """
+        pool = ThreadPoolExecutor(max_workers=_SUPPLEMENTARY_READERS)
+        read = self._tracer.bind_current_trace_context(self.read_supplementary)
+        futures = {
+            pool.submit(read, question, paper, ranking_terms): paper
+            for paper in papers
+        }
+        done, pending = wait(futures, timeout=self._supplementary_deadline_seconds)
+        # Running reads finish in the background; queued ones never start.
+        pool.shutdown(wait=False, cancel_futures=True)
+        if pending:
+            logger.warning(
+                "[Librarian] supplementary: %d of %d papers past the %s s deadline",
+                len(pending),
+                len(futures),
+                self._supplementary_deadline_seconds,
+            )
+        records: Dict[str, List[Dict[str, Any]]] = {}
+        for future in done:
+            paper_id = _candidate_id(futures[future])
+            try:
+                paper_records = future.result()
+            except Exception:
+                logger.exception("[Librarian] supplementary read failed for %s", paper_id)
+                continue
+            if paper_records:
+                records[paper_id] = paper_records
+        return records
+
+    def _supplementary_stage(
+        self,
+        question: str,
+        ranking_terms: List[str],
+        selected: List[Dict[str, Any]],
+        state: _RunState,
+    ) -> None:
+        """Stage 3b/3c: append the judge's supplementary citations to *selected*.
+
+        Only papers whose JATS declares supplementary material are read. Their
+        records go to the Stage-3 judge on copies of the papers, so a failed or
+        empty Stage 3c leaves Stage 3's evidence as it was; cited spans are
+        appended to the paper's evidence, never replacing it, and no paper is
+        added or dropped.
+        """
+        papers = [p for p in selected if "supplementary_captions" in p]
+        start = time.monotonic()
+        records = self._read_selected(question, papers, ranking_terms)
+        read_seconds = round(time.monotonic() - start, 3)
+        paragraphs: List[Dict[str, Any]] = []
+        for paper in papers:
+            paper_records = records.get(_candidate_id(paper))
+            if not paper_records:
+                continue
+            # A copy: Stage 3c writes its evidence onto the papers it judges.
+            paper_copy = dict(paper)
+            numbered = [
+                {
+                    **record,
+                    "section_type": SUPPLEMENTARY_SECTION_TYPE,
+                    "source_paragraph_index": (_SUPPLEMENTARY_RECORD_BASE + index)
+                    * _PIECES_PER_RECORD,
+                }
+                for index, record in enumerate(paper_records)
+            ]
+            numbered = _split_table_records(numbered, self._max_paragraph_words)
+            for record in _chunk_paragraphs(
+                numbered, self._max_paragraph_words, self._paragraph_overlap_words
+            ):
+                record["paper"] = paper_copy
+                paragraphs.append(record)
+        judge_calls_before = len(state.judge_requests)
+        judge_failed = False
+        if paragraphs:
+            state.progress(f"Judging {len(paragraphs)} supplementary records")
+            try:
+                cited = self._relevance_filter(question, paragraphs, state)
+            except Exception:
+                logger.exception("[Librarian] Stage 3c judge failed; Stage 3 kept")
+                judge_failed = True
+            else:
+                by_id = {_candidate_id(paper): paper for paper in selected}
+                for cited_paper in cited:
+                    paper = by_id[_candidate_id(cited_paper)]
+                    for key in (
+                        "evidence_sentences_full_text",
+                        "evidence_sections",
+                        "evidence_section_types",
+                    ):
+                        paper[key] = list(paper.get(key) or []) + cited_paper[key]
+        state.debug["supplementary_stage"] = {
+            "papers_selected": len(selected),
+            "papers_declaring": len(papers),
+            "papers_with_records": len(records),
+            "records": len(paragraphs),
+            "read_seconds": read_seconds,
+            "judge_calls": len(state.judge_requests) - judge_calls_before,
+            "judge_failed": judge_failed,
+        }
+
     # ── Orchestration ────────────────────────────────────────────────────────
 
     def run(
@@ -1732,7 +1789,8 @@ class LibrarianAgent:
     ) -> RunResult:
         """Single-pass retrieval: Stage 1 (generate + validate sub-queries) →
         Stage 2 (per-sub-query paragraph BM25 ranking) → Stage 3 (relevance
-        judge over the paragraphs, regrouped to papers). Returns every paper
+        judge over the paragraphs, regrouped to papers) → Stage 3b/3c
+        (supplementary material, when ``supplementary_stage`` is on). Returns every paper
         the judge keeps in ``RunResult.papers``, with no final top_k cap.
 
         ``on_progress`` (optional) is called with a short human-readable
@@ -1747,9 +1805,10 @@ class LibrarianAgent:
 
         ``RunResult.debug`` describes this run: at least
         ``search_queries`` once Stage 1 is done, plus ``query_count``,
-        ``paragraph_count``, ``supplementary_paragraph_count``,
-        ``relevant_count``, ``supplementary_evidence_count`` and
-        ``final_pmids`` when Stage 3 ran, and ``failed_subqueries`` (one
+        ``paragraph_count``, ``relevant_count``,
+        ``supplementary_evidence_count`` and ``final_pmids`` when Stage 3 ran,
+        ``supplementary_stage`` (papers read, records judged, read seconds,
+        judge calls) when Stage 3b/3c ran, and ``failed_subqueries`` (one
         ``{"query", "error"}`` per sub-query whose search raised
         ``LiteratureSearchError``) when any did. A failed sub-query search is
         skipped; the run raises that error only when every sub-query's search
@@ -1923,17 +1982,23 @@ class LibrarianAgent:
                 },
             )
 
+        if self._supplementary_stage_enabled and relevant_papers:
+            state.progress("Reading supplementary material")
+            with self._tracer.start_span(
+                "librarian.supplementary_stage",
+                attributes={
+                    "openinference.span.kind": "CHAIN",
+                    "paper.count": len(relevant_papers),
+                },
+            ):
+                self._supplementary_stage(query, ranking_terms, relevant_papers, state)
+
         debug.update(
             {
                 "query_count": len(queries),
                 "paragraph_count": len(paragraphs),
-                # How much of the Stage-2 pool, and of the judge-cited evidence,
-                # came from supplementary files rather than abstract/body.
-                "supplementary_paragraph_count": sum(
-                    1
-                    for p in paragraphs
-                    if p.get("section_type") == SUPPLEMENTARY_SECTION_TYPE
-                ),
+                # How much of the judge-cited evidence came from supplementary
+                # files rather than abstract/body (Stage 3c).
                 "supplementary_evidence_count": sum(
                     1
                     for p in relevant_papers

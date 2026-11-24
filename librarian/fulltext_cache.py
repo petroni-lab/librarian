@@ -2,7 +2,7 @@
 
 ``CachedSource`` wraps a source and serves cached full-text outcomes before
 asking it for the rest; supplementary-file downloads (only made when
-``supplementary_enrichment`` is on) are cached the same way, under their own key. It stores them in a ``CacheBackend``; ``DiskCacheBackend``
+``supplementary_stage`` is on) are cached the same way, under their own key. It stores them in a ``CacheBackend``; ``DiskCacheBackend``
 is the one shipped here, behind the ``cache`` extra (``uv sync --extra cache`` in
 a checkout, or ``pip install "librarian[cache] @ <commit tarball URL>"``).
 ``default_literature_source`` is what ``LibrarianAgent`` uses when given no

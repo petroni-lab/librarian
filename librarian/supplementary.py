@@ -502,7 +502,7 @@ def require_extraction_dependencies(pdf_extractor: str = "pypdf") -> None:
         import xlrd  # noqa: F401
     except ImportError as exc:
         raise ImportError(
-            "supplementary_enrichment needs the `supplementary` extra: "
+            "supplementary_stage needs the `supplementary` extra: "
             "`uv sync --extra supplementary` or "
             '`pip install "librarian[supplementary]"`'
         ) from exc

@@ -223,9 +223,9 @@ def record_fixture(
     runtime_config = LibrarianRuntimeConfig.from_toml(
         config_path.read_text(encoding="utf-8")
     )
-    if runtime_config.supplementary_enrichment:
+    if runtime_config.supplementary_stage:
         raise ValueError(
-            "supplementary_enrichment must be false: supplementary files are not "
+            "supplementary_stage must be false: supplementary files are not "
             "recorded, so a replay could not answer for them."
         )
     # Keep the recorded config honest about which model actually answered, even if
