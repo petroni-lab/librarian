@@ -114,6 +114,7 @@ def test_a_failed_supplementary_judge_keeps_stage_3s_evidence():
         "Zebrafish fins regenerate within two weeks CITE."
     ]
     assert result.debug["supplementary_evidence_count"] == 0
+    assert result.debug["supplementary_stage"]["judge_failed"] is True
 
 
 def test_with_the_stage_off_no_supplementary_file_is_fetched():
@@ -140,3 +141,4 @@ def test_papers_past_the_deadline_lose_only_their_supplementary_records():
         "Zebrafish fins regenerate within two weeks CITE."
     ]
     assert result.debug["supplementary_stage"]["papers_with_records"] == 0
+    assert result.debug["supplementary_stage"]["papers_failed"] == 1

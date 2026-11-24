@@ -146,7 +146,7 @@ class ReplaySource:
         """Return this batch's recorded JATS XML, wrapped as the real call returns it.
 
         Mirrors ``EuropePmcSource.fetch_fulltext_many``'s contract: blank ids
-        (papers with no free full text, per ``_fulltext_pmcid``) are dropped, the
+        (papers with no free full text, per ``fulltext_pmcid``) are dropped, the
         rest are deduplicated and keyed by ``normalize_pmcid`` — so a caller
         relying on that keying behaves the same in replay as live.
         """

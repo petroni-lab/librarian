@@ -126,7 +126,8 @@ def timing_report(arms: dict[str, dict[str, dict]], ids: set[str]) -> str:
             [arm, f"{statistics.median(retrieval):.1f}", f"{_quantile(retrieval, 0.9):.1f}",
              f"{statistics.mean(retrieval):.1f}"]
             + [f"{statistics.mean(s['span_seconds'].get(n, 0.0) for s in stats):.1f}" for n in spans]
-            + [f"{counts['supp_fetches_with_files']}/{counts['supp_fetches']}"]
+            + [f"{counts['supp_fetches_with_files']}/{counts['supp_fetches']}",
+               f"{counts['supp_read_failures']}"]
         )
     return (
         "## Retrieval time per question, seconds (Stage 2 + 3 + 3b/3c)\n\n"
@@ -136,7 +137,8 @@ def timing_report(arms: dict[str, dict[str, dict]], ids: set[str]) -> str:
         "papers' files (none on a cache hit) and their judge round.\n\n"
         + _table(
             ["arm", "median", "p90", "mean", "stage 2 wall", "search Σ", "fulltext Σ",
-             "bm25 Σ", "judge", "supplementary stage", "papers with supp records"],
+             "bm25 Σ", "judge", "supplementary stage", "papers with supp records",
+             "supp read failures"],
             rows,
         )
     )

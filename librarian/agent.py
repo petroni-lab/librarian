@@ -198,8 +198,10 @@ def _first_affiliation(paper: Dict[str, Any]) -> str:
     return ""
 
 
-def _fulltext_pmcid(paper: Dict[str, Any]) -> str:
-    """The PMC id whose full text this paper is worth fetching, or ''.
+def fulltext_pmcid(paper: Dict[str, Any]) -> str:
+    """The PMC id whose full text (and supplementary files) this paper is worth fetching, or ''.
+
+    Public for ``read_supplementary`` overrides, which need the paper's PMC id.
 
     Gated on ``isOpenAccess``, then ``fullTextIds[0]`` with ``pmcid`` as the
     fallback. Pure, so the batch prefetch and the per-paper lookup derive the
@@ -1225,7 +1227,7 @@ class LibrarianAgent:
                     },
                 ) as fulltext_span:
                     fulltexts = self._source.fetch_fulltext_many(
-                        [_fulltext_pmcid(p) for p in papers]
+                        [fulltext_pmcid(p) for p in papers]
                     )
                     self._tracer.set_span_attributes(
                         fulltext_span,
@@ -1305,7 +1307,7 @@ class LibrarianAgent:
             "pmid": str(paper.get("pmid") or ""),
             # PMC id of the open-access full text (and supplementary files)
             # the evidence was read from; "" for an abstract-only paper.
-            "pmcid": _fulltext_pmcid(paper),
+            "pmcid": fulltext_pmcid(paper),
             "doi": str(paper.get("doi") or ""),
             # Europe PMC record identity, kept verbatim under the upstream
             # camelCase keys literature_search.py already uses. Preprints
@@ -1344,7 +1346,7 @@ class LibrarianAgent:
         supplementary material gets ``supplementary_captions`` (file name →
         caption), which marks it for Stage 3b and labels its records there.
         """
-        pmcid = _fulltext_pmcid(paper)
+        pmcid = fulltext_pmcid(paper)
         if not pmcid:
             if not paper.get("inEPMC"):
                 paper["fulltext_status"] = "not_in_epmc"
@@ -1656,7 +1658,7 @@ class LibrarianAgent:
             and ``table_rows`` for a table; ``[]`` when nothing could be read.
         :rtype: List[Dict[str, Any]]
         """
-        pmcid = _fulltext_pmcid(paper)
+        pmcid = fulltext_pmcid(paper)
         outcomes = self._source.fetch_supplementary_many(
             [pmcid], self._supplementary_options
         )
@@ -1673,12 +1675,15 @@ class LibrarianAgent:
 
     def _read_selected(
         self, question: str, papers: List[Dict[str, Any]], ranking_terms: List[str]
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> Tuple[Dict[str, List[Dict[str, Any]]], int]:
         """``read_supplementary`` on every paper, in the judge's order, within the deadline.
 
         A paper whose read fails, or is still running or queued when
         ``supplementary_deadline_seconds`` runs out, loses only its own
-        supplementary records. A read still running is not waited for.
+        supplementary records. A read still running is not waited for: it goes
+        on in the background (warming the cache) until it ends on its own.
+        Returns the records by paper id, and how many reads failed or ran out
+        of time.
         """
         pool = ThreadPoolExecutor(max_workers=_SUPPLEMENTARY_READERS)
         read = self._tracer.bind_current_trace_context(self.read_supplementary)
@@ -1697,16 +1702,18 @@ class LibrarianAgent:
                 self._supplementary_deadline_seconds,
             )
         records: Dict[str, List[Dict[str, Any]]] = {}
+        failed = len(pending)
         for future in done:
             paper_id = _candidate_id(futures[future])
             try:
                 paper_records = future.result()
             except Exception:
                 logger.exception("[Librarian] supplementary read failed for %s", paper_id)
+                failed += 1
                 continue
             if paper_records:
                 records[paper_id] = paper_records
-        return records
+        return records, failed
 
     def _supplementary_stage(
         self,
@@ -1725,7 +1732,7 @@ class LibrarianAgent:
         """
         papers = [p for p in selected if "supplementary_captions" in p]
         start = time.monotonic()
-        records = self._read_selected(question, papers, ranking_terms)
+        records, failed_reads = self._read_selected(question, papers, ranking_terms)
         read_seconds = round(time.monotonic() - start, 3)
         paragraphs: List[Dict[str, Any]] = []
         for paper in papers:
@@ -1750,32 +1757,35 @@ class LibrarianAgent:
                 record["paper"] = paper_copy
                 paragraphs.append(record)
         judge_calls_before = len(state.judge_requests)
-        judge_failed = False
         if paragraphs:
-            state.progress(f"Judging {len(paragraphs)} supplementary records")
-            try:
-                cited = self._relevance_filter(question, paragraphs, state)
-            except Exception:
-                logger.exception("[Librarian] Stage 3c judge failed; Stage 3 kept")
-                judge_failed = True
-            else:
-                by_id = {_candidate_id(paper): paper for paper in selected}
-                for cited_paper in cited:
-                    paper = by_id[_candidate_id(cited_paper)]
-                    for key in (
-                        "evidence_sentences_full_text",
-                        "evidence_sections",
-                        "evidence_section_types",
-                    ):
-                        paper[key] = list(paper.get(key) or []) + cited_paper[key]
+            state.progress(f"Judging {len(paragraphs)} supplementary paragraphs")
+            # A failed judge batch cites nothing (_evaluate_batch records it), so
+            # Stage 3's evidence stays as it was.
+            cited = self._relevance_filter(question, paragraphs, state)
+            by_id = {_candidate_id(paper): paper for paper in selected}
+            for cited_paper in cited:
+                paper = by_id[_candidate_id(cited_paper)]
+                for key in (
+                    "evidence_sentences_full_text",
+                    "evidence_sections",
+                    "evidence_section_types",
+                ):
+                    paper[key] = list(paper.get(key) or []) + cited_paper[key]
+        stage3c_requests = state.judge_requests[judge_calls_before:]
         state.debug["supplementary_stage"] = {
             "papers_selected": len(selected),
             "papers_declaring": len(papers),
             "papers_with_records": len(records),
-            "records": len(paragraphs),
+            "papers_failed": failed_reads,
+            # Records the readers returned; paragraphs, what the judge read after
+            # tables were re-cut and long records chunked.
+            "records": sum(len(r) for r in records.values()),
+            "paragraphs": len(paragraphs),
             "read_seconds": read_seconds,
-            "judge_calls": len(state.judge_requests) - judge_calls_before,
-            "judge_failed": judge_failed,
+            "judge_calls": len(stage3c_requests),
+            "judge_failed": any(
+                r["outcome"] in ("exception", "unparseable") for r in stage3c_requests
+            ),
         }
 
     # ── Orchestration ────────────────────────────────────────────────────────

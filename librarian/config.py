@@ -83,7 +83,9 @@ class LibrarianRuntimeConfig(DataClassTOMLMixin):
     supplementary_stage: bool
     # How long Stage 3b waits for the selected papers' supplementary files.
     # Papers are read in the judge's order, so the ones still unread when it
-    # runs out are the least relevant.
+    # runs out are the least relevant. It bounds run(), not the reads: one
+    # already running finishes in the background (warming the cache), and can
+    # keep a short-lived process from exiting until it does.
     supplementary_deadline_seconds: float
     # Size cap, in bytes, on the supplementary documents kept per paper (and on
     # a fallback ZIP); files past it are skipped, not downloaded or parsed.

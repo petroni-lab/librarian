@@ -65,7 +65,7 @@ from evals.Literature.LabBench.labbench_compat import (  # noqa: E402
     randomize_choices,
     score_prediction,
 )
-from librarian.agent import LibrarianAgent, SearchPlan, _fulltext_pmcid  # noqa: E402
+from librarian.agent import LibrarianAgent, SearchPlan, fulltext_pmcid  # noqa: E402
 from librarian.config import load_runtime_config  # noqa: E402
 from librarian.jats import (  # noqa: E402
     extract_body_paragraphs,
@@ -249,13 +249,13 @@ class SpanTimer:
 
 def _paper_ids(paper: dict[str, Any]) -> dict[str, str]:
     """A returned paper's ids, with the full-text id the agent will fetch ("" when it won't)."""
-    fulltext_pmcid = _fulltext_pmcid(paper)
+    paper_pmcid = fulltext_pmcid(paper)
     return {
         "pmid": str(paper.get("pmid") or ""),
         "pmcid": str(paper.get("pmcid") or ""),
         "doi": str(paper.get("doi") or "").lower(),
-        "fulltext": "requested" if fulltext_pmcid else "not open access: abstract only",
-        "fulltext_pmcid": fulltext_pmcid,
+        "fulltext": "requested" if paper_pmcid else "not open access: abstract only",
+        "fulltext_pmcid": paper_pmcid,
     }
 
 
@@ -450,9 +450,10 @@ def retrieval_stats(agent: InstrumentedAgent, budget: int) -> dict[str, Any]:
         key["key_cited"] = key_overlap(agent.question["key_passage"], joined)
         key["key_shown"] = key_overlap(agent.question["key_passage"], joined[:budget])
     debug = agent.debug
-    judged_supp = debug.get("supplementary_stage", {}).get("records", 0)
-    counts["judged_total"] = debug.get("paragraph_count", 0) + judged_supp
-    counts["judged_supp"] = judged_supp
+    stage = debug.get("supplementary_stage", {})
+    counts["judged_total"] = debug.get("paragraph_count", 0) + stage.get("paragraphs", 0)
+    counts["judged_supp"] = stage.get("paragraphs", 0)
+    counts["supp_read_failures"] = stage.get("papers_failed", 0)
     seconds = dict(agent._tracer.seconds)
     return {
         "search_queries": debug.get("search_queries", []),
