@@ -144,7 +144,7 @@ def _supplementary_cut(ranking_terms):
     config = load_runtime_config()
     librarian = LibrarianAgent(config, llm_client=object(), literature_source=Source())
     paper = {"pmcid": "PMC10960411", "supplementary_captions": {}}
-    kept = librarian.read_supplementary(_QUESTION, paper, ranking_terms)
+    kept = librarian.read_supplementary(_QUESTION, paper, ranking_terms, deadline=0.0)
     assert config.max_supplementary_records_per_paper == 40
     return [r["supplementary_index"] for r in kept]
 

@@ -412,8 +412,8 @@ class InstrumentedAgent(LibrarianAgent):
             self._note("bm25", records[0]["paper"], records)
         return top
 
-    def read_supplementary(self, question, paper, ranking_terms=()):
-        records = super().read_supplementary(question, paper, ranking_terms)
+    def read_supplementary(self, question, paper, ranking_terms, deadline):
+        records = super().read_supplementary(question, paper, ranking_terms, deadline)
         with self._stats_lock:
             self.counts["supp_fetches"] += 1
             if records:

@@ -1640,7 +1640,8 @@ class LibrarianAgent:
         self,
         question: str,
         paper: Dict[str, Any],
-        ranking_terms: Iterable[str] = (),
+        ranking_terms: Iterable[str],
+        deadline: float,
     ) -> List[Dict[str, Any]]:
         """Stage 3b for one paper: the supplementary records bearing on *question*.
 
@@ -1648,11 +1649,15 @@ class LibrarianAgent:
         literature source (cached like full texts), then keeps its best
         ``max_supplementary_records_per_paper`` records by BM25 against the
         question fused with the Stage-1 *ranking_terms*. Override it to read
-        supplementary files another way; the stage only needs the records.
+        supplementary files another way; the stage only needs the records, and
+        stops waiting for them at *deadline*.
 
         :param question: The user's question, as Stage 3 judged it.
         :param paper: A paper Stage 3 kept; it carries ``supplementary_captions``.
         :param ranking_terms: Stage 1's ranking terms.
+        :param deadline: ``time.monotonic()`` value past which the stage no
+            longer reads the result. A reader that holds a scarce resource (a
+            worker pod) should stop by then; this one is local work and ignores it.
         :return: Records with ``text`` and ``section_title``
             (``Supplementary: <caption> [<file>] ...``), and ``table_header``
             and ``table_rows`` for a table; ``[]`` when nothing could be read.
@@ -1685,10 +1690,11 @@ class LibrarianAgent:
         Returns the records by paper id, and how many reads failed or ran out
         of time.
         """
+        deadline = time.monotonic() + self._supplementary_deadline_seconds
         pool = ThreadPoolExecutor(max_workers=_SUPPLEMENTARY_READERS)
         read = self._tracer.bind_current_trace_context(self.read_supplementary)
         futures = {
-            pool.submit(read, question, paper, ranking_terms): paper
+            pool.submit(read, question, paper, ranking_terms, deadline): paper
             for paper in papers
         }
         done, pending = wait(futures, timeout=self._supplementary_deadline_seconds)
