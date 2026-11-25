@@ -37,7 +37,7 @@ jobs:
           UV_MANAGED_PYTHON: '1'
           UV_PYTHON: '3.11'
         run: |
-          $git = (Get-Command git -CommandType Application).Source
+          $git = (Get-Command git -CommandType Application | Select-Object -First 1).Source
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and !(Test-Path -LiteralPath (Join-Path $_ 'uv.exe')) }) -join ';'
           if ((Test-Path -LiteralPath $env:UV_CACHE_DIR) -or (Test-Path -LiteralPath $env:UV_PYTHON_INSTALL_DIR)) {
               throw 'The uv cache and managed Python directory must start empty'
