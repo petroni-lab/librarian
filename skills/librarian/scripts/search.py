@@ -31,6 +31,7 @@ from _direct_session import PROVIDERS, CliSessionError, _require_cli, run_direct
 import librarian
 from librarian import LibrarianAgent, load_runtime_config
 from librarian.citations import render_report
+from librarian.literature_search import LiteratureSearchError
 
 SUMMARIZER = Path(librarian.__file__).parent / "prompts" / "summarizer.md"
 
@@ -101,6 +102,8 @@ def main() -> int:
     except CliSessionError as exc:
         # Query planning has no fallback, so its CLI failure ends the run.
         raise SystemExit(f"[Librarian] {exc}") from None
+    except LiteratureSearchError as exc:
+        raise SystemExit(f"[Librarian] Search request failed: {exc}") from None
     evidence = result.papers
     if client.errors:
         failed = f"{len(client.errors)} judge call(s) failed: " + " | ".join(

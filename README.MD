@@ -180,12 +180,10 @@ Ask a biomedical question — the skill activates on its own:
 
 > *Find me evidence on whether metformin extends lifespan in mammals.*
 
-**First run:** the skill sets itself up — the agent installs [uv](https://docs.astral.sh/uv/)
-if it is missing through the host's permission flow, and uv installs the Python
-dependencies. The agent also finds or installs the provider CLI, repairs Python
-setup, and retries the search. Codex desktop's bundled binary and Claude's
-`CLAUDE_CODE_EXECPATH` are supported. If no provider was explicitly chosen,
-the agent may announce and try one installed alternative.
+**First run:** ask your question in chat. The launcher reuses or installs
+[uv](https://docs.astral.sh/uv/), prepares Python and its dependencies, and
+starts the search. The agent handles setup and retries in the same chat.
+Codex desktop's bundled CLI and Claude's `CLAUDE_CODE_EXECPATH` are supported.
 
 You only need to intervene for an approval or an interactive sign-in the agent
 cannot complete. Desktop login may not authenticate child CLIs; the agent will
@@ -193,11 +191,13 @@ open the relevant CLI when possible, ask you to complete sign-in, then resume.
 Copying only `skills/librarian/` will not work — keep the whole repository.
 
 On Windows the skill uses `scripts/run.ps1`, so Bash is not required. Both
-launchers use UTF-8. The PowerShell launcher retries a broken uv managed-Python
-link once using the reported directory's working `python.exe`. If Python setup
-still fails, the agent selects a working interpreter through `UV_PYTHON`, or
-reuses a provisioned environment through `LIBRARIAN_PYTHON`. A `need uv`
-diagnostic tells the agent to install uv, regardless of the host's exit code.
+launchers use UTF-8 and install the locked runtime dependencies into an
+environment under `uv cache dir`, outside the plugin checkout. A first run
+may need approved network access for Python and package downloads in addition
+to Europe PMC and the model provider. The PowerShell launcher retries a broken
+uv managed-Python link once using the reported directory's working `python.exe`.
+If Python setup still fails, the agent can select a working interpreter through
+`UV_PYTHON` or reuse a provisioned environment through `LIBRARIAN_PYTHON`.
 
 <details>
 <summary><b>Child model and effort controls</b></summary>
@@ -623,10 +623,9 @@ assets/                        README images and install GIFs
 
 </details>
 
-Pipeline regression tests (the recorded run, paragraph merging, judge requests
-and the rest of `tests/`) live in this repository; see [Testing](#-testing).
-Skill and launcher tests (native Windows PowerShell, macOS sandbox) are
-maintained by downstream consumers and run against pinned Librarian revisions.
+Pipeline regression tests live in `tests/`; see [Testing](#-testing). CI also
+checks first-run dependency setup with native Windows PowerShell. Downstream
+consumers run additional launcher tests against pinned Librarian revisions.
 
 ---
 
