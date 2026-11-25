@@ -52,8 +52,9 @@ DEFAULT_QUERY = "What is the role of telomere shortening in cellular senescence?
 # SuppQA sample run against the default (main-text-only) pipeline.
 SUPPLEMENTARY_WARNING = """\
 WARNING: supplementary material retrieval is EXPERIMENTAL.
-  In our tests a query took ~4x longer (mean ~7 min vs ~2 min): each paper's
-  supplementary documents are downloaded (PMC Open Access on AWS) and parsed.
+  After the judge, the supplementary documents of the papers it kept are
+  downloaded (PMC Open Access on AWS, then BioStudies) and parsed, and the judge
+  reads them, so a query takes longer by up to supplementary_deadline_seconds.
   Set LIBRARIAN_CACHE_DIR so repeat runs reuse the extracted text. Use at your
   own risk.
 """
@@ -82,9 +83,9 @@ def _parse_args() -> argparse.Namespace:
         "--supplementary",
         action="store_true",
         help=(
-            "EXPERIMENTAL, off by default: also retrieve from papers' "
-            "supplementary PDF/Word files (much slower; overrides "
-            "supplementary_enrichment in config.toml for this run)"
+            "EXPERIMENTAL, off by default: also read the supplementary files "
+            "of the papers the judge keeps (slower; overrides "
+            "supplementary_stage in config.toml for this run)"
         ),
     )
     parser.add_argument(
@@ -144,14 +145,14 @@ def _print_passages(
             print(f"    - {prefix}{snippet}")
         print()
 
-    # A research loop merges many runs, so it has no single Stage-2 pool to count.
-    if debug:
+    # A research loop merges many runs, so it has no single run's counts to show.
+    if "supplementary_stage" in debug:
+        stage = debug["supplementary_stage"]
         print(
-            "Supplementary paragraphs in the Stage-2 pool: "
-            f"{debug.get('supplementary_paragraph_count', 0)} "
-            f"of {debug.get('paragraph_count', 0)}; "
+            f"Supplementary records judged: {stage['records']} from "
+            f"{stage['papers_with_records']} of {stage['papers_selected']} papers; "
             "evidence spans cited from supplementary files: "
-            f"{debug.get('supplementary_evidence_count', 0)}\n"
+            f"{debug['supplementary_evidence_count']}\n"
         )
 
     # Full structured output (what a downstream synthesis layer would consume).
@@ -314,8 +315,8 @@ def main() -> None:
     # them, or dataclasses.replace() the loaded config for a one-off run.
     config = load_runtime_config()
     if args.supplementary:
-        config = replace(config, supplementary_enrichment=True)
-    if config.supplementary_enrichment:
+        config = replace(config, supplementary_stage=True)
+    if config.supplementary_stage:
         print(SUPPLEMENTARY_WARNING, file=sys.stderr)
     if args.research_loop:
         _run_loop(args, query, config, interactive)

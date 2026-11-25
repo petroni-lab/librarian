@@ -8,7 +8,7 @@ collaborators it is constructed with:
 - ``literature_source.fetch_fulltext_many`` — Stage 2's JATS full-text fetch.
 
 (``literature_source.fetch_supplementary_many`` is a fourth call, made only when
-``supplementary_enrichment`` is on. Recordings pin it off; see ``recording.toml``.)
+``supplementary_stage`` is on. Recordings pin it off; see ``recording.toml``.)
 
 Everything between those calls is the agent's own deterministic logic. Recording
 passes in collaborators that forward to the real ones and keep what they returned,
