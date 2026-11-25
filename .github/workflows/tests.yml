@@ -1,6 +1,5 @@
-# Runs the test suite on every pull request and every push to main. Fully offline:
-# recorded runs are replayed from tests/fixtures/, so no LLM endpoint, Europe PMC
-# access or secrets are needed.
+# Runs offline pipeline tests and checks the Windows launcher's first-run
+# downloads. Neither job needs an LLM endpoint, Europe PMC access, or secrets.
 name: Tests
 on:
   pull_request:
@@ -24,3 +23,37 @@ jobs:
       # the dev group (pytest) is included by default. --locked fails on a stale uv.lock.
       - run: uv sync --locked --extra supplementary
       - run: uv run pytest tests
+  windows-skill-launcher:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install uv and Python and start the skill in one invocation
+        shell: powershell
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/librarian uv cache
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/librarian python
+          UV_MANAGED_PYTHON: '1'
+          UV_PYTHON: '3.11'
+        run: |
+          $git = (Get-Command git -CommandType Application).Source
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and !(Test-Path -LiteralPath (Join-Path $_ 'uv.exe')) }) -join ';'
+          if ((Test-Path -LiteralPath $env:UV_CACHE_DIR) -or (Test-Path -LiteralPath $env:UV_PYTHON_INSTALL_DIR)) {
+              throw 'The uv cache and managed Python directory must start empty'
+          }
+          if ((Get-Command uv -CommandType Application -ErrorAction SilentlyContinue) -or
+              (Test-Path -LiteralPath "$HOME/.local/bin/uv.exe") -or
+              (Test-Path -LiteralPath "$HOME/.cargo/bin/uv.exe")) {
+              throw 'The launcher must start without an available uv executable'
+          }
+          & .\skills\librarian\scripts\run.ps1 search --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path -LiteralPath (Join-Path $env:UV_CACHE_DIR 'librarian-bin/uv.exe'))) {
+              throw 'Skill did not install uv from a fresh cache'
+          }
+          $env:UV_OFFLINE = '1'
+          & .\skills\librarian\scripts\run.ps1 search --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (Test-Path -LiteralPath .venv) { throw 'Skill created .venv in the plugin checkout' }
+          & $git diff --exit-code -- uv.lock

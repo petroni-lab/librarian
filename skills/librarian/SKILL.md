@@ -18,20 +18,18 @@ after retrieval; it is how every run's final answer is presented.
 
 ## Failure boundary
 
-Use only this pipeline's Europe PMC evidence. Never fall back to web search,
-browser tools, other literature sources, or an answer from memory when the
-script fails. On a setup or authentication failure, apply the recovery steps
-below before reporting a blocker. On other CLI-session failures, stop and
-report the actual CLI error; do not attribute it to Europe PMC. For an empty
-retrieval, follow the retry rule below.
+Use the pipeline's retrieved evidence for Librarian answers. If Librarian
+remains blocked, report the failing stage and the actual error in the user's
+language. Continue any requested work that can be verified from papers the
+user has supplied. Use another retrieval source only if the user authorizes it,
+and identify the source used. Never fill gaps from memory.
 
-The CLI sessions need network access to their model provider, and the script
-needs network access to Europe PMC. In a network-restricted Codex task, run it
-through `exec_command` with `sandbox_permissions="require_escalated"` and a
-justification for model-provider or Europe PMC access **on the first attempt**.
-Use the host's approval flow; do not change sandbox environment variables or
-bypass workspace policies. If approval is denied, stop and report the denial.
-Network access is not permission to use web search.
+The first run may need network access for the uv installer, managed Python and
+Python packages, in addition to the model provider and Europe PMC. In a
+network-restricted Codex task, request approved network access on the first
+attempt. With `exec_command`, use `sandbox_permissions="require_escalated"` if
+the host supports it and name the destinations needed for that command. Follow
+the host's permission flow and report any denial as a host permission issue.
 
 A failed connectivity check means no child was launched: retry with approved
 network access instead of waiting. Each child session is stopped after 180
@@ -51,28 +49,30 @@ instructions arrive in the script's output.
 
 ## First run: install what is missing
 
-The calling agent owns setup and recovery. Install missing tools, locate
-executables, set per-command overrides, and retry the requested search yourself;
-do not turn recoverable diagnostics into a list of chores for the user. Use the
-host's normal permission flow for installations or restricted access. Repair each
-identified prerequisite once, then rerun; if the same repair fails again, report
-the remaining blocker. Never remove Python environments or login files.
-Do not check ahead of time — that costs a model round-trip every run. Just run
-step 1; the launcher finds `uv` in `~/.local/bin` and installs the Python
-dependencies itself on first call. Only if it exits 127 or prints `need uv`, install
-`uv` with the official installer through the host's normal approval flow, then
-re-run step 1:
+Run the search immediately. The launcher finds an existing `uv` or installs it
+from Astral into the uv cache, provisions Python and its dependencies, and runs
+the original search in the same command. The calling agent performs recovery,
+including locating executables, setting per-command overrides, and retrying the
+original search. Repair each identified prerequisite once through the host's
+normal permission flow. If it still fails, report the remaining blocker and
+continue any supported work. Never remove Python environments or login files.
+Leave terminal commands, installs, and configuration to the agent.
 
-- macOS/Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- Windows: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+Treat a uv download failure (for example, DNS for `files.pythonhosted.org`) as
+Python setup. Retry once if approved network access was missing and is now
+available. If the error persists, report the hostname and failure. For a uv
+cache or managed-Python write denial, set `UV_CACHE_DIR` or
+`UV_PYTHON_INSTALL_DIR` to an absolute path the host allows the command to
+write to, then retry. Use `UV_PROJECT_ENVIRONMENT` only for an explicit,
+writable Librarian environment outside the installed plugin directory.
 
-The provider CLI is found on PATH, in `~/.local/bin`, or — for Codex — inside
-the ChatGPT/Codex desktop app, so it is usually already there. Only if step 1
-reports `CLI (...) is not installed or not on PATH`, first locate an existing
-executable (including bundled desktop binaries) and set `LIBRARIAN_CLI_PATH`
-for the retry. If none exists and the user did not pin a provider, prefer one
-installed alternative under the provider recovery rule below. Otherwise install
-the selected CLI and retry once:
+The launcher looks for the provider CLI on PATH and in known install locations.
+If it reports `CLI (...) is not installed or not on PATH`, locate an existing
+executable and set `LIBRARIAN_CLI_PATH` for the retry. On Codex desktop for
+Windows, check the executable path of the running `codex` process with
+`Get-Process codex` to find the app's own CLI. If none exists and the user did
+not pin a provider, prefer one installed alternative under the recovery rule
+below. Otherwise install the selected CLI and retry once:
 
 - claude (macOS/Linux): `curl -fsSL https://claude.ai/install.sh | bash`
 - claude (Windows PowerShell): `irm https://claude.ai/install.ps1 | iex`
@@ -87,7 +87,8 @@ The launcher also checks `CLAUDE_CODE_EXECPATH` for Claude desktop and
 provider executable path for a custom installation. This does not change the
 selected provider.
 
-A freshly installed CLI may still need a one-time sign-in. If the user did not
+A freshly installed CLI may still need a one-time sign-in. On Codex desktop,
+reuse the app's CLI and existing authentication first. If the user did not
 explicitly choose a provider, you may try one other installed provider; announce
 that choice and rerun with its `--provider` value. Do not carry a
 `LIBRARIAN_CLI_PATH` override from the old provider into that retry. If the user
@@ -102,10 +103,11 @@ query-planning session, before Europe PMC is contacted.
 
 The pipeline runs through `scripts/run.sh`, in the directory containing this
 `SKILL.md`. The launcher derives the project root from its own location and
-provisions the Python environment with `uv` on first call, so there is nothing
-to install and no absolute path to configure. Write the command out in full on
-one line, with the real path and provider substituted — shell variables do not
-persist between calls, and `VAR=x cmd "$VAR"` on one line leaves `$VAR` empty:
+provisions the Python environment under `uv cache dir` on first call. It uses
+the shipped lockfile and installs runtime dependencies only. Write the command
+out in full on one line, with the real path and provider substituted. Shell
+variables do not persist between calls, and `VAR=x cmd "$VAR"` on one line
+leaves `$VAR` empty:
 
 ```bash
 bash "<directory containing this SKILL.md>/scripts/run.sh" search --provider <claude|codex|antigravity> "<user question>"
@@ -133,9 +135,8 @@ A run usually takes 1.5-3 min (provider-dependent) and is capped at 540 s, longe
 default command timeout (Claude Code's Bash tool stops at 120 s). Run it in the foreground with the host's longest timeout — in
 Claude Code, pass `timeout: 600000` to the Bash tool — and wait for it to finish.
 
-When installed as a plugin, that directory is
-`${CLAUDE_PLUGIN_ROOT}/skills/librarian`. Set `LIBRARIAN_PYTHON` to a Python
-interpreter that already has Librarian's dependencies if `uv` is unavailable.
+When installed as a Claude plugin, that directory is
+`${CLAUDE_PLUGIN_ROOT}/skills/librarian`.
 
 Choose `--provider` from `claude`, `codex`, or `antigravity`. Honor an explicit user
 choice; otherwise use the provider matching your host (Antigravity →
@@ -196,13 +197,17 @@ to an empty value to use the account default.
 
 ## Step 1 — search
 
-The command above. If it reports `paragraphs=0`, or fails with a Europe PMC
-network/HTTP/timeout error, the fault is Europe PMC's, not this skill's:
+The command above. If it completes and reports `paragraphs=0`, retry once. If
+both runs return zero paragraphs, say that Librarian found no usable passages
+for this request.
 
-- Retry exactly once: re-run the identical command, unmodified.
-- If the retry also comes back empty or fails, **stop**. Reply to the user with
-  exactly this message:
-  > I'm extremely sorry — this isn't a problem with the librarian pipeline, it's Europe PMC itself: literature retrieval failed twice. I won't guess at an answer without literature evidence. Please try again later.
+For a failed search request, read the error before deciding whether to retry.
+The pipeline already retries transient search errors. A DNS, TLS, or local
+permission error may occur before an HTTP response. If the error includes
+`aswMonFltProxy` and access denied, report the local TLS permission error and
+keep endpoint protection enabled. Retry after an identified prerequisite or
+permission issue has been resolved. If the issue persists, report the blocker
+and apply the failure boundary above.
 
 ## Step 2 — synthesize the final answer
 

@@ -82,8 +82,9 @@ def _require_cli(provider: str) -> str:
     executable = _find_cli(cli)
     if executable is not None:
         return executable
-    if provider == "claude":
-        bundled = os.environ.get("CLAUDE_CODE_EXECPATH", "").strip()
+    bundled_path_env = {"claude": "CLAUDE_CODE_EXECPATH", "codex": "CODEX_CLI_PATH"}
+    if provider in bundled_path_env:
+        bundled = os.environ.get(bundled_path_env[provider], "").strip()
         if bundled:
             executable = _find_cli(bundled)
             if executable:

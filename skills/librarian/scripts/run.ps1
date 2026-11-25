@@ -24,36 +24,67 @@ $OutputEncoding = [Text.UTF8Encoding]::new($false)
 $python = $env:LIBRARIAN_PYTHON
 if (-not $python) {
     $env:PATH += [IO.Path]::PathSeparator + "$HOME/.local/bin" + [IO.Path]::PathSeparator + "$HOME/.cargo/bin"
-    $uv = Get-Command uv -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    $uv = (Get-Command uv -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
     if (-not $uv) {
-        [Console]::Error.WriteLine("[Librarian] Python setup: need uv. Calling agent: install uv using SKILL.md through the host's normal permission flow and retry, or reuse a provisioned interpreter with LIBRARIAN_PYTHON.")
-        exit 127
-    }
-    # Windows PowerShell 5 treats redirected native stderr as ErrorRecords.
-    $ErrorActionPreference = "Continue"
-    $setup = & $uv.Source sync --project $root 2>&1
-    $setupCode = $LASTEXITCODE
-    $setupText = ($setup | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
-    [Console]::Error.WriteLine($setupText.TrimEnd())
-    if ($setupCode -ne 0 -and $setupText -match 'Missing expected target directory for Python minor version link at\s+["'']?([^\r\n"'']+)') {
-        $candidate = Join-Path $Matches[1].Trim() "python.exe"
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-            & $candidate -c "import sys; assert sys.version_info >= (3, 10)" 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                [Console]::Error.WriteLine("[Librarian] Python setup: retrying once with $candidate")
-                & $uv.Source sync --project $root --python $candidate
-                $setupCode = $LASTEXITCODE
+        $uvCache = $env:UV_CACHE_DIR
+        if (-not $uvCache) {
+            $uvCache = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'uv/cache'
+        }
+        $uvBinDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath((Join-Path $uvCache 'librarian-bin'))
+        $uv = Join-Path $uvBinDir 'uv.exe'
+        if (-not (Test-Path -LiteralPath $uv -PathType Leaf)) {
+            [Console]::Error.WriteLine('[Librarian] Python setup: installing uv from astral.sh.')
+            $previousInstallDir = $env:UV_UNMANAGED_INSTALL
+            try {
+                $env:UV_UNMANAGED_INSTALL = $uvBinDir
+                $installer = Invoke-RestMethod -UseBasicParsing -TimeoutSec 60 -Uri 'https://astral.sh/uv/0.12.0/install.ps1'
+                & ([ScriptBlock]::Create($installer)) | Out-Host
+            } finally {
+                $env:UV_UNMANAGED_INSTALL = $previousInstallDir
+            }
+            if (-not (Test-Path -LiteralPath $uv -PathType Leaf)) {
+                throw '[Librarian] Python setup: the uv installer did not produce uv.exe.'
             }
         }
     }
-    $ErrorActionPreference = "Stop"
-    if ($setupCode -ne 0) {
-        [Console]::Error.WriteLine("[Librarian] Python setup failed. Calling agent: find a working interpreter and retry with its full path in UV_PYTHON, or reuse a provisioned environment with LIBRARIAN_PYTHON, following SKILL.md recovery. No managed directories were deleted.")
-        exit $setupCode
+    $previousProjectEnvironment = $env:UV_PROJECT_ENVIRONMENT
+    try {
+        # The plugin checkout can be read-only. Use a cache environment per lockfile.
+        if (-not $previousProjectEnvironment) {
+            $cacheDir = & $uv cache dir
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $lockHash = (Get-FileHash -LiteralPath (Join-Path $root "uv.lock")).Hash
+            $env:UV_PROJECT_ENVIRONMENT = Join-Path (Join-Path $cacheDir "librarian") $lockHash
+        }
+
+        $syncArgs = @("sync", "--project", $root, "--locked", "--no-dev")
+        # Windows PowerShell 5 treats redirected native stderr as ErrorRecords.
+        $ErrorActionPreference = "Continue"
+        $setup = & $uv @syncArgs 2>&1
+        $setupCode = $LASTEXITCODE
+        $setupText = ($setup | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+        [Console]::Error.WriteLine($setupText.TrimEnd())
+        if ($setupCode -ne 0 -and $setupText -match 'Missing expected target directory for Python minor version link at\s+["'']?([^\r\n"'']+)') {
+            $candidate = Join-Path $Matches[1].Trim() "python.exe"
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                & $candidate -c "import sys; assert sys.version_info >= (3, 10)" 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    [Console]::Error.WriteLine("[Librarian] Python setup: retrying once with $candidate")
+                    & $uv @syncArgs --python $candidate
+                    $setupCode = $LASTEXITCODE
+                }
+            }
+        }
+        $ErrorActionPreference = "Stop"
+        if ($setupCode -ne 0) {
+            [Console]::Error.WriteLine("[Librarian] Python setup failed. Use the uv error above and follow SKILL.md setup recovery.")
+            exit $setupCode
+        }
+        & $uv run --no-sync --project $root python (Join-Path $scriptDir "search.py") @scriptArgs
+        exit $LASTEXITCODE
+    } finally {
+        $env:UV_PROJECT_ENVIRONMENT = $previousProjectEnvironment
     }
-    # uv run reuses the environment just synced, including UV_PROJECT_ENVIRONMENT.
-    & $uv.Source run --no-sync --project $root python (Join-Path $scriptDir "search.py") @scriptArgs
-    exit $LASTEXITCODE
 }
 & $python (Join-Path $scriptDir "search.py") @scriptArgs
 exit $LASTEXITCODE
