@@ -42,7 +42,6 @@ from typing import Any, Dict, Iterable, List, Optional, Protocol, Tuple
 from urllib.parse import quote
 
 import requests
-from pypdf.errors import PyPdfError
 
 from librarian.jats import _MIN_BODY_PARAGRAPHS, extract_body_paragraphs
 from librarian.pdf_jats import pdf_to_jats
@@ -325,6 +324,9 @@ def _aws_fulltext(pmcid: str) -> "Fulltext | None":
     None when the bucket has no copy with a usable body or a request fails, so
     Europe PMC is asked instead.
     """
+    # The PMC Open Access bucket only holds PMC articles (never preprints, PPR...).
+    if not pmcid.startswith("PMC"):
+        return None
     try:
         keys = _list_pmc_folder(pmcid)
         if not keys:
@@ -347,9 +349,13 @@ def _aws_fulltext(pmcid: str) -> "Fulltext | None":
             return None
         response = requests.get(_PMC_AWS_URL + pdf_key, timeout=60)
         response.raise_for_status()
-        jats = pdf_to_jats(response.content)
-    except (requests.exceptions.RequestException, ValueError, PyPdfError) as exc:
+    except (requests.exceptions.RequestException, ValueError) as exc:
         logger.info("AWS full text unavailable pmcid=%s (%s)", pmcid, exc)
+        return None
+    try:
+        jats = pdf_to_jats(response.content)
+    except Exception as exc:  # pypdf can raise outside PyPdfError on broken PDFs
+        logger.info("AWS PDF unreadable pmcid=%s (%s)", pmcid, exc)
         return None
     if jats is None or not _has_body(jats):
         return None

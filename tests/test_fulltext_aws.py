@@ -5,6 +5,8 @@ uv run pytest tests
 
 from unittest import mock
 
+import requests
+
 from librarian.jats import extract_body_paragraphs
 from librarian.literature_search import EuropePmcSource
 
@@ -45,14 +47,15 @@ def _pdf(lines):
 
 def _response(content, status=200):
     response = mock.MagicMock(status_code=status, content=content)
-    response.text = content.decode()
+    response.text = content.decode("utf-8", errors="replace")
     response.raise_for_status.return_value = None
     return response
 
 
-def _listing(keys):
+def _listing(keys, sizes=None):
+    sizes = sizes or {}
     items = "".join(
-        f"<Contents><Key>{key}</Key><Size>{len(body)}</Size></Contents>"
+        f"<Contents><Key>{key}</Key><Size>{sizes.get(key, len(body))}</Size></Contents>"
         for key, body in keys.items()
     )
     return _response(
@@ -62,20 +65,20 @@ def _listing(keys):
     )
 
 
-def _fetch(bucket, epmc_xml=_BODY_XML):
-    """Fetch PMC1 with *bucket* ``{key: bytes}`` on AWS; return it and the URLs asked."""
+def _fetch(bucket, epmc_xml=_BODY_XML, pmcid="PMC1", sizes=None):
+    """Fetch *pmcid* with *bucket* ``{key: bytes}`` on AWS; return it and the URLs asked."""
     asked = []
 
     def get(url, params=None, **kwargs):
         asked.append(url)
         if url == _BUCKET:
-            return _listing(bucket)
+            return _listing(bucket, sizes=sizes)
         if url.startswith(_BUCKET):
             return _response(bucket[url[len(_BUCKET) :]])
         return _response(epmc_xml.encode())
 
     with mock.patch("librarian.literature_search.requests.get", side_effect=get):
-        fulltext = EuropePmcSource().fetch_fulltext_many(["PMC1"])["PMC1"]
+        fulltext = EuropePmcSource().fetch_fulltext_many([pmcid])[pmcid]
     return fulltext, asked
 
 
@@ -109,5 +112,54 @@ def test_a_bodyless_jats_is_replaced_by_the_bucket_pdf():
 
 def test_a_paper_missing_from_the_bucket_comes_from_europe_pmc():
     fulltext, asked = _fetch({})
+    assert fulltext.ok and fulltext.xml == _BODY_XML
+    assert len(_europe_pmc_asked(asked)) == 1
+
+
+def test_a_broken_bucket_pdf_falls_back_to_europe_pmc():
+    # A PDF whose stream decoding raises a non-PyPdfError (TypeError in pypdf)
+    # must fall back to Europe PMC rather than crashing the batch.
+    broken_pdf = _pdf(["placeholder"]).replace(
+        b"<< /Length ", b"<< /Filter /CCITTFaxDecode /Length ", 1
+    )
+    fulltext, asked = _fetch(
+        {
+            "PMC1.1/PMC1.1.xml": _BODYLESS_XML.encode(),
+            "PMC1.1/PMC1.1.pdf": broken_pdf,
+        }
+    )
+    assert fulltext.ok and fulltext.xml == _BODY_XML
+    assert len(_europe_pmc_asked(asked)) == 1
+
+
+def test_a_preprint_id_skips_the_pmc_bucket():
+    fulltext, asked = _fetch({}, pmcid="PPR123")
+    assert fulltext.ok and fulltext.xml == _BODY_XML
+    assert not any(url.startswith(_BUCKET) for url in asked)
+    assert len(_europe_pmc_asked(asked)) == 1
+
+
+def test_an_oversized_bucket_pdf_is_skipped():
+    pdf_key = "PMC1.1/PMC1.1.pdf"
+    fulltext, asked = _fetch(
+        {"PMC1.1/PMC1.1.xml": _BODYLESS_XML.encode(), pdf_key: b"unused"},
+        sizes={pdf_key: 100 * 1024 * 1024},
+    )
+    assert fulltext.ok and fulltext.xml == _BODY_XML
+    assert _BUCKET + pdf_key not in asked
+    assert len(_europe_pmc_asked(asked)) == 1
+
+
+def test_an_aws_error_falls_back_to_europe_pmc():
+    asked = []
+
+    def get(url, params=None, **kwargs):
+        asked.append(url)
+        if url.startswith(_BUCKET):
+            raise requests.exceptions.ConnectionError("S3 unreachable")
+        return _response(_BODY_XML.encode())
+
+    with mock.patch("librarian.literature_search.requests.get", side_effect=get):
+        fulltext = EuropePmcSource().fetch_fulltext_many(["PMC1"])["PMC1"]
     assert fulltext.ok and fulltext.xml == _BODY_XML
     assert len(_europe_pmc_asked(asked)) == 1

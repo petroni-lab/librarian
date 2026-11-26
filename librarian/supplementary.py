@@ -491,7 +491,7 @@ def _file_records(
 def require_extraction_dependencies(pdf_extractor: str = "pypdf") -> None:
     """Raise a clear ``ImportError`` when the ``supplementary`` extra is missing.
 
-    The PDF/Word/spreadsheet readers are imported lazily inside a per-file ``except
+    The Word/spreadsheet readers are imported lazily inside a per-file ``except
     Exception``, which would otherwise turn a missing package into silently
     empty supplements.
     """
