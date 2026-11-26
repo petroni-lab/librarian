@@ -11,6 +11,11 @@ plain functions in this module. An embedding application can pass its own
 source (with a cache, a worker pool, ...) as
 ``LibrarianAgent(literature_source=...)``.
 
+Full text: ``fetch_fulltext`` reads the article from the PMC Open Access bucket
+on AWS first (public, no rate limit): its JATS, or, when that has no usable body
+(an old scanned issue), its PDF converted to JATS by ``pdf_jats``. Europe PMC's
+``fullTextXML`` serves the papers the bucket has no usable copy of.
+
 An opt-in full-text cache that wraps any source lives in ``fulltext_cache``.
 
 Supplementary material: ``fetch_supplementary_many`` downloads each paper's
@@ -38,6 +43,8 @@ from urllib.parse import quote
 
 import requests
 
+from librarian.jats import _MIN_BODY_PARAGRAPHS, extract_body_paragraphs
+from librarian.pdf_jats import pdf_to_jats
 from librarian.supplementary import extract_supplementary_records
 
 logger = logging.getLogger(__name__)
@@ -97,6 +104,9 @@ _SUPPLEMENTARY_WORKERS = 4
 # Wall-clock limit on one fallback ZIP download (requests' timeout is per read):
 # Europe PMC streams these slowly enough to hold a worker for minutes.
 _SUPPLEMENTARY_ZIP_DEADLINE_S = 60
+# Bucket PDFs above this are not converted: download and pypdf time grow with size,
+# and every search hit can need one.
+_MAX_AWS_PDF_BYTES = 50 * 1024 * 1024
 _supplementary_pool: "ThreadPoolExecutor | None" = None
 _supplementary_pool_lock = threading.Lock()
 
@@ -303,19 +313,73 @@ def _attempt_fulltext(pmcid: str) -> Fulltext:
     return Fulltext(pmcid=pmcid, xml=response.text, status=response.status_code)
 
 
-def fetch_fulltext(pmcid: str) -> Fulltext:
-    """Fetch the JATS full-text XML for one PMC id, confirming a permanent failure.
+def _has_body(xml: str) -> bool:
+    # True when the JATS yields a full body, not a scan's lone caption.
+    return len(extract_body_paragraphs(xml)) >= _MIN_BODY_PARAGRAPHS
 
-    A failed request is returned as a ``Fulltext`` with ``error`` set rather
-    than raised, so one missing full text only leaves its paper abstract-only.
-    A permanent status (404, ...) is re-requested once before it is trusted,
-    because Europe PMC sometimes 404s documents that exist.
+
+def _aws_fulltext(pmcid: str) -> "Fulltext | None":
+    """The article's JATS from the PMC bucket, else its PDF converted to JATS.
+
+    None when the bucket has no copy with a usable body or a request fails, so
+    Europe PMC is asked instead.
+    """
+    # The PMC Open Access bucket only holds PMC articles (never preprints, PPR...).
+    if not pmcid.startswith("PMC"):
+        return None
+    try:
+        keys = _list_pmc_folder(pmcid)
+        if not keys:
+            return None
+        # One folder per article version: read the latest.
+        version = max(
+            {key.split("/", 1)[0] for key in keys},
+            key=lambda v: int(v.rsplit(".", 1)[1]),
+        )
+        xml_key = f"{version}/{version}.xml"
+        if xml_key in keys:
+            response = requests.get(_PMC_AWS_URL + xml_key, timeout=30)
+            response.raise_for_status()
+            # S3 serves it as binary/octet-stream, so requests cannot guess the charset.
+            xml = response.content.decode("utf-8")
+            if _has_body(xml):
+                return Fulltext(pmcid=pmcid, xml=xml, status=response.status_code)
+        pdf_key = f"{version}/{version}.pdf"
+        if keys.get(pdf_key, _MAX_AWS_PDF_BYTES + 1) > _MAX_AWS_PDF_BYTES:
+            return None
+        response = requests.get(_PMC_AWS_URL + pdf_key, timeout=60)
+        response.raise_for_status()
+    except (requests.exceptions.RequestException, ValueError) as exc:
+        logger.info("AWS full text unavailable pmcid=%s (%s)", pmcid, exc)
+        return None
+    try:
+        jats = pdf_to_jats(response.content)
+    except Exception as exc:  # pypdf can raise outside PyPdfError on broken PDFs
+        logger.info("AWS PDF unreadable pmcid=%s (%s)", pmcid, exc)
+        return None
+    if jats is None or not _has_body(jats):
+        return None
+    return Fulltext(pmcid=pmcid, xml=jats, status=response.status_code)
+
+
+def fetch_fulltext(pmcid: str) -> Fulltext:
+    """Fetch the JATS full text for one PMC id: from the PMC bucket, else Europe PMC.
+
+    The bucket's JATS is used when it has a usable body, else the bucket's PDF
+    converted to JATS (``_aws_fulltext``); otherwise Europe PMC's
+    ``fullTextXML``. A failed Europe PMC request is returned as a ``Fulltext``
+    with ``error`` set rather than raised, so one missing full text only leaves
+    its paper abstract-only. A permanent status (404, ...) is re-requested once
+    before it is trusted, because Europe PMC sometimes 404s documents that exist.
 
     :param pmcid: A PMC id in any form (see ``normalize_pmcid``).
     :return: The XML, or the error that replaced it.
     :rtype: Fulltext
     """
     pmcid = normalize_pmcid(pmcid)
+    from_aws = _aws_fulltext(pmcid)
+    if from_aws is not None:
+        return from_aws
     result = _attempt_fulltext(pmcid)
     if not result.ok and result.permanent:
         time.sleep(_PERMANENT_CONFIRM_DELAY_S)

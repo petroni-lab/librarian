@@ -6,7 +6,7 @@ here and returns the result as ordinary JATS: ``<article><body><sec><title>…
 </title><p>…</p></sec>…</body></article>``. Everything downstream (paragraph
 extraction, section metadata, caching) then works unchanged.
 
-Text comes from the PDF's own text layer (pypdf, the ``supplementary`` extra);
+Text comes from the PDF's own text layer (pypdf);
 there is no OCR here. ``text_layer_is_readable`` lets a caller tell a usable
 layer from one that lost its word spaces or is missing. Only the body is built:
 paper metadata comes from the search record, references are cut, and repeated
@@ -125,7 +125,7 @@ def pdf_page_texts(data: bytes, skip: int = 0) -> Iterator[str]:
     :param skip: Number of leading pages to leave out.
     :return: One string per page after the first *skip*.
     """
-    from pypdf import PdfReader  # optional extra: only PDF conversion needs it
+    from pypdf import PdfReader  # imported here so pages can be faked in tests
 
     reader = PdfReader(io.BytesIO(data))
     for page in reader.pages[skip:]:
