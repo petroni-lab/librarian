@@ -50,7 +50,11 @@ import pysbd
 
 from librarian.config import LibrarianRuntimeConfig
 from librarian.fulltext_cache import default_literature_source
-from librarian.jats import extract_body_paragraphs, extract_supplementary_captions
+from librarian.jats import (
+    _MIN_BODY_PARAGRAPHS,
+    extract_body_paragraphs,
+    extract_supplementary_captions,
+)
 from librarian.literature_search import (
     Fulltext,
     LiteratureSearchError,
@@ -108,10 +112,6 @@ _FULLTEXT_NOTES = {
     "fetch_failed": "Abstract only: full text could not be fetched",
     "enrichment_disabled": "Abstract only: full-text reading is off",
 }
-# Fewer body paragraphs than this is reported as ``short_body``: a scan's lone
-# caption or a genuinely short paper (letter, erratum). The paragraphs stay in the
-# pool and can be cited, so the note says the body was read, only briefly.
-_MIN_BODY_PARAGRAPHS = 3
 # Statuses whose body paragraphs are in the pool, so ``has_fulltext`` is true.
 _BODY_READ_STATUSES = {"extracted", "short_body"}
 # What Europe PMC answers for an open-access record whose XML it does not serve.

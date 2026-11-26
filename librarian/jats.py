@@ -12,6 +12,10 @@ import re
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Tuple
 
+# Fewer body paragraphs than this is a short body: a scan's lone caption or a
+# genuinely short paper (letter, erratum). The agent reports it as ``short_body``;
+# ``literature_search`` then tries the article's PDF in the PMC bucket.
+_MIN_BODY_PARAGRAPHS = 3
 # Ancestor tags whose entire subtree is never body content.
 _EXCLUDED_ANCESTOR_NAMES = {
     "abstract",

@@ -498,7 +498,6 @@ def require_extraction_dependencies(pdf_extractor: str = "pypdf") -> None:
     try:
         import docx  # noqa: F401
         import openpyxl  # noqa: F401
-        import pypdf  # noqa: F401
         import xlrd  # noqa: F401
     except ImportError as exc:
         raise ImportError(

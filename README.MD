@@ -291,7 +291,8 @@ plug in your own pieces through the constructor and `run()`:
 - `literature_source=` — your search and full-text backend (a cache, a worker
   pool, ...), implementing `LiteratureSource` in
   [`literature_search.py`](librarian/literature_search.py). The default,
-  `EuropePmcSource`, calls Europe PMC directly and fetches full texts concurrently.
+  `EuropePmcSource`, calls Europe PMC directly and fetches full texts concurrently,
+  from the PMC Open Access bucket on AWS first.
   To cache full texts, wrap any source in `CachedSource(inner, backend)` from
   [`fulltext_cache.py`](librarian/fulltext_cache.py), with your own `CacheBackend`
   (anything with `get(key)` and `set(key, value, expire_seconds)`), or set
@@ -461,8 +462,9 @@ sub-query count can't oversubscribe a small container).
 
 Each sub-query searches the live Europe PMC service (up to `papers_per_subquery`
 records), and every returned paper is decomposed into paragraph records: its abstract,
-plus — for open-access papers — its full-text body paragraphs (JATS XML fetched by
-PMCID, `literature_search.py` + `jats.py`). Paragraphs longer than
+plus — for open-access papers — its full-text body paragraphs (JATS by PMCID from the
+PMC Open Access bucket on AWS, or its PDF there converted to JATS when the JATS has no
+body, else Europe PMC's `fullTextXML`; `literature_search.py` + `jats.py`). Paragraphs longer than
 `max_paragraph_words` are split into overlapping word windows so a long paragraph
 can't out-rank a short one on length alone. Every record's BM25 document mixes in its
 section title/type and the paper's own metadata (title/authors/journal/year on the
