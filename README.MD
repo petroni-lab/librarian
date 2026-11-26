@@ -625,9 +625,7 @@ assets/                        README images and install GIFs
 
 </details>
 
-Pipeline regression tests live in `tests/`; see [Testing](#-testing). CI also
-checks first-run dependency setup with native Windows PowerShell. Downstream
-consumers run additional launcher tests against pinned Librarian revisions.
+Pipeline regression tests live in `tests/`; see [Testing](#-testing).
 
 ---
 
