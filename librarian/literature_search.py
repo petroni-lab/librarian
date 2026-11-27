@@ -91,7 +91,7 @@ _PERMANENT_CONFIRM_DELAY_S = 0.5
 # Full-text fetches only wait on the network, so a fixed count independent of
 # cores. One module-level pool shared by every sub-query thread: this is the
 # total number of concurrent full-text requests Europe PMC sees, not a per-caller
-# limit. Same value as bio-agents' libs/literature_search.py.
+# limit.
 # This is the supported override (ablation and load-test scripts set it): assign
 # librarian.literature_search._FULLTEXT_WORKERS before the first fetch, because
 # the pool is built once, on first use, and keeps that size for the process.

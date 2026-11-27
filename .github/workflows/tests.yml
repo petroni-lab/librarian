@@ -11,16 +11,33 @@ concurrency:
   cancel-in-progress: true # a newer push to the same branch supersedes this run
 permissions: {}
 jobs:
-  pytest:
+  pytest-matrix:
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout only
+    strategy:
+      fail-fast: false
+      matrix:
+        # Test the declared minimum (pyproject.toml requires-python) and the dev/eval version.
+        python-version: ["3.10", "3.11"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v10.3.2 # setup-uv publishes no major-version tag
         with:
-          python-version: "3.11" # the version the dev environment and fixtures use
+          python-version: ${{ matrix.python-version }}
       # The supplementary extra is needed by the supplementary-extraction tests;
       # the dev group (pytest) is included by default. --locked fails on a stale uv.lock.
       - run: uv sync --locked --extra supplementary
       - run: uv run pytest tests
+  pytest:
+    # Stable check name required by the main branch ruleset; aggregates the Python matrix.
+    runs-on: ubuntu-latest
+    needs: [pytest-matrix]
+    if: ${{ !cancelled() }}
+    steps:
+      - run: |
+          if [ "${{ needs.pytest-matrix.result }}" != "success" ]; then
+            exit 1
+          fi

@@ -15,8 +15,7 @@
 # which is how this open-source build is normally pointed at a backend.
 default_model_name = ""
 
-# Verbatim from bio-agents' agents/librarian/config_prod.toml, so both repos plan
-# queries the same way. {max_queries} is filled at prompt-build time from
+# {max_queries} is filled at prompt-build time from
 # num_subqueries, so the cap and the instruction to the planner always agree.
 # The recall/coverage/precision split lives here rather than in the prompt: it is
 # the tunable part, and it is what MIN_SUBQUERIES = 3 exists to protect — a budget
