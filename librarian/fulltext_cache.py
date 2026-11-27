@@ -168,6 +168,9 @@ class CachedSource:
             error=str(entry.get("error") or ""),
             status=entry.get("status"),
             from_cache=True,
+            # Entries written before the field existed read as JATS; bucket-PDF
+            # entries cached since #117 are misreported until they expire.
+            from_pdf=bool(entry.get("from_pdf")),
         )
         # Only what _set would store is a hit. Another writer sharing the
         # backend may have stored a transient failure or an empty 200; those
@@ -179,7 +182,12 @@ class CachedSource:
     def _set(self, result: Fulltext) -> None:
         # Best-effort write under the outcome's TTL; a failed write is dropped.
         ttl_days = self.ttl_days if result.ok else self.negative_ttl_days
-        entry = {"xml": result.xml, "status": result.status, "error": result.error}
+        entry = {
+            "xml": result.xml,
+            "status": result.status,
+            "error": result.error,
+            "from_pdf": result.from_pdf,
+        }
         try:
             self.backend.set(
                 _fulltext_cache_key(result.pmcid), entry, int(ttl_days * 86400)

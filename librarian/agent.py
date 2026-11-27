@@ -1154,6 +1154,7 @@ class LibrarianAgent:
                 records.append(record)
         else:
             paper["fulltext_status"] = "enrichment_disabled"
+            paper["fulltext_from_pdf"] = False
 
         # Stable coordinates, assigned before re-cutting: the abstract and body
         # by their order, the same for every sub-query, so equal passages from
@@ -1324,6 +1325,9 @@ class LibrarianAgent:
             # matching user-facing note ("" when it was read).
             "fulltext_status": status,
             "fulltext_note": _FULLTEXT_NOTES[status],
+            # True when that body came from the article's PDF rather than
+            # Europe PMC's JATS (a source that converts PDFs set it).
+            "fulltext_from_pdf": paper["fulltext_from_pdf"],
         }
 
     # ── Body extraction from the prefetched full text ────────────────────────
@@ -1346,6 +1350,8 @@ class LibrarianAgent:
         supplementary material gets ``supplementary_captions`` (file name →
         caption), which marks it for Stage 3b and labels its records there.
         """
+        # Set on every path; only a body read from a PDF-built text flips it.
+        paper["fulltext_from_pdf"] = False
         pmcid = fulltext_pmcid(paper)
         if not pmcid:
             if not paper.get("inEPMC"):
@@ -1378,6 +1384,7 @@ class LibrarianAgent:
             paper["fulltext_status"] = "short_body"
         else:
             paper["fulltext_status"] = "extracted"
+        paper["fulltext_from_pdf"] = fulltext.from_pdf and bool(records)
         if self._supplementary_stage_enabled and declares_supplementary(fulltext.xml):
             paper["supplementary_captions"] = extract_supplementary_captions(
                 fulltext.xml
