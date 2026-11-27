@@ -168,7 +168,8 @@ class CachedSource:
             error=str(entry.get("error") or ""),
             status=entry.get("status"),
             from_cache=True,
-            # Entries written before the field existed were JATS-only reads.
+            # Entries written before the field existed read as JATS; bucket-PDF
+            # entries cached since #117 are misreported until they expire.
             from_pdf=bool(entry.get("from_pdf")),
         )
         # Only what _set would store is a hit. Another writer sharing the

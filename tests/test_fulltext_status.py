@@ -24,6 +24,8 @@ _OA = {"inEPMC": True, "isOpenAccess": True, "pmcid": "PMC1"}
         (_OA, {"PMC1": Fulltext("PMC1", xml=_JATS)}, "extracted"),
         (_OA, {"PMC1": Fulltext("PMC1", xml=_JATS, from_pdf=True)}, "extracted"),
         (_OA, {"PMC1": Fulltext("PMC1", xml=_EMPTY_JATS)}, "no_body"),
+        # A PDF-built text with no body read is not marked as PDF evidence.
+        (_OA, {"PMC1": Fulltext("PMC1", xml=_EMPTY_JATS, from_pdf=True)}, "no_body"),
         (_OA, {"PMC1": Fulltext("PMC1", xml=_FRAGMENT_JATS)}, "short_body"),
         (_OA, {"PMC1": Fulltext("PMC1", error="HTTP 500", status=500)}, "no_body"),
         (_OA, {"PMC1": Fulltext("PMC1", error="timeout")}, "fetch_failed"),
