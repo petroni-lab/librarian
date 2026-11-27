@@ -1,4 +1,4 @@
-"""Every evidence record says whether its full-text body was read, and why not.
+"""Every evidence record says whether its full-text body was read, why not, and whether it came from a PDF.
 
 uv run --extra supplementary pytest tests
 """
@@ -22,6 +22,7 @@ _OA = {"inEPMC": True, "isOpenAccess": True, "pmcid": "PMC1"}
     ("paper", "fulltexts", "status"),
     [
         (_OA, {"PMC1": Fulltext("PMC1", xml=_JATS)}, "extracted"),
+        (_OA, {"PMC1": Fulltext("PMC1", xml=_JATS, from_pdf=True)}, "extracted"),
         (_OA, {"PMC1": Fulltext("PMC1", xml=_EMPTY_JATS)}, "no_body"),
         (_OA, {"PMC1": Fulltext("PMC1", xml=_FRAGMENT_JATS)}, "short_body"),
         (_OA, {"PMC1": Fulltext("PMC1", error="HTTP 500", status=500)}, "no_body"),
@@ -45,6 +46,9 @@ def test_status_and_has_fulltext_follow_what_stage_2_read(paper, fulltexts, stat
     assert record["fulltext_status"] == status
     assert record["has_fulltext"] is (status in {"extracted", "short_body"})
     assert bool(record["fulltext_note"]) is (status != "extracted")
+    # Only a body actually read from a PDF-built text is marked as such.
+    from_pdf = any(fulltext.from_pdf for fulltext in fulltexts.values())
+    assert record["fulltext_from_pdf"] is (from_pdf and record["has_fulltext"])
 
 
 def test_enrichment_off_is_its_own_status():
@@ -53,4 +57,6 @@ def test_enrichment_off_is_its_own_status():
     )
     paper = dict(_OA, abstract="Abstract text.")
     agent._paragraph_records_for_paper(paper, {})
-    assert agent._passage_from_paper(paper)["fulltext_status"] == "enrichment_disabled"
+    record = agent._passage_from_paper(paper)
+    assert record["fulltext_status"] == "enrichment_disabled"
+    assert record["fulltext_from_pdf"] is False

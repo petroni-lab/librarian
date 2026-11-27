@@ -268,6 +268,9 @@ class Fulltext:
     status: "int | None" = None
     # True when a ``CachedSource`` served this outcome instead of a request.
     from_cache: bool = False
+    # True when ``xml`` was built from the article's PDF (``librarian.pdf_jats``)
+    # by a source that converts PDFs, rather than served as JATS.
+    from_pdf: bool = False
 
     @property
     def ok(self) -> bool:

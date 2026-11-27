@@ -40,6 +40,7 @@ def retrieval_agent(barrier=None):
                     "pmid": f"{query}-{i}",
                     "title": query,
                     "fulltext_status": "extracted",
+                    "fulltext_from_pdf": False,
                 },
                 "text": f"Evidence for {query}.",
                 "source_paragraph_index": 0,
