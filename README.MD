@@ -511,7 +511,8 @@ The result is a list of passage dicts:
   "url": "https://europepmc.org/article/...", "affiliation": "...",
   "has_fulltext": True,
   "fulltext_status": "extracted",  # why the body was or was not read
-  "fulltext_from_pdf": False,       # body built from the article's PDF, not JATS
+  "fulltext_from_pdf": False,       # body built from the article's PDF (the PMC
+                                    # bucket's or a source's own), not from JATS
 }
 ```
 

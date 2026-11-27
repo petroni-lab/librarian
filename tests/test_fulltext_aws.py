@@ -91,6 +91,7 @@ def test_the_bucket_jats_is_read_without_asking_europe_pmc():
         {"PMC1.1/PMC1.1.xml": b"old", "PMC1.2/PMC1.2.xml": _BODY_XML.encode()}
     )
     assert fulltext.ok and fulltext.xml == _BODY_XML  # the latest version
+    assert fulltext.from_pdf is False
     assert not _europe_pmc_asked(asked)
 
 
@@ -107,6 +108,8 @@ def test_a_bodyless_jats_is_replaced_by_the_bucket_pdf():
     records = extract_body_paragraphs(fulltext.xml)
     assert fulltext.ok and len(records) >= 3
     assert [r["section_title"] for r in records] == ["Introduction", "Methods", "Results"]
+    # Evidence read from it can say it came from the PDF, not from JATS.
+    assert fulltext.from_pdf is True
     assert not _europe_pmc_asked(asked)
 
 

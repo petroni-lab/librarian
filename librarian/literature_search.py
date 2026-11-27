@@ -362,7 +362,7 @@ def _aws_fulltext(pmcid: str) -> "Fulltext | None":
         return None
     if jats is None or not _has_body(jats):
         return None
-    return Fulltext(pmcid=pmcid, xml=jats, status=response.status_code)
+    return Fulltext(pmcid=pmcid, xml=jats, status=response.status_code, from_pdf=True)
 
 
 def fetch_fulltext(pmcid: str) -> Fulltext:
