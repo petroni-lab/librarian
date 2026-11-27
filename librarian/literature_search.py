@@ -268,6 +268,9 @@ class Fulltext:
     status: "int | None" = None
     # True when a ``CachedSource`` served this outcome instead of a request.
     from_cache: bool = False
+    # True when ``xml`` was built from the article's PDF (``librarian.pdf_jats``)
+    # by a source that converts PDFs, rather than served as JATS.
+    from_pdf: bool = False
 
     @property
     def ok(self) -> bool:
@@ -359,7 +362,7 @@ def _aws_fulltext(pmcid: str) -> "Fulltext | None":
         return None
     if jats is None or not _has_body(jats):
         return None
-    return Fulltext(pmcid=pmcid, xml=jats, status=response.status_code)
+    return Fulltext(pmcid=pmcid, xml=jats, status=response.status_code, from_pdf=True)
 
 
 def fetch_fulltext(pmcid: str) -> Fulltext:
